@@ -1,6 +1,9 @@
-{{/* Chart name (overridable). */}}
+{{/*
+App name (overridable). Uses a literal base, NOT .Chart.Name, so the chart's
+-helm OCI suffix does not leak into resource names.
+*/}}
 {{- define "toggle-web-baker.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- default "toggle-web-baker" .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/* Fully qualified app name. */}}
@@ -8,7 +11,7 @@
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- $name := default "toggle-web-baker" .Values.nameOverride -}}
 {{- if contains $name .Release.Name -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}

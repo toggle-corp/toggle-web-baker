@@ -24,7 +24,9 @@ env:
   GO_VERSION: "1.26"
   IMAGE_PREFIX: ghcr.io/toggle-corp/toggle-web-baker
   CHART_DIR: deploy/helm/toggle-web-baker
-  CHART_NAME: toggle-web-baker
+  # Chart name => OCI repo segment: helm push lands at
+  # ghcr.io/toggle-corp/toggle-web-baker-helm.
+  CHART_NAME: toggle-web-baker-helm
   CHART_OCI_REPO: oci://ghcr.io/toggle-corp
 
 jobs:
@@ -106,6 +108,11 @@ jobs:
       - name: Template chart
         run: helm template ${{ env.CHART_DIR }} >/dev/null
       - name: Check helm snapshots
+        # Snapshots guard against template drift. On a release tag the chart
+        # version/appVersion (and the image tags + helm.sh/chart label derived
+        # from them) are bumped, so a diff against the 0.0.0 golden snapshots is
+        # expected — skip the check on tags rather than fail every release.
+        if: ${{ github.ref_type != 'tag' }}
         run: ./${{ env.CHART_DIR }}/update-snapshots.sh --check-diff-only
       - name: Verify chart version matches tag
         if: ${{ inputs.helm_push && github.ref_type == 'tag' }}

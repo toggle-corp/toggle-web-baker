@@ -1,18 +1,18 @@
 ---
-# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: release-name-toggle-web-baker-operator
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: toggle-web-baker/templates/crd.yaml
+# Source: toggle-web-baker-helm/templates/crd.yaml
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -593,7 +593,7 @@ spec:
     subresources:
       status: {}
 ---
-# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 # Operator ClusterRole — kept in sync with config/rbac/role.yaml
 # (regenerate that file with `just manifests`, then mirror changes here).
 apiVersion: rbac.authorization.k8s.io/v1
@@ -601,7 +601,7 @@ kind: ClusterRole
 metadata:
   name: release-name-toggle-web-baker-operator
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -744,13 +744,13 @@ rules:
   - update
   - watch
 ---
-# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: release-name-toggle-web-baker-operator
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -764,14 +764,14 @@ subjects:
     name: release-name-toggle-web-baker-operator
     namespace: default
 ---
-# Source: toggle-web-baker/templates/operator-deployment.yaml
+# Source: toggle-web-baker-helm/templates/operator-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: release-name-toggle-web-baker-operator
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"

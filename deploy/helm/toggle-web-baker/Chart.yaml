@@ -1,5 +1,9 @@
 apiVersion: v2
-name: toggle-web-baker
+# Chart name doubles as the OCI repo segment on `helm push`, so the artifact
+# publishes to ghcr.io/toggle-corp/toggle-web-baker-helm. Resource names are
+# decoupled from this via the "toggle-web-baker.name" helper (literal base), so
+# they stay <release>-toggle-web-baker-* regardless of the -helm suffix.
+name: toggle-web-baker-helm
 description: |
   The FrontendApp deploy-platform operator (baker.toggle-corp.com) plus an
   optional read-only admin console. Installs the CRD, operator RBAC, and the

@@ -1,5 +1,5 @@
 ---
-# Source: toggle-web-baker/templates/console/rbac.yaml
+# Source: toggle-web-baker-helm/templates/console/rbac.yaml
 # RBAC for the console: READ-ONLY except the single annotation PATCH the
 # "Request rebuild" button needs. No create/delete on jobs or pods anywhere.
 apiVersion: v1
@@ -8,27 +8,27 @@ metadata:
   name: release-name-toggle-web-baker-console
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: console
 ---
-# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: release-name-toggle-web-baker-operator
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: toggle-web-baker/templates/crd.yaml
+# Source: toggle-web-baker-helm/templates/crd.yaml
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -609,13 +609,13 @@ spec:
     subresources:
       status: {}
 ---
-# Source: toggle-web-baker/templates/console/rbac.yaml
+# Source: toggle-web-baker-helm/templates/console/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: release-name-toggle-web-baker-console
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -629,7 +629,7 @@ rules:
     resources: ["pods", "pods/log"]
     verbs: ["get"]
 ---
-# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 # Operator ClusterRole — kept in sync with config/rbac/role.yaml
 # (regenerate that file with `just manifests`, then mirror changes here).
 apiVersion: rbac.authorization.k8s.io/v1
@@ -637,7 +637,7 @@ kind: ClusterRole
 metadata:
   name: release-name-toggle-web-baker-operator
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -780,13 +780,13 @@ rules:
   - update
   - watch
 ---
-# Source: toggle-web-baker/templates/console/rbac.yaml
+# Source: toggle-web-baker-helm/templates/console/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: release-name-toggle-web-baker-console
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -801,13 +801,13 @@ subjects:
     name: release-name-toggle-web-baker-console
     namespace: default
 ---
-# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: release-name-toggle-web-baker-operator
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -821,14 +821,14 @@ subjects:
     name: release-name-toggle-web-baker-operator
     namespace: default
 ---
-# Source: toggle-web-baker/templates/console/deployment.yaml
+# Source: toggle-web-baker-helm/templates/console/deployment.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: release-name-toggle-web-baker-console
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -842,14 +842,14 @@ spec:
   ports:
     - { name: http, port: 80, targetPort: http }
 ---
-# Source: toggle-web-baker/templates/console/oauth2-proxy.yaml
+# Source: toggle-web-baker-helm/templates/console/oauth2-proxy.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: release-name-toggle-web-baker-oauth2-proxy
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -863,7 +863,7 @@ spec:
   ports:
     - { name: http, port: 4180, targetPort: http }
 ---
-# Source: toggle-web-baker/templates/console/deployment.yaml
+# Source: toggle-web-baker-helm/templates/console/deployment.yaml
 # The console Deployment + Service. Listens on :8080, serves HTML; auth is
 # handled entirely by oauth2-proxy in front (forward-auth Middleware). The
 # console trusts the X-Auth-Request-User header oauth2-proxy injects.
@@ -873,7 +873,7 @@ metadata:
   name: release-name-toggle-web-baker-console
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -927,7 +927,7 @@ spec:
               cpu: 10m
               memory: 32Mi
 ---
-# Source: toggle-web-baker/templates/console/oauth2-proxy.yaml
+# Source: toggle-web-baker-helm/templates/console/oauth2-proxy.yaml
 # oauth2-proxy: GitHub OAuth forward-auth target for the console. MUST FAIL
 # CLOSED — any error confirming team membership denies the request.
 apiVersion: apps/v1
@@ -936,7 +936,7 @@ metadata:
   name: release-name-toggle-web-baker-oauth2-proxy
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -1001,14 +1001,14 @@ spec:
               cpu: 10m
               memory: 32Mi
 ---
-# Source: toggle-web-baker/templates/operator-deployment.yaml
+# Source: toggle-web-baker-helm/templates/operator-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: release-name-toggle-web-baker-operator
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -1080,7 +1080,7 @@ spec:
               cpu: 10m
               memory: 64Mi
 ---
-# Source: toggle-web-baker/templates/console/ingress.yaml
+# Source: toggle-web-baker-helm/templates/console/ingress.yaml
 # /oauth2/* must reach oauth2-proxy directly (login + callback) WITHOUT the
 # forward-auth middleware, or login can never complete.
 apiVersion: networking.k8s.io/v1
@@ -1089,7 +1089,7 @@ metadata:
   name: release-name-toggle-web-baker-oauth2-proxy
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -1112,7 +1112,7 @@ spec:
     - hosts: [baker-console.example.org]
       secretName: baker-console-tls
 ---
-# Source: toggle-web-baker/templates/console/ingress.yaml
+# Source: toggle-web-baker-helm/templates/console/ingress.yaml
 # Everything else reaches the console and IS guarded by the forward-auth
 # middleware (<namespace>-<name>@kubernetescrd).
 apiVersion: networking.k8s.io/v1
@@ -1121,7 +1121,7 @@ metadata:
   name: release-name-toggle-web-baker-console
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
@@ -1145,7 +1145,7 @@ spec:
     - hosts: [baker-console.example.org]
       secretName: baker-console-tls
 ---
-# Source: toggle-web-baker/templates/console/middleware.yaml
+# Source: toggle-web-baker-helm/templates/console/middleware.yaml
 # Traefik forward-auth Middleware: every console request is first sent to
 # oauth2-proxy's /oauth2/auth. A 2xx passes (copying X-Auth-Request-* headers
 # onto the upstream); anything else redirects to login. oauth2-proxy fails
@@ -1156,7 +1156,7 @@ metadata:
   name: release-name-toggle-web-baker-console-auth
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-0.0.0
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "0.0.0"
