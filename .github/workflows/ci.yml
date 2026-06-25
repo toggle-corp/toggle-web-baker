@@ -46,13 +46,13 @@ jobs:
       - name: Test
         run: just test
       - name: Lint (operator module)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1.6
+          version: v2.12.2
       - name: Lint (console module)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1.6
+          version: v2.12.2
           working-directory: console
 
   docker_build:
@@ -92,7 +92,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ inputs.docker_push }}
+          # On push/PR triggers `inputs` is null, so `inputs.docker_push` renders
+          # as an empty string — coerce to a real boolean or the action errors.
+          push: ${{ inputs.docker_push || false }}
           tags: ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}:${{ steps.tag.outputs.value }}
 
   helm_validate:

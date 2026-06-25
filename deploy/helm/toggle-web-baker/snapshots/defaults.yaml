@@ -592,6 +592,7 @@ spec:
     storage: true
     subresources:
       status: {}
+
 ---
 # Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 # Operator ClusterRole — kept in sync with config/rbac/role.yaml
@@ -763,6 +764,7 @@ subjects:
   - kind: ServiceAccount
     name: release-name-toggle-web-baker-operator
     namespace: default
+
 ---
 # Source: toggle-web-baker-helm/templates/operator-deployment.yaml
 apiVersion: apps/v1

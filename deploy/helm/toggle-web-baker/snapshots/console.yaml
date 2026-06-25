@@ -608,6 +608,7 @@ spec:
     storage: true
     subresources:
       status: {}
+
 ---
 # Source: toggle-web-baker-helm/templates/console/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -800,6 +801,7 @@ subjects:
   - kind: ServiceAccount
     name: release-name-toggle-web-baker-console
     namespace: default
+
 ---
 # Source: toggle-web-baker-helm/templates/operator-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -820,6 +822,7 @@ subjects:
   - kind: ServiceAccount
     name: release-name-toggle-web-baker-operator
     namespace: default
+
 ---
 # Source: toggle-web-baker-helm/templates/console/deployment.yaml
 apiVersion: v1
@@ -841,6 +844,7 @@ spec:
     app.kubernetes.io/component: console
   ports:
     - { name: http, port: 80, targetPort: http }
+
 ---
 # Source: toggle-web-baker-helm/templates/console/oauth2-proxy.yaml
 apiVersion: v1
@@ -862,6 +866,7 @@ spec:
     app.kubernetes.io/component: oauth2-proxy
   ports:
     - { name: http, port: 4180, targetPort: http }
+
 ---
 # Source: toggle-web-baker-helm/templates/console/deployment.yaml
 # The console Deployment + Service. Listens on :8080, serves HTML; auth is
@@ -1079,6 +1084,7 @@ spec:
             requests:
               cpu: 10m
               memory: 64Mi
+
 ---
 # Source: toggle-web-baker-helm/templates/console/ingress.yaml
 # /oauth2/* must reach oauth2-proxy directly (login + callback) WITHOUT the
@@ -1144,6 +1150,7 @@ spec:
   tls:
     - hosts: [baker-console.example.org]
       secretName: baker-console-tls
+
 ---
 # Source: toggle-web-baker-helm/templates/console/middleware.yaml
 # Traefik forward-auth Middleware: every console request is first sent to

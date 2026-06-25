@@ -20,7 +20,11 @@ func sampleBuildSpec() BuildSpec {
 }
 
 func TestBuildSpecHash_StableForSameContent(t *testing.T) {
-	if sampleBuildSpec().Hash() != sampleBuildSpec().Hash() {
+	// Two independently-constructed specs with identical content must hash the
+	// same (assigned to vars so staticcheck SA4000 doesn't see one expression).
+	first := sampleBuildSpec().Hash()
+	second := sampleBuildSpec().Hash()
+	if first != second {
 		t.Fatalf("identical build-relevant spec must hash identically")
 	}
 }
