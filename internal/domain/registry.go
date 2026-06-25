@@ -28,9 +28,25 @@ func CheckImagesAllowed(allowlist []string, images []PhaseImage) error {
 
 func imageAllowed(allowlist []string, image string) bool {
 	for _, prefix := range allowlist {
-		if strings.HasPrefix(image, prefix) {
+		if prefix == "" {
+			continue // an empty entry would otherwise match everything
+		}
+		if image == prefix {
+			return true
+		}
+		if !strings.HasPrefix(image, prefix) {
+			continue
+		}
+		// Require a boundary so "ghcr.io/toggle-corp" cannot match
+		// "ghcr.io/toggle-corp-evil/...": either the entry already ends at a
+		// separator, or the character following the prefix in the image is one.
+		if isImageBoundary(prefix[len(prefix)-1]) || isImageBoundary(image[len(prefix)]) {
 			return true
 		}
 	}
 	return false
+}
+
+func isImageBoundary(c byte) bool {
+	return c == '/' || c == ':' || c == '@'
 }

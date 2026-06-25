@@ -20,6 +20,12 @@ const (
 // buildActive is whether a build Job for this app is still running. Enforcing a
 // single active build per app here is what makes the operator the sole creator
 // and removes the manual-vs-scheduled write race on the shared output PVC.
+//
+// First-build bootstrap: a freshly created app has no rebuild annotation, so
+// requestedToken == lastProcessedToken == "" yields NoBuild. The reconciler is
+// responsible for seeding an initial rebuild token on first reconcile (while
+// status is AwaitingFirstBuild) so the first build is triggered immediately
+// rather than waiting for the first scheduled clock tick.
 func DecideBuild(requestedToken, lastProcessedToken string, buildActive bool) BuildDecision {
 	if requestedToken == lastProcessedToken {
 		return NoBuild

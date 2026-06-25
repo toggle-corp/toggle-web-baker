@@ -38,9 +38,31 @@ func IsStale(current BuildSpec, lastBuiltHash string) bool {
 
 // Hash returns a deterministic content hash of the build-relevant spec.
 // encoding/json marshals map keys in sorted order, so buildArgs ordering does
-// not affect the result.
+// not affect the result. Empty collections are normalized to nil first so that
+// a CR omitting a field and the API server materializing it as an empty
+// map/slice hash identically (otherwise staleness would flip-flop forever).
 func (b BuildSpec) Hash() string {
-	data, _ := json.Marshal(b)
+	data, _ := json.Marshal(b.normalized())
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func (b BuildSpec) normalized() BuildSpec {
+	if len(b.BuildArgs) == 0 {
+		b.BuildArgs = nil
+	}
+	if len(b.SecretRefs) == 0 {
+		b.SecretRefs = nil
+	}
+	b.Setup = b.Setup.normalized()
+	b.Fetch = b.Fetch.normalized()
+	b.Build = b.Build.normalized()
+	return b
+}
+
+func (p PhaseSpec) normalized() PhaseSpec {
+	if len(p.Command) == 0 {
+		p.Command = nil
+	}
+	return p
 }

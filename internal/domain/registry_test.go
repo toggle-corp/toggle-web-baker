@@ -36,6 +36,21 @@ func TestCheckImagesAllowed_AcceptsImagesMatchingAllowlist(t *testing.T) {
 	}
 }
 
+func TestCheckImagesAllowed_PrefixMustMatchAtBoundary(t *testing.T) {
+	// An allowlist entry missing a trailing separator must not over-match a
+	// look-alike repo (ghcr.io/toggle-corp -> ghcr.io/toggle-corp-evil/...).
+	allowlist := []string{"ghcr.io/toggle-corp"}
+	images := []PhaseImage{{Phase: "build", Image: "ghcr.io/toggle-corp-evil/miner:latest"}}
+	if err := CheckImagesAllowed(allowlist, images); err == nil {
+		t.Fatalf("look-alike repo must be rejected: prefix match needs a boundary")
+	}
+	// The legitimate repo under that org must still pass.
+	ok := []PhaseImage{{Phase: "build", Image: "ghcr.io/toggle-corp/app:1.0"}}
+	if err := CheckImagesAllowed(allowlist, ok); err != nil {
+		t.Fatalf("legitimate repo under the org must pass, got: %v", err)
+	}
+}
+
 func TestCheckImagesAllowed_EmptyAllowlistRejectsEverything(t *testing.T) {
 	images := []PhaseImage{{Phase: "build", Image: "docker.io/library/node:20"}}
 	if err := CheckImagesAllowed(nil, images); err == nil {

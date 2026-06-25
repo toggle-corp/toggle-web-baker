@@ -34,6 +34,22 @@ func TestBuildSpecHash_ChangesWhenRefChanges(t *testing.T) {
 	}
 }
 
+func TestBuildSpecHash_NilAndEmptyCollectionsHashEqual(t *testing.T) {
+	// CRD round-tripping normalizes omitted vs empty collections; nil and empty
+	// must hash identically or staleness flip-flops forever.
+	a := sampleBuildSpec()
+	a.BuildArgs = nil
+	a.SecretRefs = nil
+	a.Build.Command = nil
+	b := sampleBuildSpec()
+	b.BuildArgs = map[string]string{}
+	b.SecretRefs = []string{}
+	b.Build.Command = []string{}
+	if a.Hash() != b.Hash() {
+		t.Fatalf("nil and empty collections must hash equally (got %s vs %s)", a.Hash(), b.Hash())
+	}
+}
+
 func TestIsStale_FalseWhenCurrentMatchesLastDeployed(t *testing.T) {
 	cur := sampleBuildSpec()
 	if IsStale(cur, cur.Hash()) {

@@ -41,11 +41,28 @@ func ValidateStorage(cfg StorageConfig) error {
 }
 
 func validateVolume(name string, v VolumeThresholds) error {
-	if v.CleanupBytes != 0 && v.AlertBytes != 0 && v.CleanupBytes >= v.AlertBytes {
-		return fmt.Errorf("storage.%s: cleanupThreshold (%d) must be < alertThreshold (%d)", name, v.CleanupBytes, v.AlertBytes)
+	// Enforce strictly-increasing order across whichever thresholds are present
+	// (0 = unset). Checking only adjacent pairs would lose transitivity when the
+	// middle term (alert) is unset, so we compare each present threshold against
+	// the previous present one.
+	ordered := []struct {
+		label string
+		val   int64
+	}{
+		{"cleanupThreshold", v.CleanupBytes},
+		{"alertThreshold", v.AlertBytes},
+		{"releaseSizeCap", v.CapBytes},
 	}
-	if v.AlertBytes != 0 && v.CapBytes != 0 && v.AlertBytes >= v.CapBytes {
-		return fmt.Errorf("storage.%s: alertThreshold (%d) must be < releaseSizeCap (%d)", name, v.AlertBytes, v.CapBytes)
+	prev := -1
+	for i := range ordered {
+		if ordered[i].val == 0 {
+			continue
+		}
+		if prev >= 0 && ordered[prev].val >= ordered[i].val {
+			return fmt.Errorf("storage.%s: %s (%d) must be < %s (%d)", name,
+				ordered[prev].label, ordered[prev].val, ordered[i].label, ordered[i].val)
+		}
+		prev = i
 	}
 	return nil
 }

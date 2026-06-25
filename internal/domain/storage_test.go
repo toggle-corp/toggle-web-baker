@@ -32,6 +32,17 @@ func TestValidateStorage_RejectsOutputAlertNotBelowCap(t *testing.T) {
 	}
 }
 
+func TestValidateStorage_RejectsCleanupAboveCapWhenAlertUnset(t *testing.T) {
+	// With alert unset (0), the cleanup<alert and alert<cap checks both skip;
+	// the cleanup<cap invariant must still be enforced transitively.
+	cfg := StorageConfig{
+		Output: VolumeThresholds{CleanupBytes: 10 << 30, CapBytes: 5 << 30},
+	}
+	if err := ValidateStorage(cfg); err == nil {
+		t.Fatalf("cleanup (10Gi) >= cap (5Gi) with alert unset must be rejected")
+	}
+}
+
 func TestValidateStorage_AcceptsValidOrdering(t *testing.T) {
 	cfg := StorageConfig{
 		Cache:     VolumeThresholds{CleanupBytes: 2 << 30, AlertBytes: 4 << 30},
