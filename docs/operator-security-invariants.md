@@ -29,6 +29,12 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
 - **`clone` image** is platform-owned and **digest-pinned**; no user override.
   Anonymous clone (repos are public); any future private-repo credential is held
   only by `clone` and **never forwarded** to later phases.
+  > ⚠️ **Current relaxation:** the Helm chart (`deploy/helm/toggle-web-baker`)
+  > passes the platform helper images (`clone`/`copier`/`du`/`cleanup`) by **tag**
+  > (`repository:appVersion`), not by digest — a deliberate trade for a simpler
+  > lockstep release. The "digest-pinned, no user override" guarantee currently
+  > holds only for `go run`/non-helm deploys using the `config.go` defaults. Harden
+  > by resolving tag→digest in CI before packaging the chart (see chart README).
 - **Build container NEVER mounts the output PVC** (only the scratch work volume +
   cache). The copier is the sole writer to output.
 - **`backoffLimit: 0`** (a failed build fails once → `Degraded`; last-good keeps

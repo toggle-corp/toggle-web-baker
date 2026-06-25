@@ -5,9 +5,13 @@ import (
 	"net"
 )
 
-// PlatformImages are the digest-pinned, platform-locked image refs the operator
-// stamps onto the pods it creates. They are NOT user-supplied and not subject to
-// the registry allowlist (the allowlist only covers setup/fetch/build images).
+// PlatformImages are the platform-locked image refs the operator stamps onto
+// the pods it creates. They are NOT user-supplied and not subject to the
+// registry allowlist (the allowlist only covers setup/fetch/build images).
+//
+// The defaults below are digest-pinned (the fallback for non-helm runs). NOTE:
+// the Helm chart currently supplies these via the -image-* flags as TAG refs
+// (repository:appVersion), not digests — see docs/operator-security-invariants.md.
 type PlatformImages struct {
 	Clone   string // git clone initContainer
 	Copier  string // main container that publishes the bundle to the output PVC
