@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+// Platform helper images default to the flat ghcr.io/toggle-corp/toggle-web-baker-<name>
+// repo scheme (matching images/Makefile), still digest-pinned. These defaults are a
+// fallback for non-helm runs; the Helm chart supplies real refs via the -image-* flags.
+func TestConfigDefaults_HelperImageRepos(t *testing.T) {
+	c := validConfig()
+	c.Defaults()
+	cases := map[string]string{
+		"clone":   c.Images.Clone,
+		"copier":  c.Images.Copier,
+		"du":      c.Images.Du,
+		"cleanup": c.Images.Cleanup,
+	}
+	for name, ref := range cases {
+		wantRepo := "ghcr.io/toggle-corp/toggle-web-baker-" + name
+		if !strings.HasPrefix(ref, wantRepo+"@sha256:") {
+			t.Errorf("Images.%s = %q, want prefix %q@sha256:", name, ref, wantRepo)
+		}
+	}
+}
+
 func validConfig() OperatorConfig {
 	c := OperatorConfig{
 		ClusterCIDRs: []string{"10.0.0.0/8", "172.20.0.0/16"},

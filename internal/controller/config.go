@@ -70,16 +70,16 @@ func (c *OperatorConfig) Defaults() {
 		c.TraefikGroup = "traefik.io"
 	}
 	if c.Images.Clone == "" {
-		c.Images.Clone = "ghcr.io/toggle-corp/baker-clone@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		c.Images.Clone = "ghcr.io/toggle-corp/toggle-web-baker-clone@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	if c.Images.Copier == "" {
-		c.Images.Copier = "ghcr.io/toggle-corp/baker-copier@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		c.Images.Copier = "ghcr.io/toggle-corp/toggle-web-baker-copier@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	if c.Images.Du == "" {
-		c.Images.Du = "ghcr.io/toggle-corp/baker-du@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		c.Images.Du = "ghcr.io/toggle-corp/toggle-web-baker-du@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	if c.Images.Cleanup == "" {
-		c.Images.Cleanup = "ghcr.io/toggle-corp/baker-cleanup@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		c.Images.Cleanup = "ghcr.io/toggle-corp/toggle-web-baker-cleanup@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	if c.Images.Kubectl == "" {
 		c.Images.Kubectl = "registry.k8s.io/kubectl:v1.32.1"

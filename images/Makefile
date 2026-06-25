@@ -10,6 +10,8 @@
 #   make shellcheck      # lint every shell script
 #   make digests         # print the pinned base digests
 
+# Flat repo scheme: ghcr.io/toggle-corp/toggle-web-baker-<image> (matches the
+# operator's config.go defaults and the Helm chart image refs).
 REGISTRY ?= ghcr.io/toggle-corp/toggle-web-baker
 TAG      ?= dev
 
@@ -26,16 +28,16 @@ CLEANUP_BASE := node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbde
 build: $(IMAGES)
 
 clone:
-	docker build -t $(REGISTRY)/clone:$(TAG) ./clone
+	docker build -t $(REGISTRY)-clone:$(TAG) ./clone
 
 copier:
-	docker build -t $(REGISTRY)/copier:$(TAG) ./copier
+	docker build -t $(REGISTRY)-copier:$(TAG) ./copier
 
 du:
-	docker build -t $(REGISTRY)/du:$(TAG) ./du
+	docker build -t $(REGISTRY)-du:$(TAG) ./du
 
 cleanup:
-	docker build -t $(REGISTRY)/cleanup:$(TAG) ./cleanup
+	docker build -t $(REGISTRY)-cleanup:$(TAG) ./cleanup
 
 test:
 	bash ./test/copier_test.sh
