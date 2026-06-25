@@ -1,0 +1,29 @@
+toggle-web-baker {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Operator: {{ include "toggle-web-baker.image" (dict "image" .Values.operator.image "root" $) }}
+
+{{- if not .Values.operator.clusterCIDRs }}
+
+⚠️  operator.clusterCIDRs is EMPTY.
+    The operator will refuse to start (Ready=False) — build-pod egress cannot
+    be locked down without the cluster pod/service CIDRs. Set them and upgrade:
+
+      helm upgrade {{ .Release.Name }} ... \
+        --set 'operator.clusterCIDRs={10.0.0.0/8\,172.20.0.0/16}'
+{{- end }}
+
+{{- if .Values.console.enabled }}
+
+Console: enabled at https://{{ .Values.console.host }}
+  {{- if not .Values.console.oauth2Proxy.existingSecret }}
+  {{- if or (not .Values.console.oauth2Proxy.clientId) (not .Values.console.oauth2Proxy.cookieSecret) }}
+
+  ⚠️  console.oauth2Proxy credentials look incomplete. Provide a GitHub OAuth
+      app (clientId/clientSecret/cookieSecret) or reference an existingSecret,
+      or oauth2-proxy will crashloop and the console stays unreachable.
+  {{- end }}
+  {{- end }}
+{{- else }}
+
+Console: disabled (set console.enabled=true to deploy the admin console).
+{{- end }}

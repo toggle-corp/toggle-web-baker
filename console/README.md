@@ -93,19 +93,22 @@ curl -H 'X-Auth-Request-User: you' localhost:8080/
 
 ## Deploy
 
-Manifests in `deploy/` (apply into namespace `baker-system`):
+The console is an opt-in component of the Helm chart at
+`deploy/helm/toggle-web-baker` — enable it with `console.enabled=true`. The
+chart renders the same set of objects the old `console/deploy/*.yaml` manifests
+did (RBAC, console Deployment + Service, oauth2-proxy with the fail-closed
+GitHub-team flags, the Traefik forward-auth Middleware, and the two Ingresses).
 
-- `rbac.yaml` — ServiceAccount + ClusterRole (`get/list/watch` + `patch`
-  frontendapps, `get` pods + pods/log; **no** job/pod create) + binding.
-- `console.yaml` — console Deployment + ClusterIP Service.
-- `oauth2-proxy.yaml` — oauth2-proxy Deployment + Service + Secret, with the
-  fail-closed GitHub-team flags.
-- `middleware.yaml` — Traefik `Middleware` (forward-auth).
-- `ingress.yaml` — two Ingresses: `/oauth2/*` to oauth2-proxy (unauthenticated
-  login path) and `/` to the console (guarded by the forward-auth middleware).
+```bash
+helm upgrade baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
+  --namespace baker-system \
+  --set console.enabled=true \
+  --set console.host=baker-console.example.org \
+  --set console.oauth2Proxy.existingSecret=baker-oauth2-proxy
+```
 
-Replace the placeholder host (`baker-console.example.org`), the image
-reference, and the OAuth secret values before applying.
+See the chart README for the console + oauth2-proxy values
+(`console.host`, `console.oauth2Proxy.*`).
 
 ## Layout
 

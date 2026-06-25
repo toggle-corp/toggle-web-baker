@@ -1,0 +1,60 @@
+{{- if .Values.console.enabled }}
+{{- if .Values.console.ingress.enabled }}
+{{- $entrypoint := .Values.console.ingress.entrypoint }}
+{{- $host := .Values.console.host }}
+# /oauth2/* must reach oauth2-proxy directly (login + callback) WITHOUT the
+# forward-auth middleware, or login can never complete.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "toggle-web-baker.oauth2.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: oauth2-proxy
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ $entrypoint }}
+spec:
+  rules:
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "toggle-web-baker.oauth2.fullname" . }}
+                port: { number: 4180 }
+  tls:
+    - hosts: [{{ $host }}]
+      secretName: {{ .Values.console.tlsSecretName }}
+---
+# Everything else reaches the console and IS guarded by the forward-auth
+# middleware (<namespace>-<name>@kubernetescrd).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "toggle-web-baker.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ $entrypoint }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "toggle-web-baker.console.fullname" . }}-auth@kubernetescrd
+spec:
+  rules:
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "toggle-web-baker.console.fullname" . }}
+                port: { number: 80 }
+  tls:
+    - hosts: [{{ $host }}]
+      secretName: {{ .Values.console.tlsSecretName }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "toggle-web-baker.operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+spec:
+  replicas: {{ .Values.operator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "toggle-web-baker.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        {{- include "toggle-web-baker.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: {{ include "toggle-web-baker.operator.fullname" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: {{ include "toggle-web-baker.image" (dict "image" .Values.operator.image "root" $) }}
+          imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+          args:
+            - --leader-elect={{ .Values.operator.leaderElect }}
+            - --metrics-bind-address={{ .Values.operator.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
+            {{- range .Values.operator.clusterCIDRs }}
+            - --cluster-cidrs={{ . }}
+            {{- end }}
+            {{- range .Values.operator.registryAllowlist }}
+            - --registry-allowlist={{ . }}
+            {{- end }}
+            {{- with .Values.operator.storageClass }}
+            - --storage-class={{ . }}
+            {{- end }}
+            - --traefik-namespace={{ .Values.operator.traefikNamespace }}
+            - --traefik-group={{ .Values.operator.traefikGroup }}
+            {{- with .Values.operator.imagePullSecret }}
+            - --image-pull-secret={{ . }}
+            {{- end }}
+            - --image-clone={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clone "root" $) }}
+            - --image-copier={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.copier "root" $) }}
+            - --image-du={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.du "root" $) }}
+            - --image-cleanup={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.cleanup "root" $) }}
+            - --image-kubectl={{ .Values.platformImages.kubectl }}
+            - --image-nginx={{ .Values.platformImages.nginx }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}

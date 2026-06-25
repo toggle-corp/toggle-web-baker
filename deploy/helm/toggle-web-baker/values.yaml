@@ -1,0 +1,114 @@
+# Default values for toggle-web-baker.
+#
+# Image tags default to the chart's appVersion (left empty below). Every image
+# is published in lockstep under ghcr.io/toggle-corp/toggle-web-baker-<name>.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Install the FrontendApp CRD as part of the chart (templates/crd.yaml). The CRD
+# carries helm.sh/resource-policy: keep, so `helm uninstall` will NOT delete it
+# (existing FrontendApp CRs survive). Set false to let a cluster-admin / GitOps
+# flow own the CRD out-of-band.
+crds:
+  install: true
+
+operator:
+  replicas: 1
+
+  image:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-operator
+    # tag: defaults to .Chart.AppVersion when empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # MANDATORY. Pod + Service CIDRs EXCLUDED from build-pod egress. The operator
+  # refuses to start (Ready=False) if this is empty — there is no safe default.
+  # e.g. ["10.0.0.0/8", "172.20.0.0/16"]
+  clusterCIDRs: []
+
+  # Image-prefix allowlist for user-supplied (setup/fetch/build) images. Empty
+  # fails closed at reconcile time.
+  registryAllowlist: []
+
+  leaderElect: true
+  metricsBindAddress: ":8080"
+  healthProbeBindAddress: ":8081"
+
+  # WaitForFirstConsumer StorageClass backing all PVCs. Empty => cluster default.
+  storageClass: ""
+  # Namespace of the Traefik controller (used for the nginx-ingress NetworkPolicy).
+  traefikNamespace: traefik
+  # API group of the Traefik Middleware CRD (older clusters: traefik.containo.us).
+  traefikGroup: traefik.io
+  # imagePullSecret stamped onto every platform pod the operator creates.
+  imagePullSecret: ""
+
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+# Platform helper images the operator stamps onto the pods it creates.
+#
+# NOTE: referenced by TAG (repository:appVersion) for now, NOT by digest. This
+# deliberately relaxes the "digest-pinned, no user override" platform-image
+# invariant (docs/operator-security-invariants.md) in exchange for a simpler
+# lockstep release. Harden later by resolving tag->digest in CI.
+# clone/copier/du/cleanup tags default to .Chart.AppVersion when empty.
+platformImages:
+  clone:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-clone
+    tag: ""
+  copier:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-copier
+    tag: ""
+  du:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-du
+    tag: ""
+  cleanup:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-cleanup
+    tag: ""
+  # External images — pinned independently of the chart version.
+  kubectl: registry.k8s.io/kubectl:v1.32.1
+  nginx: docker.io/nginxinc/nginx-unprivileged:1.27-alpine
+
+# Read-only admin console + its oauth2-proxy + Traefik ingress. Opt-in.
+console:
+  enabled: false
+
+  image:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-console
+    # tag: defaults to .Chart.AppVersion when empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # Public host for the console and oauth2-proxy redirect/cookie domain.
+  host: baker-console.example.org
+  tlsSecretName: baker-console-tls
+
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+  ingress:
+    enabled: true
+    entrypoint: websecure
+
+  oauth2Proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    githubOrg: toggle-corp
+    githubTeam: toggle-corp/platform-team
+
+    # If existingSecret is set, the chart references it and does NOT create a
+    # Secret (recommended — keeps OAuth credentials out of values/Helm release).
+    # The secret must hold keys: client-id, client-secret, cookie-secret.
+    existingSecret: ""
+    # Used ONLY when existingSecret is empty (the chart then creates the Secret).
+    # cookieSecret must be 16/24/32 bytes.
+    clientId: ""
+    clientSecret: ""
+    cookieSecret: ""
+
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { cpu: 100m, memory: 64Mi }

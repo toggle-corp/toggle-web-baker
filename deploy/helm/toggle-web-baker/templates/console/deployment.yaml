@@ -1,0 +1,72 @@
+{{- if .Values.console.enabled }}
+# The console Deployment + Service. Listens on :8080, serves HTML; auth is
+# handled entirely by oauth2-proxy in front (forward-auth Middleware). The
+# console trusts the X-Auth-Request-User header oauth2-proxy injects.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "toggle-web-baker.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "toggle-web-baker.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        {{- include "toggle-web-baker.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: console
+    spec:
+      serviceAccountName: {{ include "toggle-web-baker.console.fullname" . }}
+      {{- with .Values.operator.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: console
+          image: {{ include "toggle-web-baker.image" (dict "image" .Values.console.image "root" $) }}
+          imagePullPolicy: {{ .Values.console.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: LISTEN_ADDR, value: ":8080" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "toggle-web-baker.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  selector:
+    {{- include "toggle-web-baker.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+  ports:
+    - { name: http, port: 80, targetPort: http }
+{{- end }}

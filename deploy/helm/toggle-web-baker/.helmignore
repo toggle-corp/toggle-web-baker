@@ -1,0 +1,8 @@
+# Snapshot-testing scaffolding (fugit helm-update-snapshots) — not part of the
+# packaged chart.
+tests.yaml
+tests/
+snapshots/
+update-snapshots.sh
+*.bak
+.DS_Store
