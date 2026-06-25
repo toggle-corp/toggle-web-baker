@@ -1,0 +1,10 @@
+# fugit helm snapshot scenarios. Each key gets its tests/<key> overlay
+# auto-applied (NOT listed here) on top of any base values files in the list.
+# Snapshots render to snapshots/<key-without-.yaml>.yaml.
+tests:
+  # Operator-only install (console disabled), CRD installed.
+  defaults.yaml: []
+  # Console + oauth2-proxy + ingress enabled.
+  console.yaml: []
+  # crds.install=false — CRD must NOT render.
+  no-crd.yaml: []

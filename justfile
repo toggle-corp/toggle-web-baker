@@ -44,6 +44,6 @@ helm-lint:
 helm-template:
     helm template deploy/helm/toggle-web-baker
 
-# Update Helm snapshot tests.
+# Update (or --check-diff-only) Helm snapshot tests.
 helm-snapshots *ARGS:
-    ./helm/update-snapshots.sh {{ARGS}}
+    ./deploy/helm/toggle-web-baker/update-snapshots.sh {{ARGS}}

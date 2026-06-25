@@ -1,0 +1,10 @@
+# Console enabled, referencing an existing oauth2 secret (so no Secret with
+# credentials is rendered into the snapshot).
+operator:
+  clusterCIDRs:
+    - 10.0.0.0/8
+console:
+  enabled: true
+  host: baker-console.example.org
+  oauth2Proxy:
+    existingSecret: baker-oauth2-proxy

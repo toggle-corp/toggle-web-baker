@@ -1,0 +1,8 @@
+# Operator-only scenario. Provide the mandatory CIDRs so the render is
+# representative; everything else stays at chart defaults (console disabled).
+operator:
+  clusterCIDRs:
+    - 10.0.0.0/8
+    - 172.20.0.0/16
+  registryAllowlist:
+    - ghcr.io/toggle-corp/

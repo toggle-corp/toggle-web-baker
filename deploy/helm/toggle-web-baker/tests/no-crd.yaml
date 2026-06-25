@@ -1,0 +1,7 @@
+# CRD ownership handed to a cluster-admin / GitOps flow: the chart must not
+# render the CustomResourceDefinition.
+operator:
+  clusterCIDRs:
+    - 10.0.0.0/8
+crds:
+  install: false

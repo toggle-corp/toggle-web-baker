@@ -1,0 +1,1172 @@
+---
+# Source: toggle-web-baker/templates/console/rbac.yaml
+# RBAC for the console: READ-ONLY except the single annotation PATCH the
+# "Request rebuild" button needs. No create/delete on jobs or pods anywhere.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-toggle-web-baker-console
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+---
+# Source: toggle-web-baker/templates/operator-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-toggle-web-baker-operator
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: toggle-web-baker/templates/crd.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+    # helm.sh/resource-policy keeps the CRD on `helm uninstall` so existing
+    # FrontendApp CRs are not cascade-deleted.
+    helm.sh/resource-policy: keep
+  name: frontendapps.baker.toggle-corp.com
+spec:
+  group: baker.toggle-corp.com
+  names:
+    kind: FrontendApp
+    listKind: FrontendAppList
+    plural: frontendapps
+    shortNames:
+    - fapp
+    singular: frontendapp
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.url
+      name: URL
+      type: string
+    - jsonPath: .status.specStale
+      name: Stale
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FrontendApp is the Schema for the frontendapps API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: 'FrontendAppSpec is the desired state: operational tunables
+              for one app.'
+            properties:
+              auth:
+                description: |-
+                  AuthConfig configures optional HTTP basic auth. Exactly one of passwordHash or
+                  secretRef must be set.
+                properties:
+                  passwordHash:
+                    type: string
+                  secretRef:
+                    description: AuthSecretRef points at a Secret key holding a bcrypt/htpasswd
+                      line.
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: auth requires exactly one of passwordHash or secretRef
+                  rule: '(has(self.passwordHash) ? 1 : 0) + (has(self.secretRef) ?
+                    1 : 0) == 1'
+              build:
+                description: |-
+                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                properties:
+                  command:
+                    items:
+                      type: string
+                    type: array
+                  env:
+                    items:
+                      description: |-
+                        EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                        reach the built bundle, so it must never carry secrets.
+                      properties:
+                        name:
+                          type: string
+                        value:
+                          type: string
+                        valueFrom:
+                          description: |-
+                            EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                            ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                            secrets can never leak into setup/build env via this type.
+                          properties:
+                            configMapKeyRef:
+                              description: ConfigMapKeySelector selects a key from
+                                a ConfigMap in the app namespace.
+                              properties:
+                                key:
+                                  type: string
+                                name:
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  image:
+                    type: string
+                type: object
+              buildArgs:
+                description: BuildArgs are PUBLIC, ConfigMap-sourced env that may
+                  reach the bundle.
+                items:
+                  description: |-
+                    EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                    reach the built bundle, so it must never carry secrets.
+                  properties:
+                    name:
+                      type: string
+                    value:
+                      type: string
+                    valueFrom:
+                      description: |-
+                        EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                        ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                        secrets can never leak into setup/build env via this type.
+                      properties:
+                        configMapKeyRef:
+                          description: ConfigMapKeySelector selects a key from a ConfigMap
+                            in the app namespace.
+                          properties:
+                            key:
+                              type: string
+                            name:
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              fetch:
+                description: |-
+                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                properties:
+                  command:
+                    items:
+                      type: string
+                    type: array
+                  env:
+                    items:
+                      description: |-
+                        EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                        reach the built bundle, so it must never carry secrets.
+                      properties:
+                        name:
+                          type: string
+                        value:
+                          type: string
+                        valueFrom:
+                          description: |-
+                            EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                            ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                            secrets can never leak into setup/build env via this type.
+                          properties:
+                            configMapKeyRef:
+                              description: ConfigMapKeySelector selects a key from
+                                a ConfigMap in the app namespace.
+                              properties:
+                                key:
+                                  type: string
+                                name:
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  image:
+                    type: string
+                type: object
+              ingress:
+                description: IngressConfig describes the public ingress for the served
+                  bundle.
+                properties:
+                  className:
+                    type: string
+                  host:
+                    type: string
+                  tls:
+                    description: TLSConfig configures TLS termination at the Ingress.
+                    properties:
+                      secretName:
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                required:
+                - host
+                type: object
+              keepReleases:
+                default: 0
+                type: integer
+              outputDir:
+                type: string
+              packageManager:
+                default: yarn
+                description: PackageManager selects the JS package manager (drives
+                  the volume layout).
+                enum:
+                - yarn
+                - pnpm
+                type: string
+              ref:
+                type: string
+              repo:
+                type: string
+              resources:
+                description: ResourcesConfig groups resource and deadline tunables.
+                properties:
+                  activeDeadlineSeconds:
+                    default: 1800
+                    format: int64
+                    type: integer
+                  build:
+                    description: BuildResources configures the build container's resource
+                      constraints.
+                    properties:
+                      cpuRequest:
+                        type: string
+                      memoryLimit:
+                        default: 6Gi
+                        type: string
+                      memoryRequest:
+                        type: string
+                    type: object
+                type: object
+              schedule:
+                default: 0 */12 * * *
+                type: string
+              secrets:
+                description: Secrets are Secret-sourced env injected into the FETCH
+                  phase ONLY.
+                items:
+                  description: |-
+                    EnvVarWithSecret is a Secret-sourced environment variable, intended for the
+                    FETCH phase ONLY. The operator injects these solely into the fetch container.
+                  properties:
+                    name:
+                      type: string
+                    valueFrom:
+                      description: EnvVarWithSecretSource is the inline source for
+                        a secret-backed env var.
+                      properties:
+                        secretKeyRef:
+                          description: SecretKeySelector selects a key from a Secret
+                            in the app namespace.
+                          properties:
+                            key:
+                              type: string
+                            name:
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      required:
+                      - secretKeyRef
+                      type: object
+                  required:
+                  - name
+                  - valueFrom
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              setup:
+                description: |-
+                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                properties:
+                  command:
+                    items:
+                      type: string
+                    type: array
+                  env:
+                    items:
+                      description: |-
+                        EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                        reach the built bundle, so it must never carry secrets.
+                      properties:
+                        name:
+                          type: string
+                        value:
+                          type: string
+                        valueFrom:
+                          description: |-
+                            EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                            ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                            secrets can never leak into setup/build env via this type.
+                          properties:
+                            configMapKeyRef:
+                              description: ConfigMapKeySelector selects a key from
+                                a ConfigMap in the app namespace.
+                              properties:
+                                key:
+                                  type: string
+                                name:
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  image:
+                    type: string
+                type: object
+              storage:
+                description: |-
+                  StorageConfig groups the per-volume absolute-byte thresholds. The operator
+                  also calls domain.ValidateStorage at reconcile time (cleanup < alert < cap).
+                properties:
+                  cache:
+                    description: CacheThresholds are absolute-byte thresholds for
+                      the regenerable cache volume.
+                    properties:
+                      alertBytes:
+                        format: int64
+                        type: integer
+                      cleanupBytes:
+                        format: int64
+                        type: integer
+                    type: object
+                  dataCache:
+                    description: DataCacheThresholds adds a per-run delta budget on
+                      top of cache thresholds.
+                    properties:
+                      alertBytes:
+                        format: int64
+                        type: integer
+                      cleanupBytes:
+                        format: int64
+                        type: integer
+                      runDeltaBytes:
+                        format: int64
+                        type: integer
+                    type: object
+                  node:
+                    description: NodeStorage describes node-level headroom expectations.
+                    properties:
+                      freeSpaceHeadroomBytes:
+                        format: int64
+                        type: integer
+                    type: object
+                  output:
+                    description: OutputThresholds bound the served-bundle volume.
+                    properties:
+                      alertBytes:
+                        format: int64
+                        type: integer
+                      capBytes:
+                        format: int64
+                        type: integer
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: cache.cleanupBytes must be < cache.alertBytes
+                  rule: '!has(self.cache) || !has(self.cache.cleanupBytes) || !has(self.cache.alertBytes)
+                    || self.cache.cleanupBytes < self.cache.alertBytes'
+                - message: dataCache.cleanupBytes must be < dataCache.alertBytes
+                  rule: '!has(self.dataCache) || !has(self.dataCache.cleanupBytes)
+                    || !has(self.dataCache.alertBytes) || self.dataCache.cleanupBytes
+                    < self.dataCache.alertBytes'
+                - message: output.alertBytes must be < output.capBytes
+                  rule: '!has(self.output) || !has(self.output.alertBytes) || !has(self.output.capBytes)
+                    || self.output.alertBytes < self.output.capBytes'
+              submodules:
+                type: boolean
+            required:
+            - ingress
+            - repo
+            type: object
+          status:
+            description: FrontendAppStatus is the operator-owned observed state.
+            properties:
+              build:
+                description: BuildStatus mirrors the current/last build Job.
+                properties:
+                  attempts:
+                    type: integer
+                  completionTime:
+                    format: date-time
+                    type: string
+                  jobName:
+                    type: string
+                  logsRef:
+                    type: string
+                  message:
+                    type: string
+                  phase:
+                    description: BuildPhase is the lifecycle of the current/last build
+                      pod.
+                    type: string
+                  result:
+                    description: BuildResult is the terminal outcome of a build pod.
+                    type: string
+                  startTime:
+                    format: date-time
+                    type: string
+                type: object
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              dataFreshness:
+                type: string
+              lastBuildTime:
+                format: date-time
+                type: string
+              lastBuiltSpecHash:
+                type: string
+              lastManualTrigger:
+                description: ManualTrigger records the last manual rebuild request.
+                properties:
+                  time:
+                    format: date-time
+                    type: string
+                  triggeredBy:
+                    type: string
+                type: object
+              lastProcessedRebuild:
+                type: string
+              lastSuccessfulBuildTime:
+                format: date-time
+                type: string
+              nextScheduledBuildTime:
+                format: date-time
+                type: string
+              nodeName:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the derived top-level lifecycle phase (computed
+                  from conditions).
+                type: string
+              release:
+                description: ReleaseStatus tracks the served release pointers.
+                properties:
+                  current:
+                    type: string
+                  previous:
+                    type: string
+                  servingSince:
+                    format: date-time
+                    type: string
+                type: object
+              specStale:
+                type: boolean
+              storage:
+                description: StorageStatus records the most recent du measurement.
+                properties:
+                  lastRunDeltas:
+                    additionalProperties:
+                      format: int64
+                      type: integer
+                    type: object
+                  measuredAt:
+                    format: date-time
+                    type: string
+                  sizes:
+                    additionalProperties:
+                      format: int64
+                      type: integer
+                    type: object
+                  thresholdState:
+                    type: string
+                type: object
+              url:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+# Source: toggle-web-baker/templates/console/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-toggle-web-baker-console
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+rules:
+  - apiGroups: ["baker.toggle-corp.com"]
+    resources: ["frontendapps"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get"]
+---
+# Source: toggle-web-baker/templates/operator-rbac.yaml
+# Operator ClusterRole — kept in sync with config/rbac/role.yaml
+# (regenerate that file with `just manifests`, then mirror changes here).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-toggle-web-baker-operator
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - persistentvolumeclaims
+  - serviceaccounts
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baker.toggle-corp.com
+  resources:
+  - frontendapps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baker.toggle-corp.com
+  resources:
+  - frontendapps/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - baker.toggle-corp.com
+  resources:
+  - frontendapps/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - traefik.io
+  resources:
+  - middlewares
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+# Source: toggle-web-baker/templates/console/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-toggle-web-baker-console
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-toggle-web-baker-console
+subjects:
+  - kind: ServiceAccount
+    name: release-name-toggle-web-baker-console
+    namespace: default
+---
+# Source: toggle-web-baker/templates/operator-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-toggle-web-baker-operator
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-toggle-web-baker-operator
+subjects:
+  - kind: ServiceAccount
+    name: release-name-toggle-web-baker-operator
+    namespace: default
+---
+# Source: toggle-web-baker/templates/console/deployment.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-toggle-web-baker-console
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+spec:
+  selector:
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: console
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+# Source: toggle-web-baker/templates/console/oauth2-proxy.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-toggle-web-baker-oauth2-proxy
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: oauth2-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: oauth2-proxy
+  ports:
+    - { name: http, port: 4180, targetPort: http }
+---
+# Source: toggle-web-baker/templates/console/deployment.yaml
+# The console Deployment + Service. Listens on :8080, serves HTML; auth is
+# handled entirely by oauth2-proxy in front (forward-auth Middleware). The
+# console trusts the X-Auth-Request-User header oauth2-proxy injects.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-toggle-web-baker-console
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: toggle-web-baker
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: toggle-web-baker
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: console
+    spec:
+      serviceAccountName: release-name-toggle-web-baker-console
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: console
+          image: ghcr.io/toggle-corp/toggle-web-baker-console:0.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: LISTEN_ADDR, value: ":8080" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+---
+# Source: toggle-web-baker/templates/console/oauth2-proxy.yaml
+# oauth2-proxy: GitHub OAuth forward-auth target for the console. MUST FAIL
+# CLOSED — any error confirming team membership denies the request.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-toggle-web-baker-oauth2-proxy
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: oauth2-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: toggle-web-baker
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: toggle-web-baker
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: oauth2-proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+          args:
+            - --http-address=0.0.0.0:4180
+            - --provider=github
+            - --github-org=toggle-corp
+            - --github-team=toggle-corp/platform-team
+            - --email-domain=*
+            - --scope=user:email read:org
+            - --set-xauthrequest=true
+            - --pass-user-headers=true
+            - --reverse-proxy=true
+            - --skip-provider-button=true
+            - --cookie-secure=true
+            - --cookie-name=_baker_console
+            - --cookie-domain=baker-console.example.org
+            - --redirect-url=https://baker-console.example.org/oauth2/callback
+            - --whitelist-domain=baker-console.example.org
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: baker-oauth2-proxy, key: client-id } }
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: baker-oauth2-proxy, key: client-secret } }
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom: { secretKeyRef: { name: baker-oauth2-proxy, key: cookie-secret } }
+          ports:
+            - { name: http, containerPort: 4180 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+---
+# Source: toggle-web-baker/templates/operator-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-toggle-web-baker-operator
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: toggle-web-baker
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: toggle-web-baker
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: release-name-toggle-web-baker-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: ghcr.io/toggle-corp/toggle-web-baker-operator:0.0.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --leader-elect=true
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --cluster-cidrs=10.0.0.0/8
+            - --traefik-namespace=traefik
+            - --traefik-group=traefik.io
+            - --image-clone=ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0
+            - --image-copier=ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0
+            - --image-du=ghcr.io/toggle-corp/toggle-web-baker-du:0.0.0
+            - --image-cleanup=ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.0.0
+            - --image-kubectl=registry.k8s.io/kubectl:v1.32.1
+            - --image-nginx=docker.io/nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+---
+# Source: toggle-web-baker/templates/console/ingress.yaml
+# /oauth2/* must reach oauth2-proxy directly (login + callback) WITHOUT the
+# forward-auth middleware, or login can never complete.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-name-toggle-web-baker-oauth2-proxy
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: oauth2-proxy
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  rules:
+    - host: baker-console.example.org
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: release-name-toggle-web-baker-oauth2-proxy
+                port: { number: 4180 }
+  tls:
+    - hosts: [baker-console.example.org]
+      secretName: baker-console-tls
+---
+# Source: toggle-web-baker/templates/console/ingress.yaml
+# Everything else reaches the console and IS guarded by the forward-auth
+# middleware (<namespace>-<name>@kubernetescrd).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-name-toggle-web-baker-console
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: default-release-name-toggle-web-baker-console-auth@kubernetescrd
+spec:
+  rules:
+    - host: baker-console.example.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: release-name-toggle-web-baker-console
+                port: { number: 80 }
+  tls:
+    - hosts: [baker-console.example.org]
+      secretName: baker-console-tls
+---
+# Source: toggle-web-baker/templates/console/middleware.yaml
+# Traefik forward-auth Middleware: every console request is first sent to
+# oauth2-proxy's /oauth2/auth. A 2xx passes (copying X-Auth-Request-* headers
+# onto the upstream); anything else redirects to login. oauth2-proxy fails
+# closed, so a GitHub outage denies access rather than opening it.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: release-name-toggle-web-baker-console-auth
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: console
+spec:
+  forwardAuth:
+    address: http://release-name-toggle-web-baker-oauth2-proxy.default.svc.cluster.local:4180/oauth2/auth
+    trustForwardHeader: true
+    authResponseHeaders:
+      - X-Auth-Request-User
+      - X-Auth-Request-Email
+      - X-Auth-Request-Preferred-Username
