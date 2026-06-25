@@ -121,6 +121,19 @@ func (r *FrontendAppReconciler) ensureServing(ctx context.Context, app *bakerv1a
 	if err := r.upsert(ctx, app, svc, func() {}); err != nil {
 		return err
 	}
+
+	// Auth Middleware (optional) MUST be upserted BEFORE the Ingress that
+	// references it via the router-middlewares annotation, so the annotation
+	// never points at a not-yet-created CRD. Note: in production the operator
+	// would also materialize a Secret from spec.auth; here we reference an
+	// existing one.
+	if app.Spec.Auth != nil {
+		mw := r.authMiddleware(app, middlewareName(app)+"-secret")
+		if err := r.upsert(ctx, app, mw, func() {}); err != nil {
+			return err
+		}
+	}
+
 	ing := r.ingress(app)
 	if err := r.upsert(ctx, app, ing, func() {}); err != nil {
 		return err
@@ -128,15 +141,6 @@ func (r *FrontendAppReconciler) ensureServing(ctx context.Context, app *bakerv1a
 	nnp := r.nginxNetworkPolicy(app, r.TraefikNamespace)
 	if err := r.upsert(ctx, app, nnp, func() {}); err != nil {
 		return err
-	}
-
-	// Auth Middleware (optional). Note: in production the operator would also
-	// materialize a Secret from spec.auth; here we reference an existing one.
-	if app.Spec.Auth != nil {
-		mw := r.authMiddleware(app, middlewareName(app)+"-secret")
-		if err := r.upsert(ctx, app, mw, func() {}); err != nil {
-			return err
-		}
 	}
 
 	// IngressReady: validate the TLS secret exists (if TLS configured).

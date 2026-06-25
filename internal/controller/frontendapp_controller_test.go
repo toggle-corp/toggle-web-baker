@@ -346,3 +346,162 @@ func TestReconcile_MissingClusterCIDRsRejected(t *testing.T) {
 		t.Fatalf("expected Ready=False/ConfigError when cluster CIDRs unset, got %+v", cond)
 	}
 }
+
+// completeJob builds a finished (Complete) build Job with the given spec-hash
+// annotation, registered in the fake client.
+func completeJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, name, specHash string) *batchv1.Job {
+	t.Helper()
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   app.Namespace,
+			Labels:      buildLabelsFor(app),
+			Annotations: map[string]string{bakerv1alpha1.SpecHashAnnotation: specHash},
+		},
+		Status: batchv1.JobStatus{
+			Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+		},
+	}
+	if err := cl.Create(context.Background(), job); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	return job
+}
+
+// Fix 2: build started from spec-A, spec edited to spec-B mid-flight; on success
+// lastBuiltSpecHash == hash(spec-A) (the STAMPED hash), and specStale stays true
+// for the now-current spec-B.
+func TestObserveBuild_RecordsStampedHashNotLiveSpec(t *testing.T) {
+	app := baseApp()
+	app.Spec.Ref = "spec-A"
+	specAHash := buildSpecFrom(app).Hash()
+
+	r, cl := newReconciler(t, app, wffc())
+	completeJob(t, cl, app, "demo-build-a", specAHash)
+
+	// Build status points at the finished Job (not yet observed terminal).
+	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-a"}
+
+	// Spec edited mid-flight to spec-B.
+	app.Spec.Ref = "spec-B"
+	specBHash := buildSpecFrom(app).Hash()
+	if specAHash == specBHash {
+		t.Fatal("test setup: spec-A and spec-B must hash differently")
+	}
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+	if app.Status.LastBuiltSpecHash != specAHash {
+		t.Fatalf("expected lastBuiltSpecHash == hash(spec-A) %s, got %s", specAHash, app.Status.LastBuiltSpecHash)
+	}
+	// specStale must remain true: the live spec (spec-B) differs from what built.
+	if !app.Status.SpecStale {
+		t.Fatal("expected specStale=true for spec-B after a spec-A build")
+	}
+}
+
+// Fix 3: a failed build then a successful one leaves Degraded=False and phase Ready.
+func TestObserveBuild_SuccessClearsDegraded(t *testing.T) {
+	app := baseApp()
+	specHash := buildSpecFrom(app).Hash()
+	r, cl := newReconciler(t, app, wffc())
+
+	// Simulate a prior failure: Degraded=True is set.
+	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, "BuildFailed", "boom")
+	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-ok"}
+	completeJob(t, cl, app, "demo-build-ok", specHash)
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+	deg := findCondition(app, bakerv1alpha1.ConditionDegraded)
+	if deg == nil || deg.Status != metav1.ConditionFalse {
+		t.Fatalf("expected Degraded=False after success, got %+v", deg)
+	}
+	bs := findCondition(app, bakerv1alpha1.ConditionBuildSucceeded)
+	if bs == nil || bs.Status != metav1.ConditionTrue {
+		t.Fatalf("expected BuildSucceeded=True, got %+v", bs)
+	}
+	// hasSucceededOnce is now true; phaseOf must yield Ready (not Degraded).
+	r.refreshPhase(app)
+	if app.Status.Phase != bakerv1alpha1.PhaseReady {
+		t.Fatalf("expected phase Ready after fail->succeed, got %s", app.Status.Phase)
+	}
+}
+
+// Fix 2: a finished Job already observed to a terminal result is not reprocessed.
+func TestObserveBuild_TerminalShortCircuit(t *testing.T) {
+	app := baseApp()
+	specHash := buildSpecFrom(app).Hash()
+	r, cl := newReconciler(t, app, wffc())
+	completeJob(t, cl, app, "demo-build-x", specHash)
+
+	app.Status.Build = bakerv1alpha1.BuildStatus{
+		Phase:   bakerv1alpha1.BuildPhaseComplete,
+		Result:  bakerv1alpha1.BuildResultSucceeded,
+		JobName: "demo-build-x",
+	}
+	// Pre-set a sentinel completion time; the short-circuit must not overwrite it.
+	sentinel := ptr.To(metav1.NewTime(time.Unix(42, 0)))
+	app.Status.Build.CompletionTime = sentinel
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+	if app.Status.Build.CompletionTime == nil || !app.Status.Build.CompletionTime.Equal(sentinel) {
+		t.Fatalf("terminal outcome must not be reprocessed; completionTime changed to %v", app.Status.Build.CompletionTime)
+	}
+}
+
+// Fix 7: build-pod DNS egress is scoped to the cluster resolver, not :53 to all.
+func TestBuildNetworkPolicy_DNSScopedToResolver(t *testing.T) {
+	app := baseApp()
+	r, _ := newReconciler(t, app, wffc())
+	np := r.buildNetworkPolicy(app)
+
+	var dnsRule *networkingv1.NetworkPolicyEgressRule
+	for i := range np.Spec.Egress {
+		e := &np.Spec.Egress[i]
+		for _, p := range e.Ports {
+			if p.Port != nil && p.Port.IntValue() == 53 {
+				dnsRule = e
+			}
+		}
+	}
+	if dnsRule == nil {
+		t.Fatal("no DNS (:53) egress rule found")
+	}
+	if len(dnsRule.To) == 0 {
+		t.Fatal("DNS egress rule must have a To peer (scoped to resolver), not open :53 to all")
+	}
+	peer := dnsRule.To[0]
+	if peer.NamespaceSelector == nil || peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "kube-system" {
+		t.Fatalf("DNS egress must target kube-system namespace, got %+v", peer.NamespaceSelector)
+	}
+	if peer.PodSelector == nil || peer.PodSelector.MatchLabels["k8s-app"] != "kube-dns" {
+		t.Fatalf("DNS egress must target k8s-app=kube-dns pods, got %+v", peer.PodSelector)
+	}
+}
+
+// Fix 9: the Traefik Middleware is upserted before the Ingress that references it.
+func TestEnsureServing_MiddlewareCreatedWithIngress(t *testing.T) {
+	app := baseApp()
+	app.Spec.Auth = &bakerv1alpha1.AuthConfig{PasswordHash: ptr.To("hash")}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	r, cl := newReconciler(t, app, wffc())
+
+	if err := r.ensureServing(context.Background(), app); err != nil {
+		t.Fatalf("ensureServing: %v", err)
+	}
+	// Ingress references the middleware; both must exist after ensureServing.
+	ing := &networkingv1.Ingress{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: ingressName(app), Namespace: "apps"}, ing); err != nil {
+		t.Fatalf("ingress: %v", err)
+	}
+	mwAnno := ing.Annotations["traefik.ingress.kubernetes.io/router.middlewares"]
+	if mwAnno == "" {
+		t.Fatal("ingress must carry the router-middlewares annotation when auth is set")
+	}
+}

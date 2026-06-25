@@ -14,6 +14,11 @@ const (
 
 	// FinalizerName guards a best-effort abort of an in-flight build Job on delete.
 	FinalizerName = "baker.toggle-corp.com/finalizer"
+
+	// SpecHashAnnotation stamps the build-relevant spec hash onto the build Job at
+	// CREATION time, so on success the operator records the hash of the spec the
+	// build ACTUALLY ran — not the (possibly edited) live spec at observe-time.
+	SpecHashAnnotation = "baker.toggle-corp.com/spec-hash"
 )
 
 // Phase is the derived top-level lifecycle phase (computed from conditions).
@@ -97,8 +102,9 @@ type EnvVarWithSecret struct {
 	ValueFrom EnvVarWithSecretSource `json:"valueFrom"`
 }
 
-// PhaseSpec describes one pipeline phase container (setup / fetch / build).
-// +kubebuilder:validation:XValidation:rule="!has(self.env) || self.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.configMapKeyRef) || true)",message="env must be public (configMapKeyRef only); secretKeyRef is forbidden here"
+// PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+// public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+// secretKeyRef field, so a CEL rule would be tautological — none is declared.
 type PhaseSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
@@ -207,6 +213,7 @@ type NodeStorage struct {
 // StorageConfig groups the per-volume absolute-byte thresholds. The operator
 // also calls domain.ValidateStorage at reconcile time (cleanup < alert < cap).
 // +kubebuilder:validation:XValidation:rule="!has(self.cache) || !has(self.cache.cleanupBytes) || !has(self.cache.alertBytes) || self.cache.cleanupBytes < self.cache.alertBytes",message="cache.cleanupBytes must be < cache.alertBytes"
+// +kubebuilder:validation:XValidation:rule="!has(self.dataCache) || !has(self.dataCache.cleanupBytes) || !has(self.dataCache.alertBytes) || self.dataCache.cleanupBytes < self.dataCache.alertBytes",message="dataCache.cleanupBytes must be < dataCache.alertBytes"
 // +kubebuilder:validation:XValidation:rule="!has(self.output) || !has(self.output.alertBytes) || !has(self.output.capBytes) || self.output.alertBytes < self.output.capBytes",message="output.alertBytes must be < output.capBytes"
 type StorageConfig struct {
 	// +optional

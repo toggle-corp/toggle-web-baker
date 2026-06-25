@@ -2,7 +2,7 @@ package controller
 
 import (
 	"fmt"
-	"strings"
+	"net"
 )
 
 // PlatformImages are the digest-pinned, platform-locked image refs the operator
@@ -50,9 +50,13 @@ func (c *OperatorConfig) Validate() error {
 		return fmt.Errorf("cluster pod/service CIDRs are mandatory (build-pod egress cannot be locked down without them)")
 	}
 	for _, cidr := range c.ClusterCIDRs {
-		if !strings.Contains(cidr, "/") {
-			return fmt.Errorf("cluster CIDR %q is not in CIDR notation", cidr)
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("cluster CIDR %q is not valid CIDR notation: %w", cidr, err)
 		}
+	}
+	// MetadataIP is a baked default; validate it too so a bad edit fails loudly.
+	if _, _, err := net.ParseCIDR(MetadataIP); err != nil {
+		return fmt.Errorf("metadata CIDR %q is not valid CIDR notation: %w", MetadataIP, err)
 	}
 	if c.TraefikGroup == "" {
 		return fmt.Errorf("traefik group must not be empty")
@@ -81,6 +85,9 @@ func (c *OperatorConfig) Defaults() {
 		c.Images.Kubectl = "registry.k8s.io/kubectl:v1.32.1"
 	}
 	if c.Images.Nginx == "" {
-		c.Images.Nginx = "docker.io/library/nginx:1.27-alpine"
+		// nginx-unprivileged listens on 8080 and runs as UID/GID 101, so the pod's
+		// runAsNonRoot securityContext is satisfied without runAsUser=0 admission
+		// failures (the stock docker.io/library/nginx image starts as root).
+		c.Images.Nginx = "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
 	}
 }

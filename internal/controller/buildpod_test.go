@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -97,12 +98,33 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 	pnpm.Spec.PackageManager = bakerv1alpha1.PackageManagerPnpm
 	pjob := r.BuildJob(pnpm, "t")
 	pbuild := containerByName(pjob.Spec.Template.Spec.InitContainers, "build")
-	if !hasEnv(pbuild.Env, "PNPM_STORE_DIR") || !hasEnv(pbuild.Env, "NODE_MODULES_DIR") {
-		t.Fatalf("pnpm build must set PNPM_STORE_DIR and NODE_MODULES_DIR (store+node_modules on cache PVC)")
+	if !hasEnv(pbuild.Env, "npm_config_store_dir") || !hasEnv(pbuild.Env, "npm_config_modules_dir") {
+		t.Fatalf("pnpm build must set npm_config_store_dir and npm_config_modules_dir (store+node_modules on cache PVC)")
 	}
-	// Both PMs mount cache RW into build.
+	// pnpm must NOT use the bogus NODE_MODULES_DIR key, and yarn must not set pnpm env.
+	if hasEnv(pbuild.Env, "NODE_MODULES_DIR") {
+		t.Fatalf("pnpm build must NOT set the bogus NODE_MODULES_DIR key")
+	}
+	if hasEnv(ybuild.Env, "npm_config_store_dir") || hasEnv(ybuild.Env, "npm_config_modules_dir") {
+		t.Fatalf("yarn build must NOT set pnpm store/modules env")
+	}
+	if hasEnv(pbuild.Env, "YARN_CACHE_FOLDER") {
+		t.Fatalf("pnpm build must NOT set YARN_CACHE_FOLDER")
+	}
+	// Both PMs mount cache RW into build (pnpm: store+node_modules; yarn: cache).
 	if mountByName(pbuild.VolumeMounts, volCache) == nil {
 		t.Fatalf("pnpm build must mount the cache PVC")
+	}
+	pcacheMount := mountByName(pbuild.VolumeMounts, volCache)
+	if pcacheMount.MountPath != cacheMountPath {
+		t.Fatalf("pnpm cache mount must be at %s, got %s", cacheMountPath, pcacheMount.MountPath)
+	}
+	// pnpm store_dir + modules_dir both resolve onto the cache mount path.
+	for _, e := range pbuild.Env {
+		if (e.Name == "npm_config_store_dir" || e.Name == "npm_config_modules_dir") &&
+			!strings.HasPrefix(e.Value, cacheMountPath+"/") {
+			t.Fatalf("pnpm %s must live under the cache mount %s, got %s", e.Name, cacheMountPath, e.Value)
+		}
 	}
 }
 
@@ -128,6 +150,65 @@ func TestBuildJob_HardenedSecurity(t *testing.T) {
 		if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 || sc.Capabilities.Drop[0] != "ALL" {
 			t.Fatalf("%s must drop ALL caps", c.Name)
 		}
+	}
+}
+
+// Fix 8: a malformed memoryLimit must fall back to the 6Gi default, never emit a
+// pod with no memory limit.
+func TestBuildJob_MalformedMemoryLimitFallsBackTo6Gi(t *testing.T) {
+	app := baseApp()
+	app.Spec.Resources.Build.MemoryLimit = "this-is-not-a-quantity"
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	if build == nil {
+		t.Fatal("no build container")
+	}
+	q, ok := build.Resources.Limits[corev1.ResourceMemory]
+	if !ok {
+		t.Fatalf("build container must have a memory limit even with malformed input")
+	}
+	if q.String() != "6Gi" {
+		t.Fatalf("expected fallback memory limit 6Gi, got %s", q.String())
+	}
+}
+
+// Fix 1: nginx serving container pins runAsUser/runAsGroup to the unprivileged
+// UID so runAsNonRoot admission passes, keeps readOnlyRootFilesystem, and the
+// default image is the unprivileged variant.
+func TestNginxDeployment_UnprivilegedSecurityContext(t *testing.T) {
+	app := baseApp()
+	r := reconcilerForPod()
+	if r.Config.Images.Nginx != "docker.io/nginxinc/nginx-unprivileged:1.27-alpine" {
+		t.Fatalf("expected unprivileged nginx image default, got %s", r.Config.Images.Nginx)
+	}
+	dep := r.nginxDeployment(app)
+	c := dep.Spec.Template.Spec.Containers[0]
+	sc := c.SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != nginxUID {
+		t.Fatalf("nginx must runAsUser=%d, got %+v", nginxUID, sc)
+	}
+	if sc.RunAsGroup == nil || *sc.RunAsGroup != nginxUID {
+		t.Fatalf("nginx must runAsGroup=%d, got %+v", nginxUID, sc)
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Fatal("nginx must keep readOnlyRootFilesystem")
+	}
+	// Writable /tmp and /var/cache/nginx emptyDir mounts must exist for RO-rootfs.
+	if mountByName(c.VolumeMounts, volTmp) == nil {
+		t.Fatal("nginx must mount writable /tmp")
+	}
+	if mountByName(c.VolumeMounts, "nginx-cache") == nil {
+		t.Fatal("nginx must mount writable /var/cache/nginx")
+	}
+	// containerPort must be 8080 to match the unprivileged listener + Service/netpol.
+	if c.Ports[0].ContainerPort != 8080 {
+		t.Fatalf("nginx containerPort must be 8080, got %d", c.Ports[0].ContainerPort)
+	}
+	// output PVC stays read-only.
+	out := mountByName(c.VolumeMounts, volOutput)
+	if out == nil || !out.ReadOnly {
+		t.Fatal("nginx must mount the output PVC read-only")
 	}
 }
 

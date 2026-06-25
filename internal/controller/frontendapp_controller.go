@@ -368,6 +368,15 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 	if err := r.Get(ctx, types.NamespacedName{Name: app.Status.Build.JobName, Namespace: app.Namespace}, job); err != nil {
 		return client.IgnoreNotFound(err)
 	}
+	// Idempotency short-circuit: if we already observed this Job to a terminal
+	// result, don't reprocess it every reconcile (which would re-stamp times,
+	// re-flip conditions, and re-run applyCopierTermination needlessly).
+	if app.Status.Build.JobName == job.Name &&
+		app.Status.Build.Phase == bakerv1alpha1.BuildPhaseComplete &&
+		(app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded ||
+			app.Status.Build.Result == bakerv1alpha1.BuildResultFailed) {
+		return nil
+	}
 	cond := jobFinished(job)
 	if cond == nil {
 		app.Status.Build.Phase = bakerv1alpha1.BuildPhaseRunning
@@ -379,11 +388,23 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 	if cond.Type == batchv1.JobComplete {
 		app.Status.Build.Result = bakerv1alpha1.BuildResultSucceeded
 		app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(r.now()))
-		// Record lastBuiltSpecHash on copier SUCCESS (requirement 11).
-		app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
-		app.Status.SpecStale = false
+		// Record lastBuiltSpecHash from the hash STAMPED on the Job at creation
+		// (the spec the build actually ran) — never the live spec, which may have
+		// been edited while the build was in flight. Fall back to recomputing from
+		// the build's spec only if the stamp is somehow absent (legacy Jobs).
+		if stamped := job.Annotations[bakerv1alpha1.SpecHashAnnotation]; stamped != "" {
+			app.Status.LastBuiltSpecHash = stamped
+		} else {
+			app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+		}
+		// specStale is recomputed from the (current) live spec vs the just-recorded
+		// hash in the main reconcile loop; do NOT force it false here, or an edit
+		// mid-build would be masked.
+		app.Status.SpecStale = domain.IsStale(buildSpecFrom(app), app.Status.LastBuiltSpecHash)
 		r.applyCopierTermination(ctx, app, job)
 		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionTrue, bakerv1alpha1.ReasonReady, "build succeeded")
+		// On success, clear any prior Degraded condition (requirement 3).
+		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionFalse, bakerv1alpha1.ReasonReady, "build succeeded")
 		// Short TTL so a succeeded Job is reaped.
 		if job.Spec.TTLSecondsAfterFinished == nil {
 			patch := client.MergeFrom(job.DeepCopy())
@@ -407,37 +428,69 @@ func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app 
 	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err != nil {
 		return
 	}
+	// Select ONLY the copier pod owned by THIS build Job (a prior failed/retained
+	// Job leaves its pods behind under the same app-wide build label). Of those,
+	// pick the most recently terminated copier so we read the current build's
+	// outcome rather than an arbitrary first match.
+	var (
+		chosen     *corev1.Pod
+		chosenTerm *corev1.ContainerStateTerminated
+		chosenWhen metav1.Time
+	)
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		if p.Name == "" {
+		if !ownedByJob(p, job) {
 			continue
 		}
-		for _, cs := range p.Status.ContainerStatuses {
+		for j := range p.Status.ContainerStatuses {
+			cs := &p.Status.ContainerStatuses[j]
 			if cs.Name != "copier" || cs.State.Terminated == nil {
 				continue
 			}
-			app.Status.NodeName = p.Spec.NodeName
-			if blob, ok := parseCopierMessage(cs.State.Terminated.Message); ok {
-				if blob.DataFreshness != "" {
-					app.Status.DataFreshness = blob.DataFreshness
-				}
-				if blob.Release.Current != "" {
-					app.Status.Release.Previous = app.Status.Release.Current
-					app.Status.Release.Current = blob.Release.Current
-					app.Status.Release.ServingSince = ptr.To(metav1.NewTime(r.now()))
-				}
-				if len(blob.Sizes) > 0 {
-					if app.Status.Storage.Sizes == nil {
-						app.Status.Storage.Sizes = map[string]int64{}
-					}
-					for k, v := range blob.Sizes {
-						app.Status.Storage.Sizes[k] = v
-					}
-					app.Status.Storage.MeasuredAt = ptr.To(metav1.NewTime(r.now()))
-				}
+			finishedAt := cs.State.Terminated.FinishedAt
+			if chosen == nil || finishedAt.After(chosenWhen.Time) {
+				chosen = p
+				chosenTerm = cs.State.Terminated
+				chosenWhen = finishedAt
 			}
 		}
 	}
+	if chosen == nil || chosenTerm == nil {
+		return
+	}
+	app.Status.NodeName = chosen.Spec.NodeName
+	blob, ok := parseCopierMessage(chosenTerm.Message)
+	if !ok {
+		return
+	}
+	if blob.DataFreshness != "" {
+		app.Status.DataFreshness = blob.DataFreshness
+	}
+	if blob.Release.Current != "" {
+		app.Status.Release.Previous = app.Status.Release.Current
+		app.Status.Release.Current = blob.Release.Current
+		app.Status.Release.ServingSince = ptr.To(metav1.NewTime(r.now()))
+	}
+	if len(blob.Sizes) > 0 {
+		if app.Status.Storage.Sizes == nil {
+			app.Status.Storage.Sizes = map[string]int64{}
+		}
+		for k, v := range blob.Sizes {
+			app.Status.Storage.Sizes[k] = v
+		}
+		app.Status.Storage.MeasuredAt = ptr.To(metav1.NewTime(r.now()))
+	}
+}
+
+// ownedByJob reports whether pod p is a child of the given build Job, matched by
+// the controller ownerReference UID (the Job controller stamps this on its pods).
+func ownedByJob(p *corev1.Pod, job *batchv1.Job) bool {
+	for _, ref := range p.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller && ref.UID == job.UID {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- delete / finalizer ----

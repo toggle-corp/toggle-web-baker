@@ -80,8 +80,10 @@ spec:
                   rule: '(has(self.passwordHash) ? 1 : 0) + (has(self.secretRef) ?
                     1 : 0) == 1'
               build:
-                description: PhaseSpec describes one pipeline phase container (setup
-                  / fetch / build).
+                description: |-
+                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
                 properties:
                   command:
                     items:
@@ -124,11 +126,6 @@ spec:
                   image:
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - message: env must be public (configMapKeyRef only); secretKeyRef
-                    is forbidden here
-                  rule: '!has(self.env) || self.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.configMapKeyRef)
-                    || true)'
               buildArgs:
                 description: BuildArgs are PUBLIC, ConfigMap-sourced env that may
                   reach the bundle.
@@ -166,8 +163,10 @@ spec:
                 type: array
                 x-kubernetes-list-type: atomic
               fetch:
-                description: PhaseSpec describes one pipeline phase container (setup
-                  / fetch / build).
+                description: |-
+                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
                 properties:
                   command:
                     items:
@@ -210,11 +209,6 @@ spec:
                   image:
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - message: env must be public (configMapKeyRef only); secretKeyRef
-                    is forbidden here
-                  rule: '!has(self.env) || self.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.configMapKeyRef)
-                    || true)'
               ingress:
                 description: IngressConfig describes the public ingress for the served
                   bundle.
@@ -310,8 +304,10 @@ spec:
                 type: array
                 x-kubernetes-list-type: atomic
               setup:
-                description: PhaseSpec describes one pipeline phase container (setup
-                  / fetch / build).
+                description: |-
+                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
                 properties:
                   command:
                     items:
@@ -354,11 +350,6 @@ spec:
                   image:
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - message: env must be public (configMapKeyRef only); secretKeyRef
-                    is forbidden here
-                  rule: '!has(self.env) || self.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.configMapKeyRef)
-                    || true)'
               storage:
                 description: |-
                   StorageConfig groups the per-volume absolute-byte thresholds. The operator
@@ -411,6 +402,10 @@ spec:
                 - message: cache.cleanupBytes must be < cache.alertBytes
                   rule: '!has(self.cache) || !has(self.cache.cleanupBytes) || !has(self.cache.alertBytes)
                     || self.cache.cleanupBytes < self.cache.alertBytes'
+                - message: dataCache.cleanupBytes must be < dataCache.alertBytes
+                  rule: '!has(self.dataCache) || !has(self.dataCache.cleanupBytes)
+                    || !has(self.dataCache.alertBytes) || self.dataCache.cleanupBytes
+                    < self.dataCache.alertBytes'
                 - message: output.alertBytes must be < output.capBytes
                   rule: '!has(self.output) || !has(self.output.alertBytes) || !has(self.output.capBytes)
                     || self.output.alertBytes < self.output.capBytes'

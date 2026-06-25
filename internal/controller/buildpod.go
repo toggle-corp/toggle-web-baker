@@ -39,6 +39,22 @@ func hardenedSecurityContext() *corev1.SecurityContext {
 	}
 }
 
+// nginxUID is the UID/GID baked into docker.io/nginxinc/nginx-unprivileged.
+const nginxUID int64 = 101
+
+// nginxSecurityContext is the hardened context for the serving nginx container.
+// It mirrors hardenedSecurityContext but pins runAsUser/runAsGroup to 101 so the
+// unprivileged nginx image satisfies the pod's runAsNonRoot constraint (without
+// an explicit user the kubelet cannot prove the image is non-root and admission
+// fails). readOnlyRootFilesystem stays on; the writable surface is the explicit
+// /tmp + /var/cache/nginx + /var/run emptyDir mounts.
+func nginxSecurityContext() *corev1.SecurityContext {
+	sc := hardenedSecurityContext()
+	sc.RunAsUser = ptr.To(nginxUID)
+	sc.RunAsGroup = ptr.To(nginxUID)
+	return sc
+}
+
 // toEnvVars converts public spec EnvVars to corev1.EnvVar. secretKeyRef is
 // structurally impossible here, so this can never carry a secret.
 func toEnvVars(in []bakerv1alpha1.EnvVar) []corev1.EnvVar {
@@ -118,13 +134,22 @@ func commonMounts() []corev1.VolumeMount {
 
 // pkgManagerEnv returns the env that points the package manager at the cache
 // volume, branching on the package manager.
+//
+// pnpm: the content-addressable store AND node_modules must live on the SAME
+// filesystem (the cache PVC) so pnpm's hard-links work and persist across runs.
+// pnpm honors npm_config_* keys, so npm_config_store_dir / npm_config_modules_dir
+// place both on the cache PVC. (The previous NODE_MODULES_DIR key is bogus — no
+// tool reads it.)
+//
+// yarn: node_modules live on the per-run emptyDir (work volume, set by
+// WorkingDir); the cache PVC holds only the yarn download cache.
 func pkgManagerEnv(app *bakerv1alpha1.FrontendApp) []corev1.EnvVar {
 	switch app.Spec.PackageManager {
 	case bakerv1alpha1.PackageManagerPnpm:
 		return []corev1.EnvVar{
-			{Name: "PNPM_STORE_DIR", Value: cacheMountPath + "/pnpm-store"},
-			// node_modules on the cache PVC (persisted across runs for pnpm).
-			{Name: "NODE_MODULES_DIR", Value: cacheMountPath + "/node_modules"},
+			{Name: "npm_config_store_dir", Value: cacheMountPath + "/pnpm-store"},
+			// node_modules on the cache PVC (same FS as the store ⇒ hard-links work).
+			{Name: "npm_config_modules_dir", Value: cacheMountPath + "/node_modules"},
 		}
 	default: // yarn
 		return []corev1.EnvVar{
@@ -251,6 +276,9 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 			Labels:    buildLabelsFor(app),
 			Annotations: map[string]string{
 				bakerv1alpha1.RebuildAnnotation: token,
+				// Stamp the spec hash the build runs with, so on success we record
+				// THIS hash (not the live spec, which may be edited mid-flight).
+				bakerv1alpha1.SpecHashAnnotation: buildSpecFrom(app).Hash(),
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -269,13 +297,19 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 func buildResourceRequirements(app *bakerv1alpha1.FrontendApp) corev1.ResourceRequirements {
 	limits := corev1.ResourceList{}
 	requests := corev1.ResourceList{}
+	const defaultMemLimit = "6Gi"
 	memLimit := app.Spec.Resources.Build.MemoryLimit
 	if memLimit == "" {
-		memLimit = "6Gi"
+		memLimit = defaultMemLimit
 	}
-	if q, err := resource.ParseQuantity(memLimit); err == nil {
-		limits[corev1.ResourceMemory] = q
+	q, err := resource.ParseQuantity(memLimit)
+	if err != nil {
+		// A malformed memoryLimit must NOT yield a pod with no memory limit (that
+		// would let an untrusted build OOM the node). Fall back to the documented
+		// default instead.
+		q = resource.MustParse(defaultMemLimit)
 	}
+	limits[corev1.ResourceMemory] = q
 	if app.Spec.Resources.Build.CPURequest != "" {
 		if q, err := resource.ParseQuantity(app.Spec.Resources.Build.CPURequest); err == nil {
 			requests[corev1.ResourceCPU] = q

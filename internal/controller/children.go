@@ -151,7 +151,7 @@ func (r *FrontendAppReconciler) nginxDeployment(app *bakerv1alpha1.FrontendApp) 
 				{Name: "nginx-cache", MountPath: "/var/cache/nginx"},
 				{Name: "nginx-run", MountPath: "/var/run"},
 			},
-			SecurityContext: hardenedSecurityContext(),
+			SecurityContext: nginxSecurityContext(),
 		}},
 		Volumes: []corev1.Volume{
 			{Name: volOutput, VolumeSource: corev1.VolumeSource{
@@ -247,7 +247,18 @@ func (r *FrontendAppReconciler) buildNetworkPolicy(app *bakerv1alpha1.FrontendAp
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
 			// No Ingress rules => default-deny ingress.
 			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{ // DNS to kube-dns (UDP+TCP 53)
+				{ // DNS to the cluster resolver ONLY (kube-system / k8s-app=kube-dns).
+					// Without a To peer, :53 would be open to EVERYTHING — including
+					// the excepted cluster CIDRs and the metadata IP — defeating the
+					// second rule's exclusions.
+					To: []networkingv1.NetworkPolicyPeer{{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+						},
+						PodSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+						},
+					}},
 					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: &dnsPort}, {Protocol: &tcp, Port: &dnsPort}},
 				},
 				{ // public internet, minus cluster CIDRs + metadata
