@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # Bare SemVer (VERSION_TAG_PREFIX_MODE=forbid). Stable + pre-release.
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Reuse CI, but with publishing on: builds + pushes all 6 images and the chart.
+  build:
+    uses: ./.github/workflows/ci.yml
+    with:
+      docker_push: true
+      helm_push: true
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Detect pre-release
+        id: meta
+        run: |
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # cliff.toml's commit preprocessor shells out to `typos`; without it
+      # git-cliff silently drops commits from the body.
+      - name: Install typos
+        uses: taiki-e/install-action@v2
+        with:
+          tool: typos
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: fugit/configs/cliff.toml
+          args: -vv --latest --strip all --github-repo ${{ github.repository }}
+        env:
+          OUTPUT: CHANGELOG.latest.md
+          FUGIT_REMOTE_BASE_URL: https://github.com/${{ github.repository }}
+          FUGIT_REMOTE_PLATFORM_URL: https://github.com
+
+      - name: Build release body
+        run: |
+          {
+            echo "## Artifacts"
+            echo
+            echo "**Helm chart**"
+            echo '```'
+            echo "helm install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \\"
+            echo "  --version ${{ github.ref_name }} \\"
+            echo "  --namespace baker-system --create-namespace \\"
+            echo "  --set 'operator.clusterCIDRs={10.0.0.0/8}'"
+            echo '```'
+            echo
+            echo "**Images** (tag \`${{ github.ref_name }}\`)"
+            for img in operator console clone copier du cleanup; do
+              echo "- \`ghcr.io/toggle-corp/toggle-web-baker-$img:${{ github.ref_name }}\`"
+            done
+            echo
+            echo "---"
+            echo
+            cat CHANGELOG.latest.md
+          } > RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_BODY.md
+          prerelease: ${{ steps.meta.outputs.prerelease }}
