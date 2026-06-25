@@ -1,0 +1,114 @@
+{{define "detail.gohtml"}}
+{{template "head" .Head}}
+{{with .App}}
+<div class="breadcrumb"><a href="/">apps</a> / {{.Namespace}} / <strong>{{.Name}}</strong></div>
+
+{{if not .HasStatus}}
+  <div class="banner banner-warn">No status yet — the operator has not reconciled this FrontendApp.</div>
+{{else if and .Ready .Degraded}}
+  <div class="banner banner-degraded">SERVING LAST-GOOD — the latest build failed (Degraded=True) but the previous release is still being served (Ready=True).</div>
+{{else if .Degraded}}
+  <div class="banner banner-degraded">DEGRADED — not serving.</div>
+{{else if .Ready}}
+  <div class="banner banner-ok">Ready.</div>
+{{end}}
+
+{{if $.Requested}}<div class="banner banner-warn">Rebuild requested. The operator will pick it up on its next reconcile.</div>{{end}}
+
+<p>
+  {{template "statusbadge" .}}
+  {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE — current spec not yet deployed</span>{{end}}
+  {{if .URL}}&nbsp;<a href="{{.URL}}" target="_blank" rel="noopener">{{.URL}}</a>{{end}}
+</p>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>Overview</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Phase</span><span class="v">{{dash .Phase}}</span></div>
+      <div class="kv"><span class="k">Observed generation</span><span class="v">{{.ObservedGeneration}}</span></div>
+      <div class="kv"><span class="k">Node</span><span class="v">{{dash .NodeName}}</span></div>
+      <div class="kv"><span class="k">Data freshness</span><span class="v">{{dash .DataFreshness}}</span></div>
+      <div class="kv"><span class="k">Last built spec hash</span><span class="v"><code>{{dash .LastBuiltSpecHash}}</code></span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Conditions</h2>
+    <div class="body">
+      {{range .Conditions}}
+        <div class="kv">
+          <span class="k">{{.Type}}</span>
+          <span class="v b-{{if eq .Status "True"}}true{{else if eq .Status "False"}}false{{else}}unknown{{end}}"
+                title="{{.Reason}}: {{.Message}}">{{.Status}}</span>
+        </div>
+        {{if .Message}}<div class="small muted" style="padding:0 0 6px">{{.Message}}</div>{{end}}
+      {{else}}<div class="muted">No conditions reported.</div>{{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Build</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Phase</span><span class="v">{{dash .Build.Phase}}</span></div>
+      <div class="kv"><span class="k">Result</span><span class="v">{{dash .Build.Result}}</span></div>
+      <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
+      <div class="kv"><span class="k">Started</span><span class="v">{{dash .Build.StartTime}}</span></div>
+      <div class="kv"><span class="k">Completed</span><span class="v">{{dash .Build.CompletionTime}}</span></div>
+      <div class="kv"><span class="k">Job</span><span class="v"><code>{{dash .Build.JobName}}</code></span></div>
+      <div class="kv"><span class="k">Logs ref</span><span class="v"><code>{{dash .Build.LogsRef}}</code></span></div>
+      {{if .Build.Message}}<div class="small muted" style="padding-top:6px">{{.Build.Message}}</div>{{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Schedule</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Last build</span><span class="v">{{dash .LastBuildTime}}</span></div>
+      <div class="kv"><span class="k">Last successful</span><span class="v">{{dash .LastSuccessfulBuild}}</span></div>
+      <div class="kv"><span class="k">Next scheduled</span><span class="v">{{dash .NextScheduledBuildTime}}</span></div>
+      <div class="kv"><span class="k">Last processed rebuild</span><span class="v">{{dash .LastProcessedRebuild}}</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Release</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Current</span><span class="v">{{dash .Release.Current}}</span></div>
+      <div class="kv"><span class="k">Previous</span><span class="v">{{dash .Release.Previous}}</span></div>
+      <div class="kv"><span class="k">Serving since</span><span class="v">{{dash .Release.ServingSince}}</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Storage</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Threshold state</span><span class="v">{{dash .Storage.ThresholdState}}</span></div>
+      <div class="kv"><span class="k">Measured at</span><span class="v">{{dash .Storage.MeasuredAt}}</span></div>
+      {{range .Storage.Sizes}}<div class="kv"><span class="k">size · {{.Key}}</span><span class="v">{{.Value}}</span></div>{{end}}
+      {{range .Storage.LastRunDeltas}}<div class="kv"><span class="k">delta · {{.Key}}</span><span class="v">{{.Value}}</span></div>{{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Manual rebuild</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Last triggered by</span><span class="v">{{dash .ManualTrigger.TriggeredBy}}</span></div>
+      <div class="kv"><span class="k">Last triggered at</span><span class="v">{{dash .ManualTrigger.Time}}</span></div>
+      <div style="padding-top:12px">
+        <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/rebuild"
+              onsubmit="return confirm('Request a manual rebuild of {{.Name}}? This patches the rebuild annotation; the operator decides when to act.');">
+          <button type="submit">Request rebuild</button>
+        </form>
+        <p class="small muted" style="margin-top:8px">Patches
+          <code>rebuild.baker.toggle-corp.com/requested-at</code> and
+          <code>/by</code>. Read-only otherwise — no jobs/pods are created by the console.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+{{end}}
+{{template "foot"}}
+{{end}}

@@ -1,0 +1,55 @@
+# The console Deployment + Service. It listens on :8080 and serves HTML; auth
+# is handled entirely by oauth2-proxy in front (see middleware.yaml). The
+# console trusts the X-Auth-Request-User header oauth2-proxy injects.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: baker-console
+  namespace: baker-system
+  labels: { app: baker-console }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: baker-console }
+  template:
+    metadata:
+      labels: { app: baker-console }
+    spec:
+      serviceAccountName: baker-console
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: console
+          # Build from console/Dockerfile and push to your registry.
+          image: ghcr.io/toggle-corp/baker-console:latest
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: LISTEN_ADDR, value: ":8080" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: baker-console
+  namespace: baker-system
+  labels: { app: baker-console }
+spec:
+  selector: { app: baker-console }
+  ports:
+    - { name: http, port: 80, targetPort: http }

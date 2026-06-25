@@ -1,0 +1,21 @@
+# Traefik forward-auth Middleware: every request to the console is first sent
+# to oauth2-proxy's /oauth2/auth endpoint. A 2xx lets it through (and copies
+# the X-Auth-Request-User header onto the upstream request); anything else is
+# rejected/redirected to login. Because oauth2-proxy fails closed on team
+# lookup errors, a GitHub outage denies access rather than opening it.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: baker-console-auth
+  namespace: baker-system
+spec:
+  forwardAuth:
+    address: http://baker-oauth2-proxy.baker-system.svc.cluster.local:4180/oauth2/auth
+    trustForwardHeader: true
+    # These response headers from oauth2-proxy are copied onto the request the
+    # console finally sees. X-Auth-Request-User is the GitHub username the
+    # rebuild handler records as the audit actor.
+    authResponseHeaders:
+      - X-Auth-Request-User
+      - X-Auth-Request-Email
+      - X-Auth-Request-Preferred-Username

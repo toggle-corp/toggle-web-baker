@@ -1,0 +1,53 @@
+# Public Ingress. Two routing concerns:
+#   1. /oauth2/* must reach oauth2-proxy directly (login + callback flow) and
+#      must NOT have the forward-auth middleware applied, or login can never
+#      complete.
+#   2. Everything else reaches the console and IS guarded by the forward-auth
+#      middleware (baker-system-baker-console-auth@kubernetescrd).
+# Adjust the host and the cert/TLS resolver to your cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: baker-console-oauth2
+  namespace: baker-system
+  annotations:
+    # No auth middleware here — this path performs the auth.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  rules:
+    - host: baker-console.example.org
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: baker-oauth2-proxy
+                port: { number: 4180 }
+  tls:
+    - hosts: [baker-console.example.org]
+      secretName: baker-console-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: baker-console
+  namespace: baker-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # Traefik CRD middleware reference: <namespace>-<name>@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: baker-system-baker-console-auth@kubernetescrd
+spec:
+  rules:
+    - host: baker-console.example.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: baker-console
+                port: { number: 80 }
+  tls:
+    - hosts: [baker-console.example.org]
+      secretName: baker-console-tls
