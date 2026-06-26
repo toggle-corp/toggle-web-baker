@@ -13,8 +13,8 @@ type: application
 # version (chart) and appVersion (operator/console/helper image tags) move in
 # lockstep with the git tag. release.sh's custom hook rewrites BOTH on release;
 # the 0.0.0 placeholder here is what an un-released working tree renders.
-version: 0.0.0
-appVersion: "0.0.0"
+version: 0.1.0-dev3
+appVersion: "0.1.0-dev3"
 
 home: https://github.com/toggle-corp/toggle-web-baker
 sources:
