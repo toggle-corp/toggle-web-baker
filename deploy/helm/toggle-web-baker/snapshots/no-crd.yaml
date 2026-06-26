@@ -184,6 +184,59 @@ subjects:
     namespace: default
 
 ---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+# Leader-election Role — lease + event access, scoped to the operator's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-toggle-web-baker-operator-leader-election
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-toggle-web-baker-operator-leader-election
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-toggle-web-baker-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: release-name-toggle-web-baker-operator
+    namespace: default
+---
 # Source: toggle-web-baker-helm/templates/operator-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
