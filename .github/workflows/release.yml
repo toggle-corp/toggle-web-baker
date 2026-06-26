@@ -67,7 +67,7 @@ jobs:
             echo '```'
             echo "helm install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \\"
             echo "  --version ${{ github.ref_name }} \\"
-            echo "  --namespace baker-system --create-namespace \\"
+            echo "  --namespace toggle-baker-system --create-namespace \\"
             echo "  --set 'operator.clusterCIDRs={10.0.0.0/8}'"
             echo '```'
             echo

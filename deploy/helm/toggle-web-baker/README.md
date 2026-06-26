@@ -34,7 +34,7 @@ there is no safe default.
 
 ```bash
 helm install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
-  --namespace baker-system --create-namespace \
+  --namespace toggle-baker-system --create-namespace \
   --set 'operator.clusterCIDRs={10.0.0.0/8,172.20.0.0/16}'
 ```
 
@@ -42,7 +42,7 @@ Enable the console (provide a GitHub OAuth app, or reference an existing secret)
 
 ```bash
 helm upgrade baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
-  --namespace baker-system \
+  --namespace toggle-baker-system \
   --set 'operator.clusterCIDRs={10.0.0.0/8}' \
   --set console.enabled=true \
   --set console.host=baker-console.example.org \

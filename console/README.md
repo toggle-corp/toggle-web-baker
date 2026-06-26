@@ -101,7 +101,7 @@ GitHub-team flags, the Traefik forward-auth Middleware, and the two Ingresses).
 
 ```bash
 helm upgrade baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
-  --namespace baker-system \
+  --namespace toggle-baker-system \
   --set console.enabled=true \
   --set console.host=baker-console.example.org \
   --set console.oauth2Proxy.existingSecret=baker-oauth2-proxy
