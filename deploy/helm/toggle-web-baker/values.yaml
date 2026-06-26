@@ -24,6 +24,8 @@ operator:
 
   # MANDATORY. Pod + Service CIDRs EXCLUDED from build-pod egress. The operator
   # refuses to start (Ready=False) if this is empty — there is no safe default.
+  # Replace with YOUR cluster's ranges (the example below is a placeholder):
+  #   kubectl cluster-info dump | grep -E 'cluster-cidr|service-cluster-ip-range'
   # e.g. ["10.0.0.0/8", "172.20.0.0/16"]
   clusterCIDRs: []
 

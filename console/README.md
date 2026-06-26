@@ -100,7 +100,7 @@ did (RBAC, console Deployment + Service, oauth2-proxy with the fail-closed
 GitHub-team flags, the Traefik forward-auth Middleware, and the two Ingresses).
 
 ```bash
-helm upgrade baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
+helm upgrade --install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
   --namespace toggle-baker-system \
   --set console.enabled=true \
   --set console.host=baker-console.example.org \

@@ -32,16 +32,23 @@ When `console.enabled=true`:
 build-pod egress. The operator refuses to start (Ready=False) if it is empty;
 there is no safe default.
 
+> **Replace the example CIDRs below with your cluster's ranges.** Find them with:
+> ```bash
+> kubectl cluster-info dump | grep -E 'cluster-cidr|service-cluster-ip-range'
+> ```
+> Pass both the pod CIDR (`--cluster-cidr`) and the Service CIDR
+> (`--service-cluster-ip-range`).
+
 ```bash
-helm install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
+helm upgrade --install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
   --namespace toggle-baker-system --create-namespace \
-  --set 'operator.clusterCIDRs={10.0.0.0/8,172.20.0.0/16}'
+  --set 'operator.clusterCIDRs={10.0.0.0/8,172.20.0.0/16}'  # <- your cluster's pod + service CIDRs
 ```
 
 Enable the console (provide a GitHub OAuth app, or reference an existing secret):
 
 ```bash
-helm upgrade baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
+helm upgrade --install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \
   --namespace toggle-baker-system \
   --set 'operator.clusterCIDRs={10.0.0.0/8}' \
   --set console.enabled=true \

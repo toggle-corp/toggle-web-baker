@@ -65,11 +65,13 @@ jobs:
             echo
             echo "**Helm chart**"
             echo '```'
-            echo "helm install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \\"
+            echo "helm upgrade --install baker oci://ghcr.io/toggle-corp/toggle-web-baker-helm \\"
             echo "  --version ${{ github.ref_name }} \\"
             echo "  --namespace toggle-baker-system --create-namespace \\"
-            echo "  --set 'operator.clusterCIDRs={10.0.0.0/8}'"
+            echo "  --set 'operator.clusterCIDRs={10.0.0.0/8}'  # replace with your cluster's pod + service CIDRs"
             echo '```'
+            echo
+            echo "> Find your cluster's ranges: \`kubectl cluster-info dump | grep -E 'cluster-cidr|service-cluster-ip-range'\`"
             echo
             echo "**Images** (tag \`${{ github.ref_name }}\`)"
             for img in operator console clone copier du cleanup; do
