@@ -275,6 +275,7 @@ spec:
                 - pnpm
                 type: string
               ref:
+                default: HEAD
                 type: string
               repo:
                 type: string
@@ -448,6 +449,13 @@ spec:
             - ingress
             - repo
             type: object
+            x-kubernetes-validations:
+            - message: build.command is required
+              rule: has(self.build) && has(self.build.command) && size(self.build.command)
+                > 0
+            - message: secrets require a fetch.command to consume them
+              rule: '!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch)
+                && has(self.fetch.command) && size(self.fetch.command) > 0)'
           status:
             description: FrontendAppStatus is the operator-owned observed state.
             properties:
