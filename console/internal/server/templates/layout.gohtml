@@ -57,7 +57,7 @@
 <body>
 <header>
   <h1><a href="/">BAKER · FrontendApp Console</a></h1>
-  <div class="user">{{if .User}}signed in as {{.User}}{{else}}<span class="b-false">no user header</span>{{end}}</div>
+  <div class="user">{{if .User}}signed in as {{.User}} · <a href="/oauth2/sign_out?rd=/signed-out">Log out</a>{{else if not .Anon}}<span class="b-false">no user header</span>{{end}}</div>
 </header>
 <main>
 {{end}}

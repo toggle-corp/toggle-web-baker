@@ -36,6 +36,14 @@ var funcMap = template.FuncMap{
 type head struct {
 	Title string
 	User  string
+	// Anon marks a public, logged-out page (e.g. /signed-out) so the header
+	// suppresses the "no user header" badge that would otherwise scream a
+	// misconfiguration on a page that is intentionally userless.
+	Anon bool
+}
+
+type signedOutData struct {
+	Head head
 }
 
 type listData struct {

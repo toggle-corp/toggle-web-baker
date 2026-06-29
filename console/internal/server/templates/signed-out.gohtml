@@ -1,0 +1,15 @@
+{{define "signed-out.gohtml"}}
+{{template "head" .Head}}
+<div class="card" style="max-width:520px;margin:48px auto">
+  <h2>You've been signed out</h2>
+  <div class="body">
+    <p>Your Baker Console session has ended.</p>
+    <p><a href="/">Sign in again →</a></p>
+    <p class="muted small">Heads up: signing out only cleared this app's local
+      cookie — your GitHub session is still active, so signing in again may not
+      prompt you. To fully revoke this app's access, remove it under
+      <strong>GitHub → Settings → Applications</strong>.</p>
+  </div>
+</div>
+{{template "foot"}}
+{{end}}

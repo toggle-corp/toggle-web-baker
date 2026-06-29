@@ -131,6 +131,38 @@ func TestList_RendersSeededApp(t *testing.T) {
 	if !strings.Contains(body, "octocat") {
 		t.Error("list page should show the signed-in user")
 	}
+	if !strings.Contains(body, `href="/oauth2/sign_out?rd=/signed-out"`) {
+		t.Error("authenticated page should show the logout link")
+	}
+}
+
+func TestSignedOut(t *testing.T) {
+	srv, _ := newTestServer(t)
+	// Public page: no X-Auth-Request-User header.
+	req := httptest.NewRequest(http.MethodGet, "/signed-out", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(strings.ToLower(body), "signed out") {
+		t.Error("signed-out page should contain a 'signed out' message")
+	}
+	// Honest GitHub-SSO caveat: clearing the cookie does not end the GitHub
+	// session; user must remove the OAuth app to fully revoke access.
+	if !strings.Contains(body, "GitHub") || !strings.Contains(strings.ToLower(body), "revoke") {
+		t.Error("signed-out page should explain the GitHub revocation caveat")
+	}
+	// "Sign in again" link bounces through oauth2-proxy at the root.
+	if !strings.Contains(body, `href="/"`) {
+		t.Error("signed-out page should link to / to sign in again")
+	}
+	// Logged-out page must not offer a logout link.
+	if strings.Contains(body, "/oauth2/sign_out") {
+		t.Error("signed-out page must not contain a logout link")
+	}
 }
 
 func TestDetail_RendersStatus(t *testing.T) {

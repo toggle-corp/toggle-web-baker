@@ -29,6 +29,7 @@ func New(apps k8s.FrontendAppPatcher) *Server {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /signed-out", s.handleSignedOut)
 	mux.HandleFunc("GET /", s.handleList)
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}", s.handleDetail)
 	mux.HandleFunc("POST /ns/{namespace}/app/{name}/rebuild", s.handleRebuild)
@@ -38,6 +39,13 @@ func (s *Server) Routes() http.Handler {
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("ok"))
+}
+
+// handleSignedOut renders the public post-logout page. The chart exempts
+// ^/signed-out$ from oauth2-proxy, so this route requires no user header. It
+// must not show a "Log out" link or the "no user header" badge.
+func (s *Server) handleSignedOut(w http.ResponseWriter, _ *http.Request) {
+	render(w, "signed-out", signedOutData{Head: head{Title: "Signed out", Anon: true}})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
