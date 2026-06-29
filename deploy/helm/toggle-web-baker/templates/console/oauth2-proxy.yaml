@@ -65,7 +65,10 @@ spec:
             - --redirect-url=https://{{ .Values.console.host }}/oauth2/callback
             - --whitelist-domain={{ .Values.console.host }}
             - --upstream=http://{{ include "toggle-web-baker.console.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:80
+            {{- /* Public skip-auth routes (no GitHub auth): the signed-out landing
+                   page, and /healthz so external uptime monitors can reach it. */}}
             - --skip-auth-route=GET=^/signed-out$
+            - --skip-auth-route=GET=^/healthz$
           env:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom: { secretKeyRef: { name: {{ $secretName }}, key: client-id } }
