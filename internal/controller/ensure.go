@@ -52,6 +52,36 @@ func (r *FrontendAppReconciler) upsert(ctx context.Context, app *bakerv1alpha1.F
 	return r.Update(ctx, obj)
 }
 
+// ensureExists creates obj if absent and otherwise leaves its (effectively
+// immutable) spec untouched. Use for resources whose spec cannot change after
+// creation (PVCs, Services) — blindly Updating them would wipe server-populated
+// immutable fields (PVC VolumeName, Service ClusterIP). It still reconciles the
+// owner reference on an already-existing object so cascade GC always reclaims
+// it; ownerReferences are metadata, so stamping one never touches the spec.
+func (r *FrontendAppReconciler) ensureExists(ctx context.Context, app *bakerv1alpha1.FrontendApp, obj client.Object) error {
+	existing := obj.DeepCopyObject().(client.Object)
+	err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing)
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		if err := controllerutil.SetControllerReference(app, obj, r.Scheme); err != nil {
+			return err
+		}
+		return r.Create(ctx, obj)
+	}
+	// Already exists: keep our controller owner reference current (e.g. for an
+	// object created out-of-band or by a pre-owner-ref operator version) but
+	// never re-Update the immutable spec.
+	if ref := metav1.GetControllerOf(existing); ref != nil && ref.UID == app.UID {
+		return nil
+	}
+	if err := controllerutil.SetControllerReference(app, existing, r.Scheme); err != nil {
+		return err
+	}
+	return r.Update(ctx, existing)
+}
+
 // ensureInfra reconciles the always-present children: PVCs, the build-args
 // ConfigMap, the clock SA/Role/RoleBinding/CronJob, and the build NetworkPolicy.
 func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
@@ -59,7 +89,7 @@ func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alp
 	// pod is the first consumer of all three (deterministic co-binding).
 	for _, name := range []string{cacheePVCName(app), dataCachePVCName(app), outputPVCName(app)} {
 		pvc := r.pvc(app, name, r.StorageClassName)
-		if err := r.upsert(ctx, app, pvc, func() {}); err != nil {
+		if err := r.ensureExists(ctx, app, pvc); err != nil {
 			return err
 		}
 	}
@@ -118,7 +148,7 @@ func (r *FrontendAppReconciler) ensureServing(ctx context.Context, app *bakerv1a
 		return err
 	}
 	svc := r.service(app)
-	if err := r.upsert(ctx, app, svc, func() {}); err != nil {
+	if err := r.ensureExists(ctx, app, svc); err != nil {
 		return err
 	}
 

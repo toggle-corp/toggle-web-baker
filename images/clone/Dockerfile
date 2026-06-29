@@ -8,6 +8,11 @@
 # audited. Bump deliberately via images/Makefile (CLONE_BASE_DIGEST).
 FROM alpine/git@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26
 
+# bash for the entrypoint (alpine/git ships only busybox ash; our entrypoints
+# use #!/usr/bin/env bash + set -o pipefail). Added before the COPYs so editing
+# a script doesn't bust the apk layer cache.
+RUN apk add --no-cache bash
+
 # alpine/git's own ENTRYPOINT is ["git"]; override it with our wrapper.
 COPY entrypoint.sh /usr/local/bin/clone-entrypoint.sh
 COPY git-askpass.sh /usr/local/bin/git-askpass.sh

@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -481,6 +482,79 @@ func TestBuildNetworkPolicy_DNSScopedToResolver(t *testing.T) {
 	}
 	if peer.PodSelector == nil || peer.PodSelector.MatchLabels["k8s-app"] != "kube-dns" {
 		t.Fatalf("DNS egress must target k8s-app=kube-dns pods, got %+v", peer.PodSelector)
+	}
+}
+
+// Fix: PVCs are created with an owner reference (cascade GC) via ensureExists.
+func TestReconcile_PVCsCreatedWithOwnerRef(t *testing.T) {
+	app := baseApp()
+	r, cl := newReconciler(t, app, wffc())
+	reconcile(t, r, app) // finalizer
+	reconcile(t, r, app) // steady reconcile
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: cacheePVCName(app), Namespace: "apps"}, pvc); err != nil {
+		t.Fatalf("expected cache PVC to exist: %v", err)
+	}
+	if len(pvc.OwnerReferences) == 0 {
+		t.Fatalf("cache PVC must have an owner reference for cascade GC")
+	}
+}
+
+// Fix: a pre-existing bound PVC's server-populated immutable VolumeName must be
+// preserved across reconciles (blind Update would wipe it to "").
+func TestReconcile_PVCVolumeNamePreserved(t *testing.T) {
+	app := baseApp()
+	existing := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: cacheePVCName(app), Namespace: "apps", Labels: labelsFor(app)},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			StorageClassName: ptr.To("local-path"),
+			VolumeName:       "pvc-existing-123",
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: mustQuantity("1Gi")},
+			},
+		},
+	}
+	r, cl := newReconciler(t, app, wffc(), existing)
+	reconcile(t, r, app) // finalizer
+	reconcile(t, r, app) // steady reconcile
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: cacheePVCName(app), Namespace: "apps"}, pvc); err != nil {
+		t.Fatalf("get pvc: %v", err)
+	}
+	if pvc.Spec.VolumeName != "pvc-existing-123" {
+		t.Fatalf("expected VolumeName preserved (pvc-existing-123), got %q", pvc.Spec.VolumeName)
+	}
+}
+
+// Fix: a pre-existing Service's server-populated immutable ClusterIP must be
+// preserved across reconciles (blind Update would wipe it to "").
+func TestReconcile_ServiceClusterIPPreserved(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{bakerv1alpha1.RebuildAnnotation: "tok-1"}
+	app.Status.LastProcessedRebuild = "tok-1"
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	existing := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceName(app), Namespace: "apps", Labels: labelsFor(app)},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "10.0.0.50",
+			Selector:  nginxLabelsFor(app),
+			Ports:     []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}},
+		},
+	}
+	r, cl := newReconciler(t, app, wffc(), existing)
+	reconcile(t, r, app) // finalizer
+	reconcile(t, r, app) // steady reconcile (reaches ensureServing)
+
+	svc := &corev1.Service{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: serviceName(app), Namespace: "apps"}, svc); err != nil {
+		t.Fatalf("get service: %v", err)
+	}
+	if svc.Spec.ClusterIP != "10.0.0.50" {
+		t.Fatalf("expected ClusterIP preserved (10.0.0.50), got %q", svc.Spec.ClusterIP)
 	}
 }
 
