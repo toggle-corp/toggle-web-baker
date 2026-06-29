@@ -23,10 +23,22 @@ focused and validated by the matching test layer below.
 - `just test-envtest` — apiserver-backed CRD validation tests (downloads
   envtest assets via setup-envtest; needs network on first run). Run on any
   change to `api/v1alpha1/` CEL rules or the CRD.
+- `just helm-snapshots --check-diff-only` — verify the chart still renders to the
+  committed snapshots. Run on any change to `api/v1alpha1/`, the CRD, or anything
+  under `deploy/helm/`. See the pre-commit note below.
 - `just e2e-local` — full kind pipeline smoke (MANUAL, Docker required). See
   below.
 
 Lint with `just lint` (Go) and `make -C images shellcheck` (shell).
+
+## ALWAYS check Helm snapshots before committing
+
+Any change to `api/v1alpha1/` or the CRD flows into the chart (`just manifests`
+re-syncs `templates/crd.yaml`), which changes the rendered Helm output. BEFORE
+every commit run `just helm-snapshots --check-diff-only`; if it reports outdated
+snapshots, run `just helm-snapshots` to regenerate and COMMIT the updated
+`deploy/helm/toggle-web-baker/snapshots/*.yaml` alongside your change. A stale
+snapshot is a CI failure, so never commit a CRD/chart change without it.
 
 ## After operator / API / image changes: ask the user to run `just e2e-local`
 
