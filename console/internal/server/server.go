@@ -109,14 +109,15 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?rebuild=requested", http.StatusSeeOther)
 }
 
-// userFrom reads the GitHub username oauth2-proxy injects. It checks both the
-// header oauth2-proxy uses by default (X-Auth-Request-User) and the legacy /
-// alternate X-Forwarded-User, per the brief.
+// userFrom reads the GitHub username oauth2-proxy injects into the upstream
+// request. In reverse-proxy mode oauth2-proxy passes X-Forwarded-User (via
+// --pass-user-headers) — that is the live source. X-Auth-Request-User is only
+// emitted in nginx auth_request mode, kept here as a harmless fallback.
 func userFrom(r *http.Request) string {
-	if u := r.Header.Get("X-Auth-Request-User"); u != "" {
+	if u := r.Header.Get("X-Forwarded-User"); u != "" {
 		return u
 	}
-	return r.Header.Get("X-Forwarded-User")
+	return r.Header.Get("X-Auth-Request-User")
 }
 
 func (s *Server) renderError(w http.ResponseWriter, code int, msg string, err error) {

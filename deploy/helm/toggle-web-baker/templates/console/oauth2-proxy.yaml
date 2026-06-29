@@ -55,7 +55,6 @@ spec:
             - --github-team={{ $oauth.githubTeam }}
             - --email-domain=*
             - --scope=user:email read:org
-            - --set-xauthrequest=true
             - --pass-user-headers=true
             - --reverse-proxy=true
             - --skip-provider-button=true

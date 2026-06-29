@@ -923,8 +923,8 @@ spec:
 ---
 # Source: toggle-web-baker-helm/templates/console/deployment.yaml
 # The console Deployment + Service. Listens on :8080, serves HTML; auth is
-# handled entirely by oauth2-proxy in front (forward-auth Middleware). The
-# console trusts the X-Auth-Request-User header oauth2-proxy injects.
+# handled entirely by oauth2-proxy reverse-proxying in front of it. The console
+# trusts the X-Forwarded-User header oauth2-proxy injects (--pass-user-headers).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1030,7 +1030,6 @@ spec:
             - --github-team=toggle-corp/platform-team
             - --email-domain=*
             - --scope=user:email read:org
-            - --set-xauthrequest=true
             - --pass-user-headers=true
             - --reverse-proxy=true
             - --skip-provider-button=true

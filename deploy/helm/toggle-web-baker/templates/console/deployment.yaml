@@ -1,7 +1,7 @@
 {{- if .Values.console.enabled }}
 # The console Deployment + Service. Listens on :8080, serves HTML; auth is
-# handled entirely by oauth2-proxy in front (forward-auth Middleware). The
-# console trusts the X-Auth-Request-User header oauth2-proxy injects.
+# handled entirely by oauth2-proxy reverse-proxying in front of it. The console
+# trusts the X-Forwarded-User header oauth2-proxy injects (--pass-user-headers).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

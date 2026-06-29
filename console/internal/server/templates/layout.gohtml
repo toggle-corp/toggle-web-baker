@@ -12,8 +12,8 @@
   }catch(e){}})();
 </script>
 <style>
-  /* LIGHT palette baseline (used when OS is light or forced light). */
-  :root{
+  /* LIGHT palette: OS-light default AND explicit light (grouped to avoid drift). */
+  :root, :root[data-theme="light"]{
     --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef1f5; --ink:#1b1f27; --muted:#5b6472;
     --line:#d6dbe3; --ready:#1f9d57; --build:#1f6fb2; --degraded:#c0392b;
     --warn:#b9770a; --pending:#7f8c8d;
@@ -21,26 +21,7 @@
     --accent-degraded:#b3261e; --accent-pending:#5b6472; --accent-ok:#1f7a45;
     --btn:#2256c9; --btn-hover:#173f97;
   }
-  /* DARK palette (original values), applied when OS prefers dark and no choice. */
-  @media (prefers-color-scheme: dark){
-    :root{
-      --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e8ec; --muted:#9aa3b2;
-      --line:#2a2f3a; --ready:#2ecc71; --build:#3498db; --degraded:#e74c3c;
-      --warn:#f39c12; --pending:#7f8c8d;
-      --link:#6fb3ff; --link-hover:#6fb3ff;
-      --accent-degraded:#ff7a6e; --accent-pending:#b7c0cc; --accent-ok:#86e3ad;
-      --btn:#2d6cdf; --btn-hover:#3a78ec;
-    }
-  }
-  /* Explicit choice wins over the media query. */
-  :root[data-theme="light"]{
-    --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef1f5; --ink:#1b1f27; --muted:#5b6472;
-    --line:#d6dbe3; --ready:#1f9d57; --build:#1f6fb2; --degraded:#c0392b;
-    --warn:#b9770a; --pending:#7f8c8d;
-    --link:#2256c9; --link-hover:#173f97;
-    --accent-degraded:#b3261e; --accent-pending:#5b6472; --accent-ok:#1f7a45;
-    --btn:#2256c9; --btn-hover:#173f97;
-  }
+  /* DARK palette (explicit choice). */
   :root[data-theme="dark"]{
     --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e8ec; --muted:#9aa3b2;
     --line:#2a2f3a; --ready:#2ecc71; --build:#3498db; --degraded:#e74c3c;
@@ -48,6 +29,18 @@
     --link:#6fb3ff; --link-hover:#6fb3ff;
     --accent-degraded:#ff7a6e; --accent-pending:#b7c0cc; --accent-ok:#86e3ad;
     --btn:#2d6cdf; --btn-hover:#3a78ec;
+  }
+  /* OS-dark default when the user has made no explicit choice. Values mirror
+     :root[data-theme="dark"] (CSS can't share a block across @media) — keep in sync. */
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme]){
+      --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e8ec; --muted:#9aa3b2;
+      --line:#2a2f3a; --ready:#2ecc71; --build:#3498db; --degraded:#e74c3c;
+      --warn:#f39c12; --pending:#7f8c8d;
+      --link:#6fb3ff; --link-hover:#6fb3ff;
+      --accent-degraded:#ff7a6e; --accent-pending:#b7c0cc; --accent-ok:#86e3ad;
+      --btn:#2d6cdf; --btn-hover:#3a78ec;
+    }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
