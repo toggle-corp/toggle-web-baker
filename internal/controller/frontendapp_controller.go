@@ -205,9 +205,9 @@ func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
 		Repo:           app.Spec.Repo,
 		Ref:            app.Spec.Ref,
 		PackageManager: string(app.Spec.PackageManager),
-		Setup:          domain.PhaseSpec{Image: app.Spec.Setup.Image, Command: app.Spec.Setup.Command},
-		Fetch:          domain.PhaseSpec{Image: app.Spec.Fetch.Image, Command: app.Spec.Fetch.Command},
-		Build:          domain.PhaseSpec{Image: app.Spec.Build.Image, Command: app.Spec.Build.Command},
+		Setup:          domain.PhaseSpec{Image: app.Spec.Setup.Image, Command: app.Spec.Setup.Command, RunAsUser: app.Spec.Setup.RunAsUser},
+		Fetch:          domain.PhaseSpec{Image: app.Spec.Fetch.Image, Command: app.Spec.Fetch.Command, RunAsUser: app.Spec.Fetch.RunAsUser},
+		Build:          domain.PhaseSpec{Image: app.Spec.Build.Image, Command: app.Spec.Build.Command, RunAsUser: app.Spec.Build.RunAsUser},
 		BuildArgs:      buildArgs,
 		SecretRefs:     secretRefs,
 	}

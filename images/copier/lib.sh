@@ -100,23 +100,34 @@ scan_unsafe() {
 
 # assemble <source_dir> <dest_dir> <owner_uid_gid>
 # rsync the source tree into dest, stripping symlinks that point outside the
-# tree (--safe-links) and copying symlink targets that are inside. Then chown
-# the assembled tree to the platform user so nginx's
-# `disable_symlinks if_not_owner` treats only platform-owned files as
-# followable.
+# tree (--safe-links) and copying symlink targets that are inside. The assembled
+# tree must end up owned by the platform user so nginx's
+# `disable_symlinks if_not_owner` treats only platform-owned files as followable.
+#
+# We achieve that ownership by RUNNING as the platform user (see the image's
+# USER) and telling rsync NOT to carry the source uid/gid (--no-owner
+# --no-group): the build phase may run as an arbitrary UID (e.g. cimg/node's
+# 3434), and a capless non-root copier can neither preserve that owner nor chown
+# it afterwards. With ownership-preservation off, every assembled file is created
+# as the running user, which IS the platform user. The explicit chown is then
+# needed only when running as root (the legacy path that CAN preserve a foreign
+# owner); skip it otherwise so the no-cap non-root run does not fail on EPERM.
 assemble() {
 	local src="$1" dest="$2" owner="$3"
 	mkdir -p -- "$dest"
-	# -a: archive; --safe-links: drop symlinks pointing outside the tree;
-	# trailing slash on src copies its CONTENTS into dest.
-	rsync -a --safe-links --no-specials --no-devices -- "$src/" "$dest/" || {
+	# -a: archive; --no-owner/--no-group: receiver (platform user) owns the tree;
+	# --safe-links: drop symlinks pointing outside the tree; trailing slash on src
+	# copies its CONTENTS into dest.
+	rsync -a --no-owner --no-group --safe-links --no-specials --no-devices -- "$src/" "$dest/" || {
 		echo "assemble: rsync failed" >&2
 		return 1
 	}
-	chown -R -- "$owner" "$dest" || {
-		echo "assemble: chown to $owner failed" >&2
-		return 1
-	}
+	if [ "$(id -u)" = 0 ]; then
+		chown -R -- "$owner" "$dest" || {
+			echo "assemble: chown to $owner failed" >&2
+			return 1
+		}
+	fi
 	return 0
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
@@ -151,6 +152,30 @@ func TestBuildJob_HardenedSecurity(t *testing.T) {
 		if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 || sc.Capabilities.Drop[0] != "ALL" {
 			t.Fatalf("%s must drop ALL caps", c.Name)
 		}
+	}
+}
+
+// spec.build.runAsUser pins the build container's numeric UID (needed for images
+// whose USER is a non-numeric name, e.g. cimg/node's `circleci`). Phases without
+// runAsUser keep the default hardened context (RunAsUser nil).
+func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
+	app := baseApp()
+	app.Spec.Build.RunAsUser = ptr.To(int64(3434))
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	if build.SecurityContext.RunAsUser == nil || *build.SecurityContext.RunAsUser != 3434 {
+		t.Fatalf("build runAsUser = %v, want 3434", build.SecurityContext.RunAsUser)
+	}
+	// runAsNonRoot must still be set alongside the pinned UID.
+	if build.SecurityContext.RunAsNonRoot == nil || !*build.SecurityContext.RunAsNonRoot {
+		t.Fatalf("build must still runAsNonRoot")
+	}
+	// An unset phase (fetch) must NOT inherit the build UID.
+	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
+	if fetch.SecurityContext.RunAsUser != nil {
+		t.Fatalf("fetch runAsUser = %v, want nil", *fetch.SecurityContext.RunAsUser)
 	}
 }
 

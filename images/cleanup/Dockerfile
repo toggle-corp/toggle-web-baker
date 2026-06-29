@@ -15,4 +15,18 @@ RUN corepack enable
 COPY entrypoint.sh /usr/local/bin/cleanup-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/cleanup-entrypoint.sh
 
+# Run as the platform user (matches clone/du/copier). The operator confines phase
+# pods with runAsNonRoot, so root is not an option. HOME points at /tmp because
+# corepack/pnpm/yarn want a writable home and the pod uses readOnlyRootFilesystem;
+# whoever wires the cleanup pod MUST mount a writable /tmp (the platform
+# convention, as build/nginx pods do) and the cache PVC RW at /cache.
+#
+# Caveat for the pod wiring: a non-root pruner can only delete cache entries it
+# can unlink, i.e. those under directories it owns. If a build phase ran as a
+# DIFFERENT UID (e.g. cimg/node's 3434 via spec.build.runAsUser) and wrote into
+# the shared cache, run cleanup as that same UID (or set an fsGroup) so the prune
+# does not fail with EPERM on foreign-owned subtrees.
+ENV HOME=/tmp
+USER 65532:65532
+
 ENTRYPOINT ["/usr/local/bin/cleanup-entrypoint.sh"]
