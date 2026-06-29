@@ -212,6 +212,122 @@ func TestNginxDeployment_UnprivilegedSecurityContext(t *testing.T) {
 	}
 }
 
+func assertEnvVar(t *testing.T, c *corev1.Container, name, want string) {
+	t.Helper()
+	for _, e := range c.Env {
+		if e.Name == name {
+			if e.Value != want {
+				t.Fatalf("%s env %s = %q, want %q", c.Name, name, e.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s container missing env %s", c.Name, name)
+}
+
+// Bug fix: clone speaks the clone image's env-var contract (REPO/REF/SRC_DIR),
+// not CLI flags, so the entrypoint actually sees the repo.
+func TestBuildJob_CloneUsesEnvNotArgs(t *testing.T) {
+	app := baseApp()
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")
+	if clone == nil {
+		t.Fatal("no clone container")
+	}
+	if len(clone.Args) != 0 {
+		t.Fatalf("clone must not use Args, got %v", clone.Args)
+	}
+	assertEnvVar(t, clone, "REPO", app.Spec.Repo)
+	assertEnvVar(t, clone, "REF", app.Spec.Ref)
+	assertEnvVar(t, clone, "SRC_DIR", "/work")
+}
+
+// Bug fix: copier speaks the copier image's env-var contract, not CLI flags.
+func TestBuildJob_CopierUsesEnvNotArgs(t *testing.T) {
+	app := baseApp()
+	app.Spec.KeepReleases = 5
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
+	if copier == nil {
+		t.Fatal("no copier container")
+	}
+	if len(copier.Args) != 0 {
+		t.Fatalf("copier must not use Args, got %v", copier.Args)
+	}
+	outputDir := app.Spec.OutputDir
+	if outputDir == "" {
+		outputDir = "dist"
+	}
+	assertEnvVar(t, copier, "WORKSPACE", "/work")
+	assertEnvVar(t, copier, "OUTPUT_ROOT", "/output")
+	assertEnvVar(t, copier, "OUTPUT_DIR", outputDir)
+	assertEnvVar(t, copier, "KEEP_RELEASES", "5")
+	assertEnvVar(t, copier, "BUILD_TOKEN", "tok")
+}
+
+// Bug fix: optional phases (setup/fetch) with no command no-op via ["true"]
+// instead of falling through to the base image's clone entrypoint.
+func TestBuildJob_OptionalPhasesNoOpWhenUnset(t *testing.T) {
+	app := baseApp()
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	for _, name := range []string{"setup", "fetch"} {
+		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
+		if c == nil {
+			t.Fatalf("no %s container", name)
+		}
+		if len(c.Command) != 1 || c.Command[0] != "true" {
+			t.Fatalf("%s command must be [\"true\"] when unset, got %v", name, c.Command)
+		}
+	}
+}
+
+// When setup/fetch DO specify a command, it is preserved (not replaced by no-op).
+func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
+	app := baseApp()
+	app.Spec.Setup.Command = []string{"sh", "-c", "yarn install"}
+	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch-data"}
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
+	if !equalStrings(setup.Command, app.Spec.Setup.Command) {
+		t.Fatalf("setup command not preserved: got %v", setup.Command)
+	}
+	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
+	if !equalStrings(fetch.Command, app.Spec.Fetch.Command) {
+		t.Fatalf("fetch command not preserved: got %v", fetch.Command)
+	}
+}
+
+// Build is mandatory: its command must be passed through as-is, never no-oped.
+func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
+	app := baseApp()
+	app.Spec.Build.Command = []string{"sh", "-c", "yarn build"}
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	if !equalStrings(build.Command, app.Spec.Build.Command) {
+		t.Fatalf("build command must equal spec build command, got %v", build.Command)
+	}
+	if len(build.Command) == 1 && build.Command[0] == "true" {
+		t.Fatalf("build command must NOT be no-oped to [\"true\"]")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func hasEnv(env []corev1.EnvVar, name string) bool {
 	for _, e := range env {
 		if e.Name == name {

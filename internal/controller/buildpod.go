@@ -55,6 +55,16 @@ func nginxSecurityContext() *corev1.SecurityContext {
 	return sc
 }
 
+// commandOrNoop returns cmd, or a no-op ["true"] when cmd is empty so an
+// unspecified optional phase (setup/fetch) doesn't fall through to the
+// base image's entrypoint.
+func commandOrNoop(cmd []string) []string {
+	if len(cmd) == 0 {
+		return []string{"true"}
+	}
+	return cmd
+}
+
 // toEnvVars converts public spec EnvVars to corev1.EnvVar. secretKeyRef is
 // structurally impossible here, so this can never carry a secret.
 func toEnvVars(in []bakerv1alpha1.EnvVar) []corev1.EnvVar {
@@ -169,14 +179,15 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	publicEnv := toEnvVars(app.Spec.BuildArgs)
 
 	// clone: platform image, no caches needed beyond work.
-	cloneArgs := []string{"--repo", app.Spec.Repo, "--ref", app.Spec.Ref, "--dest", workMountPath}
-	if app.Spec.Submodules {
-		cloneArgs = append(cloneArgs, "--submodules")
-	}
+	// TODO: honor spec.Submodules via a SUBMODULES env once the clone image supports it (the entrypoint currently always recurses submodules).
 	clone := corev1.Container{
-		Name:            "clone",
-		Image:           r.Config.Images.Clone,
-		Args:            cloneArgs,
+		Name:  "clone",
+		Image: r.Config.Images.Clone,
+		Env: []corev1.EnvVar{
+			{Name: "REPO", Value: app.Spec.Repo},
+			{Name: "REF", Value: app.Spec.Ref},
+			{Name: "SRC_DIR", Value: workMountPath},
+		},
 		VolumeMounts:    base,
 		SecurityContext: hardenedSecurityContext(),
 	}
@@ -186,7 +197,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	setup := corev1.Container{
 		Name:            "setup",
 		Image:           imageOr(app.Spec.Setup, r.Config.Images.Clone),
-		Command:         app.Spec.Setup.Command,
+		Command:         commandOrNoop(app.Spec.Setup.Command),
 		WorkingDir:      workMountPath,
 		Env:             append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Setup.Env)...),
 		VolumeMounts:    setupMounts,
@@ -201,7 +212,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	fetch := corev1.Container{
 		Name:            "fetch",
 		Image:           imageOr(app.Spec.Fetch, r.Config.Images.Clone),
-		Command:         app.Spec.Fetch.Command,
+		Command:         commandOrNoop(app.Spec.Fetch.Command),
 		WorkingDir:      workMountPath,
 		Env:             fetchEnv,
 		VolumeMounts:    fetchMounts,
@@ -236,8 +247,13 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	copier := corev1.Container{
 		Name:  "copier",
 		Image: r.Config.Images.Copier,
-		Args:  []string{"--from", workMountPath + "/" + outputDir, "--to", outputMountPath, "--keep", fmt.Sprintf("%d", app.Spec.KeepReleases)},
-		Env:   []corev1.EnvVar{{Name: "BUILD_TOKEN", Value: token}},
+		Env: []corev1.EnvVar{
+			{Name: "BUILD_TOKEN", Value: token},
+			{Name: "WORKSPACE", Value: workMountPath},
+			{Name: "OUTPUT_ROOT", Value: outputMountPath},
+			{Name: "OUTPUT_DIR", Value: outputDir},
+			{Name: "KEEP_RELEASES", Value: fmt.Sprintf("%d", app.Spec.KeepReleases)},
+		},
 		VolumeMounts: append(append([]corev1.VolumeMount{}, base...),
 			corev1.VolumeMount{Name: volOutput, MountPath: outputMountPath}),
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
