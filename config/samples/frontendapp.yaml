@@ -1,0 +1,35 @@
+# e2e smoke FrontendApp used by `just e2e-local`.
+#
+# A minimal, fast, hermetic-ish sample that exercises the full build pipeline
+# (clone -> setup no-op -> fetch no-op -> build -> copier) without touching the
+# network beyond the public Hello-World clone:
+#
+#   * setup + fetch are omitted on purpose -> the operator no-ops them (["true"]).
+#   * the build just writes a static index.html, so there is no package install.
+#   * no `secrets:` block -> satisfies the CEL rule that secrets require a
+#     fetch.command, and keeps the smoke run credential-free.
+#   * build.image is docker.io/cimg/node:18.20, which runs as a non-root UID
+#     (1001) so it satisfies the build pod's RunAsNonRoot constraint, and ships
+#     a shell for the `sh -c` build command. The operator's --registry-allowlist
+#     must permit `docker.io/cimg/` (the e2e recipe sets this).
+#
+# Passes the new CRD CEL validation: build.command is present; no secrets.
+apiVersion: baker.toggle-corp.com/v1alpha1
+kind: FrontendApp
+metadata:
+  name: smoke
+  namespace: default
+spec:
+  repo: https://github.com/octocat/Hello-World
+  ref: master
+  packageManager: yarn
+  schedule: "0 6 * * *"
+  # setup + fetch omitted on purpose -> operator no-ops them (["true"]).
+  build:
+    image: docker.io/cimg/node:18.20      # non-root (uid 1001); RunAsNonRoot pods require this
+    command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
+  outputDir: out
+  keepReleases: 2
+  ingress:
+    host: smoke.local.test
+    className: nginx

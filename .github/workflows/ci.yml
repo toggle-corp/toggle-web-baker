@@ -45,6 +45,12 @@ jobs:
         run: just build
       - name: Test
         run: just test
+      - name: Image shell tests
+        run: |
+          make -C images test
+          make -C images shellcheck
+      - name: Envtest (CRD validation)
+        run: just test-envtest
       - name: Lint (operator module)
         uses: golangci/golangci-lint-action@v7
         with:
