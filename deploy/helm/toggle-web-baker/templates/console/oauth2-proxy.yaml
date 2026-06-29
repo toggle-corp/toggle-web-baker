@@ -1,8 +1,10 @@
 {{- if .Values.console.enabled }}
 {{- $oauth := .Values.console.oauth2Proxy }}
 {{- $secretName := $oauth.existingSecret | default (include "toggle-web-baker.oauth2.fullname" .) }}
-# oauth2-proxy: GitHub OAuth forward-auth target for the console. MUST FAIL
-# CLOSED — any error confirming team membership denies the request.
+# oauth2-proxy: GitHub OAuth reverse proxy in front of the console. Unauthenticated
+# requests natively 302-redirect to GitHub login; authenticated requests are proxied
+# to the console upstream. MUST FAIL CLOSED — any error confirming team membership
+# denies the request.
 {{- if not $oauth.existingSecret }}
 apiVersion: v1
 kind: Secret
@@ -62,6 +64,8 @@ spec:
             - --cookie-domain={{ .Values.console.host }}
             - --redirect-url=https://{{ .Values.console.host }}/oauth2/callback
             - --whitelist-domain={{ .Values.console.host }}
+            - --upstream=http://{{ include "toggle-web-baker.console.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:80
+            - --skip-auth-route=GET=^/signed-out$
           env:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom: { secretKeyRef: { name: {{ $secretName }}, key: client-id } }

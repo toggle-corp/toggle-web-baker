@@ -986,8 +986,10 @@ spec:
               memory: 32Mi
 ---
 # Source: toggle-web-baker-helm/templates/console/oauth2-proxy.yaml
-# oauth2-proxy: GitHub OAuth forward-auth target for the console. MUST FAIL
-# CLOSED — any error confirming team membership denies the request.
+# oauth2-proxy: GitHub OAuth reverse proxy in front of the console. Unauthenticated
+# requests natively 302-redirect to GitHub login; authenticated requests are proxied
+# to the console upstream. MUST FAIL CLOSED — any error confirming team membership
+# denies the request.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1037,6 +1039,8 @@ spec:
             - --cookie-domain=baker-console.example.org
             - --redirect-url=https://baker-console.example.org/oauth2/callback
             - --whitelist-domain=baker-console.example.org
+            - --upstream=http://release-name-toggle-web-baker-console.default.svc.cluster.local:80
+            - --skip-auth-route=GET=^/signed-out$
           env:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom: { secretKeyRef: { name: baker-oauth2-proxy, key: client-id } }
@@ -1140,40 +1144,9 @@ spec:
 
 ---
 # Source: toggle-web-baker-helm/templates/console/ingress.yaml
-# /oauth2/* must reach oauth2-proxy directly (login + callback) WITHOUT the
-# forward-auth middleware, or login can never complete.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-toggle-web-baker-oauth2-proxy
-  namespace: default
-  labels:
-    helm.sh/chart: toggle-web-baker-helm-0.0.0
-    app.kubernetes.io/name: toggle-web-baker
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.0.0"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: oauth2-proxy
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-spec:
-  rules:
-    - host: baker-console.example.org
-      http:
-        paths:
-          - path: /oauth2
-            pathType: Prefix
-            backend:
-              service:
-                name: release-name-toggle-web-baker-oauth2-proxy
-                port: { number: 4180 }
-  tls:
-    - hosts: [baker-console.example.org]
-      secretName: baker-console-tls
----
-# Source: toggle-web-baker-helm/templates/console/ingress.yaml
-# Everything else reaches the console and IS guarded by the forward-auth
-# middleware (<namespace>-<name>@kubernetescrd).
+# Single Ingress: all traffic for the console host reaches oauth2-proxy, which
+# serves /oauth2/* itself (login + callback) and reverse-proxies every other
+# request to the console upstream. Unauthenticated hits natively 302 to GitHub.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -1188,7 +1161,6 @@ metadata:
     app.kubernetes.io/component: console
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.middlewares: default-release-name-toggle-web-baker-console-auth@kubernetescrd
 spec:
   rules:
     - host: baker-console.example.org
@@ -1198,35 +1170,8 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: release-name-toggle-web-baker-console
-                port: { number: 80 }
+                name: release-name-toggle-web-baker-oauth2-proxy
+                port: { number: 4180 }
   tls:
     - hosts: [baker-console.example.org]
       secretName: baker-console-tls
-
----
-# Source: toggle-web-baker-helm/templates/console/middleware.yaml
-# Traefik forward-auth Middleware: every console request is first sent to
-# oauth2-proxy's /oauth2/auth. A 2xx passes (copying X-Auth-Request-* headers
-# onto the upstream); anything else redirects to login. oauth2-proxy fails
-# closed, so a GitHub outage denies access rather than opening it.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: release-name-toggle-web-baker-console-auth
-  namespace: default
-  labels:
-    helm.sh/chart: toggle-web-baker-helm-0.0.0
-    app.kubernetes.io/name: toggle-web-baker
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.0.0"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: console
-spec:
-  forwardAuth:
-    address: http://release-name-toggle-web-baker-oauth2-proxy.default.svc.cluster.local:4180/oauth2/auth
-    trustForwardHeader: true
-    authResponseHeaders:
-      - X-Auth-Request-User
-      - X-Auth-Request-Email
-      - X-Auth-Request-Preferred-Username
