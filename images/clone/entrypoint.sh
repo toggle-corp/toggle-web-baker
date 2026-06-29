@@ -2,8 +2,8 @@
 # clone-entrypoint.sh -- anonymous (or optionally credentialed) source checkout.
 #
 # Phase 1 of the build pipeline (first initContainer). Clones $REPO at $REF into
-# /workspace/src, optionally recursing submodules ($SUBMODULES). Shallow if
-# $DEPTH is set.
+# /workspace/src, optionally fetching top-level submodules ($SUBMODULES; one
+# level only, like actions/checkout submodules:true). Shallow if $DEPTH is set.
 #
 # Pods have automountServiceAccountToken:false, so we return nothing via the k8s
 # API. Failures simply exit non-zero with a short reason written to the
@@ -13,7 +13,9 @@
 #   REPO        (required)  -- clone URL, expected public.
 #   REF         (required)  -- branch, tag, or full commit sha to check out.
 #   DEPTH       (optional)  -- positive integer; if set, shallow clone to that depth.
-#   SUBMODULES  (optional)  -- when 1/true, recurse submodules; default off.
+#   SUBMODULES  (optional)  -- when 1/true, fetch top-level submodules (one level,
+#                              NOT recursive — nested SSH/private submodules would
+#                              abort the clone); default off.
 #
 # Security notes:
 #   * GIT_ASKPASS points at a helper that reads an OPTIONAL credential mount and
@@ -60,17 +62,21 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0="$SRC_DIR"
 
-# SUBMODULES opt-in: only recurse submodules when explicitly enabled (1/true).
+# SUBMODULES opt-in: only fetch submodules when explicitly enabled (1/true).
 # Default off, so an app without submodules: true never fetches submodules.
+#
+# This fetches ONLY the top-level submodules (one level deep), mirroring
+# actions/checkout's `submodules: true` (NOT `recursive`). We deliberately do
+# NOT recurse: a top-level submodule may declare nested submodules over SSH
+# (git@github.com:...) or private URLs the build pod can't reach, which would
+# abort the whole clone. The init pass below uses `git submodule update --init`
+# (no --recursive) for exactly this reason.
 submodules=0
 case "${SUBMODULES:-}" in
 1 | [Tt][Rr][Uu][Ee]) submodules=1 ;;
 esac
 
 clone_args=""
-if [ "$submodules" = 1 ]; then
-	clone_args="--recurse-submodules --shallow-submodules"
-fi
 if [ -n "${DEPTH:-}" ]; then
 	case "$DEPTH" in
 	'' | *[!0-9]*) fail "DEPTH must be a positive integer, got '$DEPTH'" ;;
@@ -93,17 +99,13 @@ else
 	git fetch origin "$REF" 2>/dev/null || true
 fi
 
-checkout_args="--force"
-if [ "$submodules" = 1 ]; then
-	checkout_args="--recurse-submodules --force"
-fi
-# shellcheck disable=SC2086  # checkout_args is an intentional word-split arg list.
-git checkout $checkout_args "$REF" 2>/dev/null ||
+git checkout --force "$REF" 2>/dev/null ||
 	git checkout --force FETCH_HEAD 2>/dev/null ||
 	fail "cannot checkout ref '$REF'"
 
+# Top-level submodules only (--init, NOT --recursive): see the SUBMODULES note above.
 if [ "$submodules" = 1 ]; then
-	git submodule update --init --recursive ${DEPTH:+--depth "$DEPTH"} ||
+	git submodule update --init ${DEPTH:+--depth "$DEPTH"} ||
 		fail "submodule update failed"
 fi
 

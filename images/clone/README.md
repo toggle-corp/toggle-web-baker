@@ -20,6 +20,7 @@ pipeline (the first initContainer).
 | `REPO` | yes | Clone URL (expected public). |
 | `REF` | yes | Branch, tag, or full commit sha to check out. |
 | `DEPTH` | no | Positive int; shallow clone to that depth (incl. submodules). |
+| `SUBMODULES` | no | `1`/`true` fetches top-level submodules only (one level, like `actions/checkout submodules:true`; not recursive). Default off. |
 | `SRC_DIR` | no | Override target (default `/workspace/src`). |
 | `GIT_CREDENTIAL_DIR` | no | Where the askpass helper reads optional creds (default `/run/git-credential`). |
 
