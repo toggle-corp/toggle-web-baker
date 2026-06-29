@@ -127,6 +127,39 @@ assert_rc 1 "bad DEPTH: exits 1"
 assert_contains "$err$(cat "$TERM_LOG")" "DEPTH must be a positive integer" "bad DEPTH: reports 'DEPTH must be a positive integer'"
 unset DEPTH
 
+# ---- 6. SUBMODULES=1 recurses submodules ------------------------------------
+# When the operator opts in, the clone must use --recurse-submodules AND run a
+# `git submodule update` pass.
+unset SUBMODULES 2>/dev/null || true
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src6" SUBMODULES=1
+run_clone
+assert_rc 0 "submodules on: exits 0"
+clone_line="$(grep '^clone ' "$GIT_LOG" | head -n1)"
+assert_contains "$clone_line" "--recurse-submodules" "submodules on: git clone includes --recurse-submodules"
+if grep -q '^submodule update' "$GIT_LOG"; then
+	ok "submodules on: git submodule update is invoked"
+else
+	no "submodules on: git submodule update is invoked (no 'submodule update' in git log)"
+fi
+unset SUBMODULES
+
+# ---- 7. default (no SUBMODULES) skips submodules ----------------------------
+# Default off: no --recurse-submodules on the clone, and NO submodule update.
+unset SUBMODULES 2>/dev/null || true
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src7"
+run_clone
+assert_rc 0 "submodules off: exits 0"
+clone_line="$(grep '^clone ' "$GIT_LOG" | head -n1)"
+case "$clone_line" in
+*--recurse-submodules*) no "submodules off: git clone omits --recurse-submodules (found it in [$clone_line])" ;;
+*) ok "submodules off: git clone omits --recurse-submodules" ;;
+esac
+if grep -q '^submodule update' "$GIT_LOG"; then
+	no "submodules off: git submodule update is NOT invoked (found 'submodule update' in git log)"
+else
+	ok "submodules off: git submodule update is NOT invoked"
+fi
+
 # ---- summary ----------------------------------------------------------------
 printf '\n# %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

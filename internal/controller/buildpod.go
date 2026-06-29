@@ -178,16 +178,21 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 
 	publicEnv := toEnvVars(app.Spec.BuildArgs)
 
-	// clone: platform image, no caches needed beyond work.
-	// TODO: honor spec.Submodules via a SUBMODULES env once the clone image supports it (the entrypoint currently always recurses submodules).
+	// clone: platform image, no caches needed beyond work. SUBMODULES is set
+	// ONLY when the app opts in; the entrypoint defaults to no submodule
+	// recursion when the env is absent.
+	cloneEnv := []corev1.EnvVar{
+		{Name: "REPO", Value: app.Spec.Repo},
+		{Name: "REF", Value: app.Spec.Ref},
+		{Name: "SRC_DIR", Value: workMountPath},
+	}
+	if app.Spec.Submodules {
+		cloneEnv = append(cloneEnv, corev1.EnvVar{Name: "SUBMODULES", Value: "1"})
+	}
 	clone := corev1.Container{
-		Name:  "clone",
-		Image: r.Config.Images.Clone,
-		Env: []corev1.EnvVar{
-			{Name: "REPO", Value: app.Spec.Repo},
-			{Name: "REF", Value: app.Spec.Ref},
-			{Name: "SRC_DIR", Value: workMountPath},
-		},
+		Name:            "clone",
+		Image:           r.Config.Images.Clone,
+		Env:             cloneEnv,
 		VolumeMounts:    base,
 		SecurityContext: hardenedSecurityContext(),
 	}

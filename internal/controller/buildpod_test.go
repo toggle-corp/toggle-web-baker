@@ -317,6 +317,35 @@ func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 	}
 }
 
+// spec.Submodules=true wires SUBMODULES=1 into the clone container so the
+// entrypoint opts into submodule recursion.
+func TestBuildJob_SubmodulesEnvWhenEnabled(t *testing.T) {
+	app := baseApp()
+	app.Spec.Submodules = true
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")
+	if clone == nil {
+		t.Fatal("no clone container")
+	}
+	assertEnvVar(t, clone, "SUBMODULES", "1")
+}
+
+// Default (spec.Submodules=false): no SUBMODULES env, so the entrypoint skips
+// submodule recursion.
+func TestBuildJob_NoSubmodulesEnvByDefault(t *testing.T) {
+	app := baseApp()
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")
+	if clone == nil {
+		t.Fatal("no clone container")
+	}
+	if hasEnv(clone.Env, "SUBMODULES") {
+		t.Fatalf("clone container must NOT set SUBMODULES when spec.Submodules is false")
+	}
+}
+
 func hasEnv(env []corev1.EnvVar, name string) bool {
 	for _, e := range env {
 		if e.Name == name {
