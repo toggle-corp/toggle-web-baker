@@ -4,16 +4,55 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · Baker Console</title>
+<script>
+  // Anti-FOUC: apply an explicit theme choice before first paint. An unset /
+  // 'system' value leaves data-theme off so the media query governs.
+  (function(){try{var t=localStorage.getItem('baker-theme');
+    if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}
+  }catch(e){}})();
+</script>
 <style>
+  /* LIGHT palette baseline (used when OS is light or forced light). */
   :root{
+    --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef1f5; --ink:#1b1f27; --muted:#5b6472;
+    --line:#d6dbe3; --ready:#1f9d57; --build:#1f6fb2; --degraded:#c0392b;
+    --warn:#b9770a; --pending:#7f8c8d;
+    --link:#2256c9; --link-hover:#173f97;
+    --accent-degraded:#b3261e; --accent-pending:#5b6472; --accent-ok:#1f7a45;
+    --btn:#2256c9; --btn-hover:#173f97;
+  }
+  /* DARK palette (original values), applied when OS prefers dark and no choice. */
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e8ec; --muted:#9aa3b2;
+      --line:#2a2f3a; --ready:#2ecc71; --build:#3498db; --degraded:#e74c3c;
+      --warn:#f39c12; --pending:#7f8c8d;
+      --link:#6fb3ff; --link-hover:#6fb3ff;
+      --accent-degraded:#ff7a6e; --accent-pending:#b7c0cc; --accent-ok:#86e3ad;
+      --btn:#2d6cdf; --btn-hover:#3a78ec;
+    }
+  }
+  /* Explicit choice wins over the media query. */
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef1f5; --ink:#1b1f27; --muted:#5b6472;
+    --line:#d6dbe3; --ready:#1f9d57; --build:#1f6fb2; --degraded:#c0392b;
+    --warn:#b9770a; --pending:#7f8c8d;
+    --link:#2256c9; --link-hover:#173f97;
+    --accent-degraded:#b3261e; --accent-pending:#5b6472; --accent-ok:#1f7a45;
+    --btn:#2256c9; --btn-hover:#173f97;
+  }
+  :root[data-theme="dark"]{
     --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e8ec; --muted:#9aa3b2;
     --line:#2a2f3a; --ready:#2ecc71; --build:#3498db; --degraded:#e74c3c;
     --warn:#f39c12; --pending:#7f8c8d;
+    --link:#6fb3ff; --link-hover:#6fb3ff;
+    --accent-degraded:#ff7a6e; --accent-pending:#b7c0cc; --accent-ok:#86e3ad;
+    --btn:#2d6cdf; --btn-hover:#3a78ec;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
     font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  a{color:#6fb3ff;text-decoration:none} a:hover{text-decoration:underline}
+  a{color:var(--link);text-decoration:none} a:hover{color:var(--link-hover);text-decoration:underline}
   header{display:flex;justify-content:space-between;align-items:center;
     padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
   header h1{font-size:15px;margin:0;letter-spacing:.04em}
@@ -26,11 +65,11 @@
     font-weight:700;letter-spacing:.03em;white-space:nowrap}
   .b-ready{background:rgba(46,204,113,.16);color:var(--ready);border:1px solid rgba(46,204,113,.4)}
   .b-building{background:rgba(52,152,219,.16);color:var(--build);border:1px solid rgba(52,152,219,.4)}
-  .b-degraded{background:rgba(231,76,60,.18);color:#ff7a6e;border:1px solid rgba(231,76,60,.5)}
+  .b-degraded{background:rgba(231,76,60,.18);color:var(--accent-degraded);border:1px solid rgba(231,76,60,.5)}
   .b-degraded-serving{background:rgba(243,156,18,.16);color:var(--warn);border:1px solid rgba(243,156,18,.45)}
-  .b-pending{background:rgba(127,140,141,.18);color:#b7c0cc;border:1px solid rgba(127,140,141,.4)}
+  .b-pending{background:rgba(127,140,141,.18);color:var(--accent-pending);border:1px solid rgba(127,140,141,.4)}
   .b-stale{background:rgba(243,156,18,.16);color:var(--warn);border:1px solid rgba(243,156,18,.45)}
-  .b-true{color:var(--ready)} .b-false{color:#ff7a6e} .b-unknown{color:var(--muted)}
+  .b-true{color:var(--ready)} .b-false{color:var(--accent-degraded)} .b-unknown{color:var(--muted)}
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .card h2{margin:0;padding:11px 14px;font-size:12px;text-transform:uppercase;
@@ -44,12 +83,14 @@
   .row-ready{box-shadow:inset 3px 0 0 var(--ready)}
   .breadcrumb{color:var(--muted);margin-bottom:14px}
   .banner{padding:10px 14px;border-radius:8px;margin-bottom:16px;font-weight:600}
-  .banner-degraded{background:rgba(231,76,60,.14);border:1px solid rgba(231,76,60,.5);color:#ff9b91}
+  .banner-degraded{background:rgba(231,76,60,.14);border:1px solid rgba(231,76,60,.5);color:var(--accent-degraded)}
   .banner-warn{background:rgba(243,156,18,.12);border:1px solid rgba(243,156,18,.45);color:var(--warn)}
-  .banner-ok{background:rgba(46,204,113,.10);border:1px solid rgba(46,204,113,.35);color:#86e3ad}
-  button{font:inherit;background:#2d6cdf;color:#fff;border:0;border-radius:7px;
+  .banner-ok{background:rgba(46,204,113,.10);border:1px solid rgba(46,204,113,.35);color:var(--accent-ok)}
+  button{font:inherit;background:var(--btn);color:#fff;border:0;border-radius:7px;
     padding:8px 16px;cursor:pointer;font-weight:700}
-  button:hover{background:#3a78ec}
+  button:hover{background:var(--btn-hover)}
+  .theme-select{font:inherit;font-size:12px;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:6px;padding:3px 6px;margin-left:10px;cursor:pointer}
   .muted{color:var(--muted)} .small{font-size:12px}
   code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 </style>
@@ -57,8 +98,17 @@
 <body>
 <header>
   <h1><a href="/">BAKER · FrontendApp Console</a></h1>
-  <div class="user">{{if .User}}signed in as {{.User}} · <a href="/oauth2/sign_out?rd=/signed-out">Log out</a>{{else if not .Anon}}<span class="b-false">no user header</span>{{end}}</div>
+  <div class="user">{{if .User}}signed in as {{.User}} · <a href="/oauth2/sign_out?rd=/signed-out">Log out</a>{{else if not .Anon}}<span class="b-false">no user header</span>{{end}}<select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
 </header>
+<script>
+  (function(){var sel=document.getElementById('theme-select');if(!sel){return;}
+    var cur='system';try{var t=localStorage.getItem('baker-theme');if(t==='light'||t==='dark'){cur=t;}}catch(e){}
+    sel.value=cur;
+    sel.addEventListener('change',function(){var v=sel.value;
+      try{if(v==='system'){localStorage.removeItem('baker-theme');document.documentElement.removeAttribute('data-theme');}
+      else{localStorage.setItem('baker-theme',v);document.documentElement.setAttribute('data-theme',v);}}catch(e){}});
+  })();
+</script>
 <main>
 {{end}}
 

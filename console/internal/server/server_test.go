@@ -136,6 +136,40 @@ func TestList_RendersSeededApp(t *testing.T) {
 	}
 }
 
+func TestThemeControls(t *testing.T) {
+	srv, _ := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Auth-Request-User", "octocat")
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Anti-FOUC inline script markers: must read localStorage and apply data-theme.
+	for _, marker := range []string{"localStorage", "data-theme", "baker-theme"} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("page should contain anti-FOUC marker %q", marker)
+		}
+	}
+
+	// System default must follow the OS via the media query.
+	if !strings.Contains(body, "prefers-color-scheme") {
+		t.Error("page should contain a prefers-color-scheme media query")
+	}
+
+	// Three-state theme control.
+	if !strings.Contains(body, "<select") {
+		t.Error("page should contain a theme <select> control")
+	}
+	for _, opt := range []string{"System", "Light", "Dark"} {
+		if !strings.Contains(body, opt) {
+			t.Errorf("theme control should offer the %q option", opt)
+		}
+	}
+}
+
 func TestSignedOut(t *testing.T) {
 	srv, _ := newTestServer(t)
 	// Public page: no X-Auth-Request-User header.
