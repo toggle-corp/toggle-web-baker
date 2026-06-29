@@ -36,6 +36,10 @@ generate:
 docker-build TAG="dev":
     docker build -t ghcr.io/toggle-corp/toggle-web-baker-operator:{{TAG}} .
 
+# Run the envtest (apiserver-backed) validation suite. Downloads test binaries on first run.
+test-envtest:
+    KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.20 use 1.32.0 -p path)" go test -tags envtest ./internal/controller/... -run Validation -count=1
+
 # Lint the Helm chart.
 helm-lint:
     helm lint deploy/helm/toggle-web-baker

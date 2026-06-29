@@ -227,9 +227,12 @@ type StorageConfig struct {
 }
 
 // FrontendAppSpec is the desired state: operational tunables for one app.
+// +kubebuilder:validation:XValidation:rule="has(self.build) && has(self.build.command) && size(self.build.command) > 0",message="build.command is required"
+// +kubebuilder:validation:XValidation:rule="!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch) && has(self.fetch.command) && size(self.fetch.command) > 0)",message="secrets require a fetch.command to consume them"
 type FrontendAppSpec struct {
 	// +kubebuilder:validation:Required
 	Repo string `json:"repo"`
+	// +kubebuilder:default="HEAD"
 	// +optional
 	Ref string `json:"ref,omitempty"`
 	// +kubebuilder:default=yarn

@@ -1,0 +1,164 @@
+//go:build envtest
+
+package controller
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
+)
+
+var (
+	testClient client.Client
+	testCtx    context.Context
+)
+
+// TestMain spins up a real apiserver+etcd (envtest), installs the generated
+// CRD, and builds a client. CEL validation only runs in a real apiserver, so
+// this whole suite is gated behind the `envtest` build tag.
+func TestMain(m *testing.M) {
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd")},
+		ErrorIfCRDPathMissing: true,
+	}
+
+	cfg, err := testEnv.Start()
+	if err != nil {
+		panic("failed to start envtest environment: " + err.Error())
+	}
+
+	if err := bakerv1alpha1.AddToScheme(scheme.Scheme); err != nil {
+		panic("failed to add baker scheme: " + err.Error())
+	}
+
+	testClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	if err != nil {
+		panic("failed to build client: " + err.Error())
+	}
+
+	testCtx = context.Background()
+
+	code := m.Run()
+
+	if err := testEnv.Stop(); err != nil {
+		panic("failed to stop envtest environment: " + err.Error())
+	}
+
+	os.Exit(code)
+}
+
+// validApp returns a fully-valid FrontendApp that satisfies every required
+// field and CEL rule. Tests mutate it to isolate the one rule under test.
+func validApp(name string) *bakerv1alpha1.FrontendApp {
+	return &bakerv1alpha1.FrontendApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: bakerv1alpha1.FrontendAppSpec{
+			Repo: "https://example.com/repo.git",
+			Ref:  "main",
+			Build: bakerv1alpha1.PhaseSpec{
+				Command: []string{"yarn", "build"},
+			},
+			Ingress: bakerv1alpha1.IngressConfig{
+				Host: "app.example.com",
+			},
+		},
+	}
+}
+
+func TestValidation_RejectsMissingBuildCommand(t *testing.T) {
+	app := validApp("reject-missing-build-command")
+	app.Spec.Build.Command = nil
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected Create to be rejected, got nil error")
+	}
+	if !strings.Contains(err.Error(), "build.command") {
+		t.Fatalf("expected error mentioning build.command, got: %v", err)
+	}
+}
+
+func TestValidation_RejectsSecretsWithoutFetchCommand(t *testing.T) {
+	app := validApp("reject-secrets-without-fetch")
+	app.Spec.Secrets = []bakerv1alpha1.EnvVarWithSecret{
+		{
+			Name: "API_TOKEN",
+			ValueFrom: bakerv1alpha1.EnvVarWithSecretSource{
+				SecretKeyRef: bakerv1alpha1.SecretKeySelector{
+					Name: "creds",
+					Key:  "token",
+				},
+			},
+		},
+	}
+	app.Spec.Fetch.Command = nil
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected Create to be rejected, got nil error")
+	}
+	if !strings.Contains(err.Error(), "fetch.command") {
+		t.Fatalf("expected error mentioning fetch.command, got: %v", err)
+	}
+}
+
+func TestValidation_AcceptsSecretsWithFetchCommand(t *testing.T) {
+	app := validApp("accept-secrets-with-fetch")
+	app.Spec.Secrets = []bakerv1alpha1.EnvVarWithSecret{
+		{
+			Name: "API_TOKEN",
+			ValueFrom: bakerv1alpha1.EnvVarWithSecretSource{
+				SecretKeyRef: bakerv1alpha1.SecretKeySelector{
+					Name: "creds",
+					Key:  "token",
+				},
+			},
+		},
+	}
+	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch-data"}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected Create to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsValidApp(t *testing.T) {
+	app := validApp("accept-valid-app")
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected Create to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_DefaultsRefToHEAD(t *testing.T) {
+	app := validApp("defaults-ref-to-head")
+	app.Spec.Ref = "" // omit so the apiserver applies the default
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected Create to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+
+	got := &bakerv1alpha1.FrontendApp{}
+	key := client.ObjectKey{Namespace: "default", Name: "defaults-ref-to-head"}
+	if err := testClient.Get(testCtx, key, got); err != nil {
+		t.Fatalf("failed to Get created object: %v", err)
+	}
+	if got.Spec.Ref != "HEAD" {
+		t.Fatalf("expected Spec.Ref defaulted to HEAD, got %q", got.Spec.Ref)
+	}
+}
