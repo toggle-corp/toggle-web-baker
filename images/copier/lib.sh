@@ -68,15 +68,17 @@ gate_free_space() {
 # safe_name <basename> -- true iff a path component is safe to assemble.
 # Rejects path-traversal and odd/control characters. Allows POSIX-portable
 # filename chars plus space, '#', and a few common web-asset punctuation marks.
+#
+# A LEADING DASH is allowed: Firebase push-IDs / Next.js dynamic-route slugs
+# (e.g. `-MywkTgq81K7yQnbEMgr`) routinely start with one, and they are a normal
+# part of a static export. Option-injection is prevented at the CALL SITE, not
+# here: every command that touches these names uses `--` (rsync/mkdir/ln/mv) or
+# a NUL-delimited `find -print0`, so a leading `-` is never parsed as a flag.
 safe_name() {
 	local n="$1"
 	case "$n" in
 	'' | '.' | '..') return 1 ;;
 	*/* | *$'\n'* | *$'\t'*) return 1 ;; # no separators / control whitespace
-	esac
-	# Disallow a leading dash (option-injection) defensively.
-	case "$n" in
-	-*) return 1 ;;
 	esac
 	return 0
 }

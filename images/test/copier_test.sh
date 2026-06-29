@@ -75,8 +75,11 @@ rc=0
 safe_name ".." || rc=$?
 assert_rc 1 "safe_name: .. rejected"
 rc=0
-safe_name "-rf" || rc=$?
-assert_rc 1 "safe_name: leading dash rejected"
+safe_name "-MywkTgq81K7yQnbEMgr" || rc=$?
+assert_rc 0 "safe_name: leading-dash slug allowed (Firebase/Next route ids; call sites use --)"
+rc=0
+safe_name "a/b" || rc=$?
+assert_rc 1 "safe_name: path separator rejected"
 
 SRC="$TMP/src"
 mkdir -p "$SRC/assets"
