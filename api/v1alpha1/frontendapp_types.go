@@ -113,6 +113,15 @@ type PhaseSpec struct {
 	// +optional
 	// +listType=atomic
 	Env []EnvVar `json:"env,omitempty"`
+	// RunAsUser pins this phase container's numeric UID. The build pod sets
+	// runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+	// (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+	// cannot verify a named user is non-root (CreateContainerConfigError). Set
+	// this to the image's numeric non-root UID to satisfy the constraint. Must
+	// be > 0 (non-root).
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RunAsUser *int64 `json:"runAsUser,omitempty"`
 }
 
 // PackageManager selects the JS package manager (drives the volume layout).

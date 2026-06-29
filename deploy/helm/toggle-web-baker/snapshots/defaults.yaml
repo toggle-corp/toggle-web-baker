@@ -142,6 +142,17 @@ spec:
                     x-kubernetes-list-type: atomic
                   image:
                     type: string
+                  runAsUser:
+                    description: |-
+                      RunAsUser pins this phase container's numeric UID. The build pod sets
+                      runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                      (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                      cannot verify a named user is non-root (CreateContainerConfigError). Set
+                      this to the image's numeric non-root UID to satisfy the constraint. Must
+                      be > 0 (non-root).
+                    format: int64
+                    minimum: 1
+                    type: integer
                 type: object
               buildArgs:
                 description: BuildArgs are PUBLIC, ConfigMap-sourced env that may
@@ -225,6 +236,17 @@ spec:
                     x-kubernetes-list-type: atomic
                   image:
                     type: string
+                  runAsUser:
+                    description: |-
+                      RunAsUser pins this phase container's numeric UID. The build pod sets
+                      runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                      (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                      cannot verify a named user is non-root (CreateContainerConfigError). Set
+                      this to the image's numeric non-root UID to satisfy the constraint. Must
+                      be > 0 (non-root).
+                    format: int64
+                    minimum: 1
+                    type: integer
                 type: object
               ingress:
                 description: IngressConfig describes the public ingress for the served
@@ -367,6 +389,17 @@ spec:
                     x-kubernetes-list-type: atomic
                   image:
                     type: string
+                  runAsUser:
+                    description: |-
+                      RunAsUser pins this phase container's numeric UID. The build pod sets
+                      runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                      (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                      cannot verify a named user is non-root (CreateContainerConfigError). Set
+                      this to the image's numeric non-root UID to satisfy the constraint. Must
+                      be > 0 (non-root).
+                    format: int64
+                    minimum: 1
+                    type: integer
                 type: object
               storage:
                 description: |-

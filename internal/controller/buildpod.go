@@ -39,6 +39,19 @@ func hardenedSecurityContext() *corev1.SecurityContext {
 	}
 }
 
+// phaseSecurityContext is the hardened context for a user-supplied phase
+// container (setup / fetch / build), pinning runAsUser when the app sets one.
+// runAsNonRoot alone is not enough for an image whose USER is a non-numeric
+// name (e.g. cimg/node's `circleci`): the kubelet cannot verify a named user is
+// non-root and admission fails, so the app supplies the numeric UID here.
+func phaseSecurityContext(p bakerv1alpha1.PhaseSpec) *corev1.SecurityContext {
+	sc := hardenedSecurityContext()
+	if p.RunAsUser != nil {
+		sc.RunAsUser = p.RunAsUser
+	}
+	return sc
+}
+
 // nginxUID is the UID/GID baked into docker.io/nginxinc/nginx-unprivileged.
 const nginxUID int64 = 101
 
@@ -206,7 +219,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		WorkingDir:      workMountPath,
 		Env:             append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Setup.Env)...),
 		VolumeMounts:    setupMounts,
-		SecurityContext: hardenedSecurityContext(),
+		SecurityContext: phaseSecurityContext(app.Spec.Setup),
 	}
 
 	// fetch: the ONLY container that receives secrets. Writes to /data.
@@ -221,7 +234,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		WorkingDir:      workMountPath,
 		Env:             fetchEnv,
 		VolumeMounts:    fetchMounts,
-		SecurityContext: hardenedSecurityContext(),
+		SecurityContext: phaseSecurityContext(app.Spec.Fetch),
 	}
 
 	// build: public buildArgs + NODE_OPTIONS etc. Mounts cache RW (both PMs) and
@@ -240,7 +253,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		Env:             buildEnv,
 		VolumeMounts:    buildMounts,
 		Resources:       buildResourceRequirements(app),
-		SecurityContext: hardenedSecurityContext(),
+		SecurityContext: phaseSecurityContext(app.Spec.Build),
 	}
 
 	// copier (MAIN): the only container mounting the output PVC. Publishes the

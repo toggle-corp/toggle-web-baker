@@ -104,6 +104,10 @@ e2e-local:
     SVC_CIDR="${SVC_CIDR:-10.96.0.0/12}"
     # Allowlist prefix for the sample's build image (docker.io/cimg/node:18.20).
     REGISTRY_ALLOW="${REGISTRY_ALLOW:-docker.io/cimg/}"
+    # kind ships a default "standard" StorageClass (rancher local-path) that is
+    # WaitForFirstConsumer. The operator REQUIRES a StorageClass be configured;
+    # it refuses to reconcile (Degraded) when --storage-class is empty.
+    STORAGE_CLASS="${STORAGE_CLASS:-standard}"
 
     log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
@@ -159,7 +163,8 @@ e2e-local:
         --set "platformImages.cleanup.tag=${TAG}" \
         --set "console.enabled=false" \
         --set "operator.clusterCIDRs={${POD_CIDR},${SVC_CIDR}}" \
-        --set "operator.registryAllowlist={${REGISTRY_ALLOW}}"
+        --set "operator.registryAllowlist={${REGISTRY_ALLOW}}" \
+        --set "operator.storageClass=${STORAGE_CLASS}"
 
     log "Applying sample ${SAMPLE}"
     kubectl apply -f "${SAMPLE}"

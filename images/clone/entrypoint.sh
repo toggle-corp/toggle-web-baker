@@ -50,6 +50,16 @@ export GIT_ASKPASS=/usr/local/bin/git-askpass.sh
 git config --global --unset-all credential.helper 2>/dev/null || true
 git config --global credential.helper "" 2>/dev/null || true
 
+# Mark the checkout dir safe. $SRC_DIR is a root-owned emptyDir mount, but the
+# build pod runs us as a non-root UID, so git's CVE-2022-24765 "dubious
+# ownership" guard would abort every command after the initial clone (fetch,
+# checkout, submodule) with a fatal we then surface only as a generic checkout
+# failure. Inject via GIT_CONFIG_* env so it needs no writable HOME/.gitconfig
+# under the pod's readOnlyRootFilesystem.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0="$SRC_DIR"
+
 # SUBMODULES opt-in: only recurse submodules when explicitly enabled (1/true).
 # Default off, so an app without submodules: true never fetches submodules.
 submodules=0

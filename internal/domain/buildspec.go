@@ -10,6 +10,9 @@ import (
 type PhaseSpec struct {
 	Image   string   `json:"image"`
 	Command []string `json:"command"`
+	// RunAsUser changes the container's runtime UID, so a change to it changes
+	// the build environment and must mark the app stale.
+	RunAsUser *int64 `json:"runAsUser,omitempty"`
 }
 
 // BuildSpec is the build-relevant subset of a FrontendApp spec. Changing any

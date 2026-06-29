@@ -17,6 +17,12 @@ RUN chmod 0644 /usr/local/lib/copier/lib.sh && \
 # entrypoint.sh resolves lib.sh relative to its own dir; keep them together.
 RUN cp /usr/local/lib/copier/lib.sh /usr/local/bin/lib.sh
 
-# Runs as root so it can chown the assembled tree to the platform user. The
-# operator should still confine it (read-only rootfs except /output, /workspace).
+# Run as the platform user (matches clone/du and PLATFORM_OWNER=65532:65532). The
+# build pod enforces runAsNonRoot, so root is not an option; running AS the
+# platform user means rsync creates 65532-owned files directly and assemble()'s
+# `chown -R 65532:65532` is a permitted no-op. This is exactly the ownership
+# nginx's `disable_symlinks if_not_owner` requires. The output PVC dir is
+# group/world-writable (local-path provisions 0777), so non-root can publish.
+USER 65532:65532
+
 ENTRYPOINT ["/usr/local/bin/copier-entrypoint.sh"]
