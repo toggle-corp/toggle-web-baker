@@ -144,12 +144,32 @@ e2e-local:
         done
     }
 
-    log "Waiting up to ${BUILD_TIMEOUT} for the build Job to complete"
-    if ! kubectl wait --for=condition=complete job \
-        -n "${APP_NS}" -l "${SELECTOR}" --timeout "${BUILD_TIMEOUT}"; then
+    log "Waiting up to ${BUILD_TIMEOUT} for the build Job to finish"
+    # `kubectl wait --for=condition=complete` never returns for a FAILED Job, so
+    # poll BOTH terminal conditions and fail fast instead of blocking the whole
+    # timeout when a build errors out.
+    deadline=$(( SECONDS + ${BUILD_TIMEOUT%s} ))
+    build_status=""
+    while [ "${SECONDS}" -lt "${deadline}" ]; do
+        if [ "$(kubectl get job -n "${APP_NS}" -l "${SELECTOR}" \
+            -o jsonpath='{.items[*].status.conditions[?(@.type=="Complete")].status}' 2>/dev/null)" = "True" ]; then
+            build_status="complete"; break
+        fi
+        if [ "$(kubectl get job -n "${APP_NS}" -l "${SELECTOR}" \
+            -o jsonpath='{.items[*].status.conditions[?(@.type=="Failed")].status}' 2>/dev/null)" = "True" ]; then
+            build_status="failed"; break
+        fi
+        sleep 5
+    done
+
+    if [ "${build_status}" != "complete" ]; then
         dump_diagnostics
         echo
-        echo "FAIL: build Job did not reach Complete"
+        if [ "${build_status}" = "failed" ]; then
+            echo "FAIL: build Job reached Failed"
+        else
+            echo "FAIL: build Job did not finish within ${BUILD_TIMEOUT}"
+        fi
         exit 1
     fi
 

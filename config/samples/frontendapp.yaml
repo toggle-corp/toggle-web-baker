@@ -8,8 +8,9 @@
 #   * the build just writes a static index.html, so there is no package install.
 #   * no `secrets:` block -> satisfies the CEL rule that secrets require a
 #     fetch.command, and keeps the smoke run credential-free.
-#   * build.image is docker.io/cimg/node:18.20, which runs as a non-root UID
-#     (1001) so it satisfies the build pod's RunAsNonRoot constraint, and ships
+#   * build.image is docker.io/cimg/node:18.20, which runs as a non-root user
+#     (the `circleci` UID 3434) so it satisfies the build pod's RunAsNonRoot
+#     constraint (the pod sets RunAsNonRoot only, no runAsUser), and ships
 #     a shell for the `sh -c` build command. The operator's --registry-allowlist
 #     must permit `docker.io/cimg/` (the e2e recipe sets this).
 #
@@ -26,7 +27,7 @@ spec:
   schedule: "0 6 * * *"
   # setup + fetch omitted on purpose -> operator no-ops them (["true"]).
   build:
-    image: docker.io/cimg/node:18.20      # non-root (uid 1001); RunAsNonRoot pods require this
+    image: docker.io/cimg/node:18.20      # non-root (circleci uid 3434); RunAsNonRoot pods require this
     command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
   outputDir: out
   keepReleases: 2

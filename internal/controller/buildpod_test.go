@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -292,11 +293,11 @@ func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
-	if !equalStrings(setup.Command, app.Spec.Setup.Command) {
+	if !slices.Equal(setup.Command, app.Spec.Setup.Command) {
 		t.Fatalf("setup command not preserved: got %v", setup.Command)
 	}
 	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
-	if !equalStrings(fetch.Command, app.Spec.Fetch.Command) {
+	if !slices.Equal(fetch.Command, app.Spec.Fetch.Command) {
 		t.Fatalf("fetch command not preserved: got %v", fetch.Command)
 	}
 }
@@ -308,24 +309,12 @@ func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
-	if !equalStrings(build.Command, app.Spec.Build.Command) {
+	if !slices.Equal(build.Command, app.Spec.Build.Command) {
 		t.Fatalf("build command must equal spec build command, got %v", build.Command)
 	}
 	if len(build.Command) == 1 && build.Command[0] == "true" {
 		t.Fatalf("build command must NOT be no-oped to [\"true\"]")
 	}
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func hasEnv(env []corev1.EnvVar, name string) bool {
