@@ -73,10 +73,13 @@ schema changes each release. It carries `helm.sh/resource-policy: keep`, so
 `helm uninstall` leaves the CRD (and existing `FrontendApp` CRs) in place.
 
 The CRD body in `templates/crd.yaml` is a wrapped copy of
-`config/crd/baker.toggle-corp.com_frontendapps.yaml`. After `just manifests`
-regenerates that source, re-sync the chart copy (see the repo CONTRIBUTING /
-release notes). The `helm-snapshots` test guards against accidental drift in the
-rest of the chart.
+`config/crd/baker.toggle-corp.com_frontendapps.yaml`. Keeping the two in sync is
+automated: `just manifests` regenerates the source CRD and then runs
+`just sync-crd`, which re-derives `templates/crd.yaml` from it (re-adding the
+chart install guard and the `helm.sh/resource-policy: keep` annotation). Never
+hand-edit `templates/crd.yaml`; run `just manifests` (or `just sync-crd`)
+instead. The `helm-snapshots` test guards against accidental drift in the rest
+of the chart.
 
 ## Snapshot tests
 

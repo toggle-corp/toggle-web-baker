@@ -24,9 +24,52 @@ lint:
         cd console && go vet ./...
     fi
 
-# Regenerate CRD and RBAC manifests into config/.
+# Regenerate CRD and RBAC manifests into config/, then re-sync the chart CRD copy.
 manifests:
     {{CONTROLLER_GEN}} rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd output:rbac:artifacts:config=config/rbac
+    just sync-crd
+
+# Regenerate the chart CRD (templates/crd.yaml) from config/crd/, wrapping the
+# generated CRD with the chart-specific bits (install guard, resource-policy
+# annotation). Deterministic transform; keep the two in lockstep so they cannot
+# drift. Folded into `just manifests`.
+sync-crd:
+    #!/usr/bin/env python3
+    import sys
+
+    SRC = "config/crd/baker.toggle-corp.com_frontendapps.yaml"
+    DST = "deploy/helm/toggle-web-baker/templates/crd.yaml"
+
+    with open(SRC) as f:
+        lines = f.read().splitlines(keepends=True)
+
+    # Anchor: the controller-gen version annotation. Insert the resource-policy
+    # comment + annotation immediately after it, matching its indentation.
+    ANCHOR = "controller-gen.kubebuilder.io/version:"
+    out = []
+    inserted = False
+    for line in lines:
+        out.append(line)
+        if not inserted and ANCHOR in line:
+            indent = line[: len(line) - len(line.lstrip())]
+            out.append(f"{indent}# helm.sh/resource-policy keeps the CRD on `helm uninstall` so existing\n")
+            out.append(f"{indent}# FrontendApp CRs are not cascade-deleted.\n")
+            out.append(f"{indent}helm.sh/resource-policy: keep\n")
+            inserted = True
+
+    if not inserted:
+        sys.exit(f"sync-crd: anchor {ANCHOR!r} not found in {SRC}")
+
+    # Ensure the body ends with a single trailing newline before the guard end.
+    body = "".join(out)
+    if not body.endswith("\n"):
+        body += "\n"
+
+    # Wrap with the chart install guard.
+    wrapped = "{{{{- if .Values.crds.install }}\n" + body + "{{{{- end }}\n"
+
+    with open(DST, "w") as f:
+        f.write(wrapped)
 
 # Regenerate deepcopy methods.
 generate:
