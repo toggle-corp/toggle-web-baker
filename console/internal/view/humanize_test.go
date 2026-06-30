@@ -28,6 +28,25 @@ func TestHumanizeBytes(t *testing.T) {
 	}
 }
 
+func TestHumanizeCPU(t *testing.T) {
+	cases := []struct {
+		milli int64
+		want  string
+	}{
+		{0, "0m"},
+		{350, "350m"},
+		{999, "999m"},
+		{1000, "1.00 cores"},
+		{1500, "1.50 cores"},
+		{2250, "2.25 cores"},
+	}
+	for _, c := range cases {
+		if got := HumanizeCPU(c.milli); got != c.want {
+			t.Errorf("HumanizeCPU(%d) = %q, want %q", c.milli, got, c.want)
+		}
+	}
+}
+
 func TestHumanizeDelta(t *testing.T) {
 	cases := []struct {
 		n    int64

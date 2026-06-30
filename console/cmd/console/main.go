@@ -37,7 +37,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(client, client, lokiClient).Routes(),
+		Handler:           server.New(client, client, lokiClient, client).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

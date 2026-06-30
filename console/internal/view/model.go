@@ -6,6 +6,7 @@
 package view
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -123,6 +124,43 @@ type App struct {
 	// HasStatus is false when the resource carries no .status yet (freshly
 	// created); the templates render an "awaiting first reconcile" note.
 	HasStatus bool
+
+	// BuildMetrics is the live usage of the build pod's active container. It is
+	// populated by the server AFTER the live metrics fetch, NOT from .status, and
+	// is nil when there is no running build / metrics-server is unavailable.
+	BuildMetrics *BuildMetrics
+	// BuildMetricsNote is set by the server ONLY when a build is live
+	// (BuildActive && PodName != "") but the metrics fetch failed, so a
+	// misconfiguration (metrics-server absent) is visible while idle stays clean.
+	BuildMetricsNote string
+}
+
+// BuildMetrics carries the build pod's active-container live usage, populated by
+// the handler. It is nil on the idle path. The Has*Bar fields gate the % bars,
+// which only render when a positive resource limit was resolved from the pod.
+type BuildMetrics struct {
+	Container     string
+	CPUMillicores int64
+	MemoryBytes   int64
+	CPUHuman      string // e.g. "1.50 cores" or "350m"
+	MemoryHuman   string // reuse HumanizeBytes
+	CPULimitMilli int64  // 0 = unknown (no bar)
+	MemLimitBytes int64
+	CPUBarPct     int
+	MemBarPct     int
+	CPUOver       bool
+	MemOver       bool
+	HasCPUBar     bool
+	HasMemBar     bool
+}
+
+// HumanizeCPU renders millicores as cores ("1.50 cores") at/above 1000m, else
+// as millicores ("350m"). Pure so the template stays logic-free.
+func HumanizeCPU(milli int64) string {
+	if milli >= 1000 {
+		return fmt.Sprintf("%.2f cores", float64(milli)/1000)
+	}
+	return fmt.Sprintf("%dm", milli)
 }
 
 // Ready / Degraded helpers drive the visual treatment. Ready=True together

@@ -12,6 +12,7 @@ import (
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
 
 	corev1 "k8s.io/api/core/v1"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,6 +48,29 @@ func (f *fakePodReader) PodLogTail(_ context.Context, _, pod, container string, 
 	return f.logLines, f.logErr
 }
 
+// fakeMetricser fakes the k8s.PodMetricser interface. usage is returned for
+// PodMetrics; err makes it fail; block (when honored) sleeps until the context
+// deadline so the bounded-timeout path can be exercised. calls counts invocations.
+type fakeMetricser struct {
+	usage map[string]k8s.ContainerUsage
+	err   error
+	block bool
+
+	calls int
+}
+
+func (f *fakeMetricser) PodMetrics(ctx context.Context, _, _ string) (map[string]k8s.ContainerUsage, error) {
+	f.calls++
+	if f.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.usage, nil
+}
+
 // fakeLokiTailer fakes the LokiTailer interface.
 type fakeLokiTailer struct {
 	configured bool
@@ -66,7 +90,7 @@ func (f *fakeLokiTailer) Tail(_ context.Context, _, _, _ string, _, _ time.Time,
 func newTestServer(t *testing.T) (*Server, *dynamicfake.FakeDynamicClient) {
 	t.Helper()
 	dyn := seededDyn(t, nil)
-	return New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}), dyn
+	return New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil), dyn
 }
 
 // seededDyn builds a fake dynamic client seeded with one FrontendApp. statusExtra
@@ -358,7 +382,7 @@ func TestLogs_LivePodForRunningBuild(t *testing.T) {
 	dyn := seededDyn(t, runningBuildStatus())
 	pods := &fakePodReader{logLines: []string{"cloning repo", "yarn build"}}
 	loki := &fakeLokiTailer{configured: true} // configured, but live pod wins
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
 	if rec.Code != http.StatusOK {
@@ -384,7 +408,7 @@ func TestLogs_LokiForCompletedBuild(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
 	pods := &fakePodReader{}
 	loki := &fakeLokiTailer{configured: true, lines: []string{"archived line 1", "archived line 2"}}
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
 	if rec.Code != http.StatusOK {
@@ -404,7 +428,7 @@ func TestLogs_UnavailableWhenNoLokiAndNoPod(t *testing.T) {
 	// Loki not configured AND pod is gone → unavailable.
 	pods := &fakePodReader{getErr: context.DeadlineExceeded}
 	loki := &fakeLokiTailer{configured: false}
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
 	if rec.Code != http.StatusOK {
@@ -421,7 +445,7 @@ func TestLogs_SelectsHistoryBuildByJobName(t *testing.T) {
 	// Older history build (build-8) has no podName and Loki off → pod fallback
 	// won't apply; but Loki configured → Loki used and scoped to that build.
 	loki := &fakeLokiTailer{configured: true, lines: []string{"old build log"}}
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?build=mapswipe-uat-build-8&container=build",
 		"mapswipe", "mapswipe-uat")
@@ -437,7 +461,7 @@ func TestLogs_FollowSelectsCurrentBuildAndActiveContainer(t *testing.T) {
 	dyn := seededDyn(t, runningBuildStatus())
 	pods := &fakePodReader{logLines: []string{"yarn build"}}
 	loki := &fakeLokiTailer{configured: true}
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	// follow=1 ignores the &container=clone hint and chases the active step.
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?follow=1&container=clone",
@@ -463,7 +487,7 @@ func TestLogs_FollowIgnoresBuildParamAndResolvesCurrent(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
 	pods := &fakePodReader{}
 	loki := &fakeLokiTailer{configured: true, lines: []string{"current build log"}}
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	// follow=1 must ignore the stale &build=...-8 and pin the CURRENT build (-9).
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?follow=1&build=mapswipe-uat-build-8",
@@ -481,7 +505,7 @@ func TestLogs_ManualBuildParamLeavesFollowOff(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
 	pods := &fakePodReader{}
 	loki := &fakeLokiTailer{configured: true, lines: []string{"old build log"}}
-	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
 
 	// No follow param: the history build (-8) must be returned, checkbox unchecked.
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?build=mapswipe-uat-build-8&container=build",
@@ -498,9 +522,144 @@ func TestLogs_ManualBuildParamLeavesFollowOff(t *testing.T) {
 	}
 }
 
+// podWithLimits builds a pod whose named container carries cpu+mem limits, so
+// the metrics bars can be computed against a known cap.
+func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {
+	lim := corev1.ResourceList{}
+	if cpu != "" {
+		lim[corev1.ResourceCPU] = apiresource.MustParse(cpu)
+	}
+	if mem != "" {
+		lim[corev1.ResourceMemory] = apiresource.MustParse(mem)
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: podName},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: container, Resources: corev1.ResourceRequirements{Limits: lim}},
+			},
+		},
+	}
+}
+
+func TestPartial_LiveMetricsWithBars(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{pod: podWithLimits("mapswipe-uat-build-8-xyz", "build", "2", "4Gi")}
+	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
+		"build": {CPUMillicores: 1500, MemoryBytes: 2 * 1024 * 1024 * 1024},
+	}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(strings.ToLower(body), "live usage") {
+		t.Errorf("should render a Live usage block; body=%s", body)
+	}
+	if !strings.Contains(body, "1.50 cores") {
+		t.Errorf("should show CPU usage 1.50 cores; body=%s", body)
+	}
+	if !strings.Contains(body, "2.0 GiB") {
+		t.Errorf("should show memory usage 2.0 GiB; body=%s", body)
+	}
+	// CPU bar: 1500m of 2000m = 75%. Mem bar: 2Gi of 4Gi = 50%.
+	if !strings.Contains(body, "bar-fill") {
+		t.Errorf("should render usage bars when limits known; body=%s", body)
+	}
+	if !strings.Contains(body, "75%") || !strings.Contains(body, "50%") {
+		t.Errorf("bar widths should reflect limits (75%% cpu, 50%% mem); body=%s", body)
+	}
+}
+
+func TestPartial_LiveMetricsNoBarWhenNoLimit(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	// Pod has the container but no limits → values shown, no bar.
+	pods := &fakePodReader{pod: podWithLimits("mapswipe-uat-build-8-xyz", "build", "", "")}
+	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
+		"build": {CPUMillicores: 350, MemoryBytes: 512 * 1024 * 1024},
+	}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if !strings.Contains(body, "350m") {
+		t.Errorf("should show CPU usage 350m; body=%s", body)
+	}
+	if strings.Contains(body, "bar-fill") {
+		t.Errorf("must NOT render a bar when no limit known; body=%s", body)
+	}
+}
+
+func TestPartial_IdleAppFetchesNoMetrics(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
+		"build": {CPUMillicores: 1, MemoryBytes: 1},
+	}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if metrics.calls != 0 {
+		t.Errorf("idle app must not fetch metrics; calls=%d", metrics.calls)
+	}
+	if strings.Contains(strings.ToLower(body), "live usage") {
+		t.Errorf("idle app must not render a usage block; body=%s", body)
+	}
+	if strings.Contains(strings.ToLower(body), "metrics unavailable") {
+		t.Errorf("idle app must not render an unavailable note; body=%s", body)
+	}
+}
+
+func TestPartial_MetricsErrorRendersNote(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{}
+	metrics := &fakeMetricser{err: context.DeadlineExceeded}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if metrics.calls != 1 {
+		t.Errorf("live build should attempt one metrics fetch; calls=%d", metrics.calls)
+	}
+	if strings.Contains(body, "bar-fill") {
+		t.Errorf("no usage block on error; body=%s", body)
+	}
+	if !strings.Contains(strings.ToLower(body), "metrics unavailable") {
+		t.Errorf("should render a muted unavailable note; body=%s", body)
+	}
+}
+
+func TestPartial_MetricsRespectsBoundedTimeout(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{}
+	// block honors ctx.Done(); the handler's bounded context must cancel it so the
+	// fragment returns promptly with the note rather than hanging.
+	metrics := &fakeMetricser{block: true}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	}()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(strings.ToLower(rec.Body.String()), "metrics unavailable") {
+			t.Errorf("timed-out fetch should degrade to the note; body=%s", rec.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not return promptly under a blocking metrics fetch")
+	}
+}
+
 func TestPartial_RendersLiveRegionFragmentNotFullPage(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
-	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{})
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
 	if rec.Code != http.StatusOK {
@@ -520,7 +679,7 @@ func TestPartial_RendersLiveRegionFragmentNotFullPage(t *testing.T) {
 func TestPartial_EmitsBuildActiveDataAttr(t *testing.T) {
 	// Building → data-build-active="1".
 	dynB := seededDyn(t, runningBuildStatus())
-	srvB := New(k8s.NewWithDynamic(dynB), &fakePodReader{}, &fakeLokiTailer{})
+	srvB := New(k8s.NewWithDynamic(dynB), &fakePodReader{}, &fakeLokiTailer{}, nil)
 	recB := doGet(srvB, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
 	if !strings.Contains(recB.Body.String(), `data-build-active="1"`) {
 		t.Errorf("building partial should emit data-build-active=1; body=%s", recB.Body.String())
@@ -528,7 +687,7 @@ func TestPartial_EmitsBuildActiveDataAttr(t *testing.T) {
 
 	// Idle → data-build-active="0".
 	dynI := seededDyn(t, completedBuildStatus())
-	srvI := New(k8s.NewWithDynamic(dynI), &fakePodReader{}, &fakeLokiTailer{})
+	srvI := New(k8s.NewWithDynamic(dynI), &fakePodReader{}, &fakeLokiTailer{}, nil)
 	recI := doGet(srvI, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
 	if !strings.Contains(recI.Body.String(), `data-build-active="0"`) {
 		t.Errorf("idle partial should emit data-build-active=0; body=%s", recI.Body.String())
@@ -537,7 +696,7 @@ func TestPartial_EmitsBuildActiveDataAttr(t *testing.T) {
 
 func TestDetail_EmbedsLiveRegionAndPoller(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
-	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{})
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
 	if rec.Code != http.StatusOK {

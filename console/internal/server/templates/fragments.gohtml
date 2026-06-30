@@ -30,6 +30,29 @@
       <div class="kv"><span class="k">Started</span><span class="v"><span title="{{$st.Abs}}">{{$st.Rel}}</span></span></div>
       {{if .Build.FailedStep}}<div class="kv"><span class="k">Failed step</span><span class="v b-false">{{.Build.FailedStep}}</span></div>{{end}}
       {{if .Build.Message}}<div class="small muted" style="padding-top:6px">{{.Build.Message}}</div>{{end}}
+      {{with .BuildMetrics}}
+        <div class="live-usage" style="margin-top:8px">
+          <div class="small muted">Live usage <span class="muted">· {{.Container}}</span></div>
+          <div class="vol">
+            <div class="vol-head"><span class="k">CPU</span><span class="v">{{.CPUHuman}}</span></div>
+            {{if .HasCPUBar}}
+              <div class="bar {{if .CPUOver}}bar-over{{end}}" title="{{.CPUHuman}} of limit ({{.CPUBarPct}}%)">
+                <div class="bar-fill" style="width:{{if gt .CPUBarPct 100}}100{{else}}{{.CPUBarPct}}{{end}}%"></div>
+              </div>
+            {{end}}
+          </div>
+          <div class="vol">
+            <div class="vol-head"><span class="k">Memory</span><span class="v">{{.MemoryHuman}}</span></div>
+            {{if .HasMemBar}}
+              <div class="bar {{if .MemOver}}bar-over{{end}}" title="{{.MemoryHuman}} of limit ({{.MemBarPct}}%)">
+                <div class="bar-fill" style="width:{{if gt .MemBarPct 100}}100{{else}}{{.MemBarPct}}{{end}}%"></div>
+              </div>
+            {{end}}
+          </div>
+        </div>
+      {{else}}
+        {{if .BuildMetricsNote}}<div class="small muted" style="padding-top:6px">{{.BuildMetricsNote}}</div>{{end}}
+      {{end}}
     </div>
   </div>
 

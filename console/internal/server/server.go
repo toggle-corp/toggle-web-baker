@@ -32,19 +32,25 @@ type LokiTailer interface {
 	Tail(ctx context.Context, namespace, pod, container string, start, end time.Time, limit int) ([]string, error)
 }
 
-// Server holds the FrontendApp client plus the log-source capabilities. All
-// three are interfaces so tests can drive the handlers with fakes.
+// Server holds the FrontendApp client plus the log-source and live-metrics
+// capabilities. All are interfaces so tests can drive the handlers with fakes.
 type Server struct {
-	apps   k8s.FrontendAppPatcher
-	pods   PodReader
-	tailer LokiTailer
+	apps    k8s.FrontendAppPatcher
+	pods    PodReader
+	tailer  LokiTailer
+	metrics k8s.PodMetricser
 }
 
-// New constructs the server around a FrontendApp client, a pod reader, and a
-// Loki tailer.
-func New(apps k8s.FrontendAppPatcher, pods PodReader, tailer LokiTailer) *Server {
-	return &Server{apps: apps, pods: pods, tailer: tailer}
+// New constructs the server around a FrontendApp client, a pod reader, a Loki
+// tailer, and a pod-metrics reader. metrics is best-effort: a nil value (or a
+// failing fetch) degrades gracefully and never blocks the status fragment.
+func New(apps k8s.FrontendAppPatcher, pods PodReader, tailer LokiTailer, metrics k8s.PodMetricser) *Server {
+	return &Server{apps: apps, pods: pods, tailer: tailer, metrics: metrics}
 }
+
+// metricsTimeout bounds the live-metrics fetch so a slow/hanging metrics-server
+// never delays or fails the status fragment. On timeout the fragment degrades.
+const metricsTimeout = 1500 * time.Millisecond
 
 // Routes returns the configured mux. Go 1.22+ pattern routing carries the
 // method and {namespace}/{name} path values.
@@ -101,9 +107,11 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
 		return
 	}
+	app := view.FromUnstructured(obj)
+	s.attachBuildMetrics(r.Context(), ns, &app)
 	render(w, "detail", detailData{
 		Head:      head{Title: name, User: userFrom(r)},
-		App:       view.FromUnstructured(obj),
+		App:       app,
 		Requested: r.URL.Query().Get("rebuild") == "requested",
 	})
 }
@@ -118,7 +126,83 @@ func (s *Server) handlePartial(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
 		return
 	}
-	render(w, "partial", partialData{App: view.FromUnstructured(obj)})
+	app := view.FromUnstructured(obj)
+	s.attachBuildMetrics(r.Context(), ns, &app)
+	render(w, "partial", partialData{App: app})
+}
+
+// attachBuildMetrics populates app.BuildMetrics with the build pod's active
+// container live usage, best-effort. It only fetches when a build is live
+// (BuildActive && PodName != "") and bounds the fetch with metricsTimeout so a
+// slow/absent metrics-server never delays the status fragment. On any
+// timeout/error/no-data while a build IS running it leaves BuildMetrics nil and
+// sets BuildMetricsNote so the misconfiguration is visible; idle apps stay clean.
+func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.App) {
+	if s.metrics == nil || !app.BuildActive() || app.Build.PodName == "" {
+		return
+	}
+	container := defaultContainer(containerSteps(app.Build))
+
+	mctx, cancel := context.WithTimeout(ctx, metricsTimeout)
+	defer cancel()
+	usageByContainer, err := s.metrics.PodMetrics(mctx, ns, app.Build.PodName)
+	if err != nil {
+		app.BuildMetricsNote = "metrics unavailable"
+		return
+	}
+	usage, ok := usageByContainer[container]
+	if !ok {
+		app.BuildMetricsNote = "metrics unavailable"
+		return
+	}
+
+	bm := &view.BuildMetrics{
+		Container:     container,
+		CPUMillicores: usage.CPUMillicores,
+		MemoryBytes:   usage.MemoryBytes,
+		CPUHuman:      view.HumanizeCPU(usage.CPUMillicores),
+		MemoryHuman:   view.HumanizeBytes(usage.MemoryBytes),
+	}
+
+	// Resolve the active container's resource limits from the pod so the % bars
+	// have something to draw against. A missing pod/limit simply yields no bar.
+	if s.pods != nil {
+		if pod, perr := s.pods.GetPod(ctx, ns, app.Build.PodName); perr == nil {
+			cpuLim, memLim := containerLimits(pod, container)
+			bm.CPULimitMilli = cpuLim
+			bm.MemLimitBytes = memLim
+			if pct, over := view.StorageBar(usage.CPUMillicores, cpuLim); pct != view.StorageBarNoBar {
+				bm.HasCPUBar, bm.CPUBarPct, bm.CPUOver = true, pct, over
+			}
+			if pct, over := view.StorageBar(usage.MemoryBytes, memLim); pct != view.StorageBarNoBar {
+				bm.HasMemBar, bm.MemBarPct, bm.MemOver = true, pct, over
+			}
+		}
+	}
+
+	app.BuildMetrics = bm
+}
+
+// containerLimits returns the named container's cpu (millicores) and memory
+// (bytes) limits from a pod, or (0,0) when the container or limits are absent.
+func containerLimits(pod *corev1.Pod, container string) (cpuMilli, memBytes int64) {
+	if pod == nil {
+		return 0, 0
+	}
+	for i := range pod.Spec.Containers {
+		c := pod.Spec.Containers[i]
+		if c.Name != container {
+			continue
+		}
+		if cpu, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
+			cpuMilli = cpu.MilliValue()
+		}
+		if mem, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+			memBytes = mem.Value()
+		}
+		return cpuMilli, memBytes
+	}
+	return 0, 0
 }
 
 // handleLogs returns the log pane fragment for one build. It resolves the log
