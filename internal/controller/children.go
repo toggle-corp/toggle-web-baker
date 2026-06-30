@@ -70,9 +70,12 @@ func (r *FrontendAppReconciler) clockRoleBinding(app *bakerv1alpha1.FrontendApp)
 // clockCronJob is the CLOCK: on each tick it patches the rebuild annotation with
 // the current timestamp via kubectl. It never creates build Jobs.
 func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *batchv1.CronJob {
+	// Set requested-at AND clear any stale manual "by" in the SAME annotate call,
+	// so a scheduled tick can't be mislabeled Manual by a leftover "by" from an
+	// earlier manual rebuild (the operator classifies trigger by "by" presence).
 	patch := fmt.Sprintf(
-		`kubectl annotate frontendapp %s %s="$(date +%%s)" --overwrite`,
-		app.Name, bakerv1alpha1.RebuildAnnotation,
+		`kubectl annotate frontendapp %s %s="$(date +%%s)" %s- --overwrite`,
+		app.Name, bakerv1alpha1.RebuildAnnotation, bakerv1alpha1.RebuildByAnnotation,
 	)
 	schedule := app.Spec.Schedule
 	if schedule == "" {

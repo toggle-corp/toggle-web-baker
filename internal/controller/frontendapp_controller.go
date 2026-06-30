@@ -20,7 +20,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
@@ -352,6 +354,10 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 		JobName:   job.Name,
 		StartTime: ptr.To(metav1.NewTime(r.now())),
 		Attempts:  app.Status.Build.Attempts + 1,
+		// Record why this build ran and seed the ordered step timeline as all
+		// Pending; observeBuild fills in PodName + per-step statuses as the pod runs.
+		Trigger: classifyTrigger(app),
+		Steps:   deriveBuildSteps(applicableSteps(app), nil, false),
 	}
 	app.Status.LastBuildTime = ptr.To(metav1.NewTime(r.now()))
 	return nil
@@ -379,7 +385,13 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 	}
 	cond := jobFinished(job)
 	if cond == nil {
+		// In-flight: surface the live per-step timeline from the build pod (the
+		// console renders status.build.steps in realtime via the pod watch).
 		app.Status.Build.Phase = bakerv1alpha1.BuildPhaseRunning
+		if pod := r.findBuildPod(ctx, app, job); pod != nil {
+			app.Status.Build.PodName = pod.Name
+			app.Status.Build.Steps = deriveBuildSteps(applicableSteps(app), pod, false)
+		}
 		return nil
 	}
 	app.Status.Build.Phase = bakerv1alpha1.BuildPhaseComplete
@@ -418,6 +430,21 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionFalse, "BuildFailed", cond.Message)
 		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, "BuildFailed", cond.Message)
 	}
+
+	// Finalize the per-step timeline from the build pod's terminal container
+	// states. release is Succeeded only when the build succeeded AND the release
+	// pointer flipped (applyCopierTermination, above, sets Release.Current).
+	releaseDone := app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded && app.Status.Release.Current != ""
+	pod := r.findBuildPod(ctx, app, job)
+	if pod != nil {
+		app.Status.Build.PodName = pod.Name
+	}
+	app.Status.Build.Steps = deriveBuildSteps(applicableSteps(app), pod, releaseDone)
+	app.Status.Build.FailedStep = failedStep(app.Status.Build.Steps)
+
+	// Append a COPY of the finalized record to the newest-first history ring
+	// (deduped by JobName as a safety net against a re-observe).
+	app.Status.BuildHistory = appendBuildHistory(app.Status.BuildHistory, *app.Status.Build.DeepCopy(), 5)
 	return nil
 }
 
@@ -482,6 +509,23 @@ func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app 
 	}
 }
 
+// findBuildPod returns the build pod owned by the given Job (the single-pod
+// build), or nil if none is found yet. It lists by the app-wide build label
+// (the same pattern as applyCopierTermination) and filters by owner UID so a
+// prior retained Job's leftover pods are never picked up.
+func (r *FrontendAppReconciler) findBuildPod(ctx context.Context, app *bakerv1alpha1.FrontendApp, job *batchv1.Job) *corev1.Pod {
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err != nil {
+		return nil
+	}
+	for i := range pods.Items {
+		if ownedByJob(&pods.Items[i], job) {
+			return &pods.Items[i]
+		}
+	}
+	return nil
+}
+
 // ownedByJob reports whether pod p is a child of the given build Job, matched by
 // the controller ownerReference UID (the Job controller stamps this on its pods).
 func ownedByJob(p *corev1.Pod, job *batchv1.Job) bool {
@@ -529,6 +573,27 @@ func jobFinished(j *batchv1.Job) *batchv1.JobCondition {
 	return nil
 }
 
+// mapBuildPodToApp maps a build pod to a reconcile request for its owning
+// FrontendApp, so the operator re-reconciles (and re-derives status.build.steps)
+// the instant a build pod's container states change — realtime step updates
+// without polling. Build pods are Job-owned (not app-owned), so this can't use
+// Owns(&Pod{}); it keys off the build-role + instance labels on the pod. Any
+// non-build pod (or non-pod object) maps to nothing.
+func mapBuildPodToApp(_ context.Context, obj client.Object) []ctrlreconcile.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+	if pod.Labels["baker.toggle-corp.com/role"] != "build" {
+		return nil
+	}
+	name := pod.Labels["app.kubernetes.io/instance"]
+	if name == "" {
+		return nil
+	}
+	return []ctrlreconcile.Request{{NamespacedName: types.NamespacedName{Name: name, Namespace: pod.Namespace}}}
+}
+
 // SetupWithManager wires the controller and its owned children.
 func (r *FrontendAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Clock == nil {
@@ -548,5 +613,9 @@ func (r *FrontendAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
+		// Build pods are Job-owned, not app-owned, so we can't Owns(&Pod{}); watch
+		// them and map back to the owning app via the build labels for realtime
+		// per-step status updates.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(mapBuildPodToApp)).
 		Complete(r)
 }

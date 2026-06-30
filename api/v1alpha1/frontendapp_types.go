@@ -12,6 +12,13 @@ const (
 	// operator on first reconcile (first-build bootstrap).
 	RebuildAnnotation = "rebuild.baker.toggle-corp.com/requested-at"
 
+	// RebuildByAnnotation carries the user who requested a MANUAL rebuild (set by
+	// the console alongside RebuildAnnotation). Its presence lets the operator
+	// classify a build's trigger as Manual vs Scheduled. The clock tick clears it
+	// so a stale manual "by" can't mislabel a later scheduled build. This const
+	// mirrors the console's view.AnnotationRebuildBy without importing it.
+	RebuildByAnnotation = "rebuild.baker.toggle-corp.com/by"
+
 	// FinalizerName guards a best-effort abort of an in-flight build Job on delete.
 	FinalizerName = "baker.toggle-corp.com/finalizer"
 

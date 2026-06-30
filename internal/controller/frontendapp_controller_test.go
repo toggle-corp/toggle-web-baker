@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,6 +346,262 @@ func TestReconcile_MissingClusterCIDRsRejected(t *testing.T) {
 	cond := findCondition(got, bakerv1alpha1.ConditionReady)
 	if cond == nil || cond.Reason != bakerv1alpha1.ReasonConfigError {
 		t.Fatalf("expected Ready=False/ConfigError when cluster CIDRs unset, got %+v", cond)
+	}
+}
+
+// Behavior 9: mapBuildPodToApp maps a build pod to its owning FrontendApp via
+// the build labels; non-build pods map to no requests.
+func TestMapBuildPodToApp(t *testing.T) {
+	app := baseApp()
+	buildPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-build-xyz", Namespace: "apps", Labels: buildLabelsFor(app)},
+	}
+	reqs := mapBuildPodToApp(context.Background(), buildPod)
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 request for a build pod, got %d", len(reqs))
+	}
+	if reqs[0].Name != "demo" || reqs[0].Namespace != "apps" {
+		t.Fatalf("request = %+v, want demo/apps", reqs[0].NamespacedName)
+	}
+
+	// A non-build pod (e.g. nginx, or anything lacking the build role label) maps
+	// to nothing.
+	nginxPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-nginx-1", Namespace: "apps", Labels: nginxLabelsFor(app)},
+	}
+	if reqs := mapBuildPodToApp(context.Background(), nginxPod); reqs != nil {
+		t.Fatalf("non-build pod must map to nil, got %+v", reqs)
+	}
+
+	// A pod with the build role but no instance label maps to nothing (can't
+	// resolve an app name).
+	orphan := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: "apps", Labels: map[string]string{"baker.toggle-corp.com/role": "build"}},
+	}
+	if reqs := mapBuildPodToApp(context.Background(), orphan); reqs != nil {
+		t.Fatalf("build pod without an instance label must map to nil, got %+v", reqs)
+	}
+
+	// A non-Pod object maps to nothing.
+	if reqs := mapBuildPodToApp(context.Background(), &batchv1.Job{}); reqs != nil {
+		t.Fatalf("non-pod object must map to nil, got %+v", reqs)
+	}
+}
+
+// Behavior 8: each clock tick sets requested-at AND clears the "by" annotation,
+// so a stale manual "by" can't mislabel a later scheduled build as Manual.
+func TestClockCronJob_ClearsByAnnotation(t *testing.T) {
+	app := baseApp()
+	r, _ := newReconciler(t, app, wffc())
+	cron := r.clockCronJob(app)
+	cmd := cron.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command
+	if len(cmd) != 3 {
+		t.Fatalf("clock command shape changed: %v", cmd)
+	}
+	patch := cmd[2]
+	if !strings.Contains(patch, bakerv1alpha1.RebuildAnnotation+`=`) {
+		t.Fatalf("clock must set requested-at, got %q", patch)
+	}
+	if !strings.Contains(patch, bakerv1alpha1.RebuildByAnnotation+"-") {
+		t.Fatalf("clock must CLEAR the by annotation (%s-), got %q", bakerv1alpha1.RebuildByAnnotation, patch)
+	}
+}
+
+// Behavior 6: startBuild stamps the trigger (Manual when "by" is set) and seeds
+// Steps = all applicable steps as Pending; PodName stays empty until observed.
+func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
+	app := baseApp()
+	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch"}
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildAnnotation:   "tok-1",
+		bakerv1alpha1.RebuildByAnnotation: "octocat",
+	}
+	r, _ := newReconciler(t, app, wffc())
+
+	if err := r.startBuild(context.Background(), app, "tok-1"); err != nil {
+		t.Fatalf("startBuild: %v", err)
+	}
+	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerManual {
+		t.Fatalf("trigger = %s, want Manual", app.Status.Build.Trigger)
+	}
+	if app.Status.Build.PodName != "" {
+		t.Fatalf("PodName must stay empty until pod observed, got %q", app.Status.Build.PodName)
+	}
+	want := applicableSteps(app) // clone, fetch, build, copier, release
+	if len(app.Status.Build.Steps) != len(want) {
+		t.Fatalf("seeded %d steps, want %d (%v)", len(app.Status.Build.Steps), len(want), want)
+	}
+	for i, s := range app.Status.Build.Steps {
+		if s.Name != want[i] {
+			t.Fatalf("step[%d] = %s, want %s", i, s.Name, want[i])
+		}
+		if s.Status != bakerv1alpha1.StepStatusPending {
+			t.Fatalf("seeded step %s = %s, want Pending", s.Name, s.Status)
+		}
+	}
+}
+
+// runningJob registers an unfinished build Job (no terminal condition).
+func runningJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, name string) *batchv1.Job {
+	t.Helper()
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   app.Namespace,
+			UID:         types.UID(name + "-uid"),
+			Labels:      buildLabelsFor(app),
+			Annotations: map[string]string{bakerv1alpha1.SpecHashAnnotation: buildSpecFrom(app).Hash()},
+		},
+	}
+	if err := cl.Create(context.Background(), job); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	return job
+}
+
+// buildPodForJob registers a build pod owned by job with the given init/main
+// container statuses.
+func buildPodForJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, job *batchv1.Job, name string, init, main []corev1.ContainerStatus) {
+	t.Helper()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: app.Namespace,
+			Labels:    buildLabelsFor(app),
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID,
+				Controller: ptr.To(true),
+			}},
+		},
+		Status: corev1.PodStatus{InitContainerStatuses: init, ContainerStatuses: main},
+	}
+	if err := cl.Create(context.Background(), pod); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+}
+
+// Behavior 7: while the Job runs, observeBuild records PodName + per-step statuses
+// from the build pod and keeps Phase=Running.
+func TestObserveBuild_RunningRecordsPodAndSteps(t *testing.T) {
+	app := baseApp()
+	r, cl := newReconciler(t, app, wffc())
+	job := runningJob(t, cl, app, "demo-build-run")
+	buildPodForJob(t, cl, app, job, "demo-build-run-pod",
+		[]corev1.ContainerStatus{
+			{Name: "clone", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+			{Name: "build", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+		},
+		[]corev1.ContainerStatus{{Name: "copier", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}}},
+	)
+	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhasePending, JobName: "demo-build-run"}
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+	if app.Status.Build.Phase != bakerv1alpha1.BuildPhaseRunning {
+		t.Fatalf("phase = %s, want Running", app.Status.Build.Phase)
+	}
+	if app.Status.Build.PodName != "demo-build-run-pod" {
+		t.Fatalf("PodName = %q, want demo-build-run-pod", app.Status.Build.PodName)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepClone); got != bakerv1alpha1.StepStatusSucceeded {
+		t.Fatalf("clone = %s, want Succeeded", got)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepBuild); got != bakerv1alpha1.StepStatusRunning {
+		t.Fatalf("build = %s, want Running", got)
+	}
+}
+
+// Behavior 7 (terminal-success): on JobComplete observeBuild finalizes Steps
+// (release Succeeded once the copier pod terminated 0 and the pointer flipped)
+// and appends a COPY of the finalized record to BuildHistory.
+func TestObserveBuild_SuccessFinalizesStepsAndHistory(t *testing.T) {
+	app := baseApp()
+	specHash := buildSpecFrom(app).Hash()
+	r, cl := newReconciler(t, app, wffc())
+	job := completeJob(t, cl, app, "demo-build-ok2", specHash)
+	// Copier pod that terminated 0 with a release-pointer message so the pointer flips.
+	buildPodForJob(t, cl, app, job, "demo-build-ok2-pod",
+		[]corev1.ContainerStatus{
+			{Name: "clone", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+			{Name: "build", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+		},
+		[]corev1.ContainerStatus{{Name: "copier", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 0,
+			Message:  `{"release":{"current":"2026-01-01T00-00-00"}}`,
+		}}}},
+	)
+	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-ok2"}
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+	if app.Status.Build.Result != bakerv1alpha1.BuildResultSucceeded {
+		t.Fatalf("result = %s, want Succeeded", app.Status.Build.Result)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepCopier); got != bakerv1alpha1.StepStatusSucceeded {
+		t.Fatalf("copier = %s, want Succeeded", got)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepRelease); got != bakerv1alpha1.StepStatusSucceeded {
+		t.Fatalf("release = %s, want Succeeded (pointer flipped)", got)
+	}
+	if app.Status.Build.FailedStep != "" {
+		t.Fatalf("FailedStep = %q, want empty on success", app.Status.Build.FailedStep)
+	}
+	if len(app.Status.BuildHistory) != 1 || app.Status.BuildHistory[0].JobName != "demo-build-ok2" {
+		t.Fatalf("expected 1 history entry for demo-build-ok2, got %+v", jobNames(app.Status.BuildHistory))
+	}
+	if app.Status.BuildHistory[0].Result != bakerv1alpha1.BuildResultSucceeded {
+		t.Fatalf("history entry must be the finalized (Succeeded) record")
+	}
+}
+
+// Behavior 7 (terminal-failure): on JobFailed observeBuild marks the failed step
+// (Failed), leaves release Pending, sets FailedStep, and appends to history.
+func TestObserveBuild_FailureSetsFailedStepAndHistory(t *testing.T) {
+	app := baseApp()
+	r, cl := newReconciler(t, app, wffc())
+	// Failed Job.
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "demo-build-bad", Namespace: app.Namespace, UID: "bad-uid",
+			Labels:      buildLabelsFor(app),
+			Annotations: map[string]string{bakerv1alpha1.SpecHashAnnotation: buildSpecFrom(app).Hash()},
+		},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Message: "boom"}}},
+	}
+	if err := cl.Create(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	buildPodForJob(t, cl, app, job, "demo-build-bad-pod",
+		[]corev1.ContainerStatus{
+			{Name: "clone", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+			{Name: "build", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2}}},
+		},
+		nil, // copier never ran
+	)
+	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-bad"}
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+	if app.Status.Build.Result != bakerv1alpha1.BuildResultFailed {
+		t.Fatalf("result = %s, want Failed", app.Status.Build.Result)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepBuild); got != bakerv1alpha1.StepStatusFailed {
+		t.Fatalf("build = %s, want Failed", got)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepCopier); got != bakerv1alpha1.StepStatusPending {
+		t.Fatalf("copier = %s, want Pending (never ran)", got)
+	}
+	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepRelease); got != bakerv1alpha1.StepStatusPending {
+		t.Fatalf("release = %s, want Pending on failure", got)
+	}
+	if app.Status.Build.FailedStep != bakerv1alpha1.StepBuild {
+		t.Fatalf("FailedStep = %q, want build", app.Status.Build.FailedStep)
+	}
+	if len(app.Status.BuildHistory) != 1 || app.Status.BuildHistory[0].JobName != "demo-build-bad" {
+		t.Fatalf("expected 1 history entry for demo-build-bad, got %+v", jobNames(app.Status.BuildHistory))
 	}
 }
 
