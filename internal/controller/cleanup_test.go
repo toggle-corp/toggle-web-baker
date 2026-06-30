@@ -412,3 +412,72 @@ func cleanupJobWith(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendA
 	}
 	return job
 }
+
+// A build started in the SAME reconcile (its Job not yet visible to the cached
+// build List sampled earlier) must still block cleanup: the `active` flag is
+// flipped after StartBuild so cleanup defers rather than racing the build pod.
+func TestReconcile_CleanupDefersToBuildStartedThisReconcile(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildAnnotation:                 "tok-1", // unprocessed -> StartBuild this pass
+		bakerv1alpha1.CleanupCacheRequestedAtAnnotation: "c-1",
+	}
+	r, cl := newReconciler(t, app, wffc())
+	reconcile(t, r, app) // finalizer
+	reconcile(t, r, app) // build starts here; cleanup must defer
+
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: buildJobName(app, "tok-1"), Namespace: "apps"}, &batchv1.Job{}); err != nil {
+		t.Fatalf("expected the build Job to start this reconcile: %v", err)
+	}
+	cjobs := &batchv1.JobList{}
+	if err := cl.List(context.Background(), cjobs, client.InNamespace("apps"), client.MatchingLabels(cleanupLabelsFor(app))); err != nil {
+		t.Fatal(err)
+	}
+	if len(cjobs.Items) != 0 {
+		t.Fatalf("cleanup Job must NOT start in the same reconcile a build started, got %d", len(cjobs.Items))
+	}
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Cleanup == nil || got.Status.Cleanup.Cache == nil || got.Status.Cleanup.Cache.Phase != "Pending" {
+		t.Fatalf("cache cleanup must be Pending while a build is starting, got %+v", got.Status.Cleanup)
+	}
+}
+
+// Two fresh cleanup requests in one reconcile must NOT both start: the Job
+// created for the first action is not yet in the cached List, so an in-pass
+// guard keeps the second action Pending (serialized, runs after the first ends).
+func TestReconcile_OnlyOneCleanupStartsPerReconcile(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildAnnotation:                    "tok-1",
+		bakerv1alpha1.CleanupCacheRequestedAtAnnotation:    "c-1",
+		bakerv1alpha1.CleanupReleasesRequestedAtAnnotation: "r-1",
+	}
+	app.Status.LastProcessedRebuild = "tok-1" // past first-build, not building
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	r, cl := newReconciler(t, app, wffc())
+	reconcile(t, r, app) // finalizer
+	reconcile(t, r, app) // exactly one cleanup may start
+
+	jobs := &batchv1.JobList{}
+	if err := cl.List(context.Background(), jobs, client.InNamespace("apps"), client.MatchingLabels(cleanupLabelsFor(app))); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 1 {
+		t.Fatalf("exactly one cleanup Job may start per reconcile, got %d", len(jobs.Items))
+	}
+	got := getApp(t, cl, "demo", "apps")
+	cache, rel := got.Status.Cleanup.Cache.Phase, got.Status.Cleanup.Releases.Phase
+	running, pending := 0, 0
+	for _, p := range []string{cache, rel} {
+		switch p {
+		case "Running":
+			running++
+		case "Pending":
+			pending++
+		}
+	}
+	if running != 1 || pending != 1 {
+		t.Fatalf("want exactly one Running + one Pending, got cache=%q releases=%q", cache, rel)
+	}
+}

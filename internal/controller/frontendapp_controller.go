@@ -144,6 +144,10 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err := r.startBuild(ctx, app, requested); err != nil {
 			return ctrl.Result{}, err
 		}
+		// A build is now in flight this reconcile. Reflect it so cleanup (9c)
+		// serializes behind it; `active` was sampled before the Create and would
+		// otherwise let a cleanup Job race the freshly started build pod.
+		active = true
 	case domain.DeferBuild:
 		logger.Info("deferring build; one already active", "activeJob", activeJob)
 	case domain.NoBuild:

@@ -35,9 +35,11 @@ fail() {
 du_bytes() { du -sb -- "$1" | awk '{print $1}'; }
 
 # ---- MODE=releases: prune old release dirs ----------------------------------
-# Keep-set = (newest KEEP_RELEASES by dir name, which is a sortable timestamp in
-# the copier's scheme) UNION PROTECTED_RELEASES. Delete everything else. Names
-# are lexically==chronologically sortable, so `sort -r` is newest-first.
+# Retain at most KEEP_RELEASES releases total, newest first, and ALWAYS retain
+# every PROTECTED_RELEASES entry (current + previous) even when old — a protected
+# release counts toward the KEEP_RELEASES budget, so the total retained matches
+# the copier's build-time KEEP_RELEASES. Delete everything else. Dir names are
+# lexically==chronologically sortable, so `sort -r` is newest-first.
 run_releases() {
 	local rel_dir="${RELEASES_DIR:-}"
 	[ -n "$rel_dir" ] || fail "RELEASES_DIR is required"
@@ -81,7 +83,7 @@ run_releases() {
 			kept=$((kept + 1))
 			continue
 		fi
-		# Keep the newest KEEP_RELEASES non-protected releases.
+		# Keep newest releases until the KEEP_RELEASES budget is full.
 		if [ "$kept" -lt "$keep" ]; then
 			kept=$((kept + 1))
 			continue

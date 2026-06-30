@@ -138,6 +138,13 @@
 
   // --- Log pane: preserve selected container + scroll across refreshes. ---
   function curContainer(){var s=logpane.querySelector('[data-log-container]');return s?s.value:'';}
+  // pinDisplayedBuild freezes the manual view on the build currently rendered in
+  // the pane (its data-build), so leaving follow mode keeps showing that build.
+  function pinDisplayedBuild(){
+    var pane=logpane.querySelector('.logpane');
+    var job=pane?pane.getAttribute('data-build'):'';
+    if(job){logpane.setAttribute('data-current-build', job);}
+  }
   function loadLogs(){
     if(!logpane){return;}
     var pre=logpane.querySelector('pre');
@@ -165,12 +172,13 @@
       // Picking a container switches to manual and pins the displayed build.
       if(e.target.matches('[data-log-container]')){
         follow=false;
-        var pane=logpane.querySelector('.logpane');
-        var job=pane?pane.getAttribute('data-build'):'';
-        if(job){logpane.setAttribute('data-current-build', job);}
+        pinDisplayedBuild();
         loadLogs();
       }else if(e.target.matches('[data-follow-toggle]')){
         follow=e.target.checked;
+        // Turning follow OFF must pin the build currently shown, else manual
+        // loadLogs falls back to the stale page-load build and shows old logs.
+        if(!follow){pinDisplayedBuild();}
         loadLogs();
       }
     });

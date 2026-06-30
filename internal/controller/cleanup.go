@@ -218,17 +218,23 @@ func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *baker
 	if err := r.observeCleanup(ctx, app); err != nil {
 		return err
 	}
+	// startedThisPass guards the second action: a cleanup Job Created for the
+	// first action is not yet visible to the cached List in cleanupActive within
+	// the same reconcile, so without this flag both actions could start at once
+	// and run two prune Jobs concurrently.
+	startedThisPass := false
 	for _, a := range cleanupActionsFor(app) {
 		st := actionStatus(app, a.mode)
 		active, err := r.cleanupActive(ctx, app)
 		if err != nil {
 			return err
 		}
-		switch domain.DecideCleanup(a.requestedAt, st.RequestedAt, buildActive, active) {
+		switch domain.DecideCleanup(a.requestedAt, st.RequestedAt, buildActive, active || startedThisPass) {
 		case domain.StartCleanup:
 			if err := r.startCleanup(ctx, app, a); err != nil {
 				return err
 			}
+			startedThisPass = true
 		case domain.WaitCleanup:
 			// Record the pending intent (RequestedBy) WITHOUT advancing the processed
 			// marker, so DecideCleanup keeps returning Wait/Start until it runs.

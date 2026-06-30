@@ -170,7 +170,9 @@ func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.Ap
 	// Resolve the active container's resource limits from the pod so the % bars
 	// have something to draw against. A missing pod/limit simply yields no bar.
 	if s.pods != nil {
-		if pod, perr := s.pods.GetPod(ctx, ns, app.Build.PodName); perr == nil {
+		// Share the bounded metrics budget: the pod read is part of the same
+		// best-effort metrics fetch and must never delay the status fragment.
+		if pod, perr := s.pods.GetPod(mctx, ns, app.Build.PodName); perr == nil {
 			cpuLim, memLim := containerLimits(pod, container)
 			bm.CPULimitMilli = cpuLim
 			bm.MemLimitBytes = memLim
