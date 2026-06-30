@@ -108,6 +108,38 @@ func TestCleanupJob_ReleasesProtectedOmitsEmpties(t *testing.T) {
 
 // Cleanup Job is hardened like the build/du Jobs: no SA token, bounded deadline,
 // no infinite retry, single non-root container.
+// The prune must be able to unlink cache/release files the build wrote under a
+// different uid (e.g. cimg/node 3434, dirs mode 0755 group root). fsGroup is
+// unreliable (ignored by hostPath/local-path storage), so the cleanup container
+// runs as root with DAC_OVERRIDE + FOWNER and all other caps dropped.
+func TestCleanupJob_CanDeleteForeignOwnedFiles(t *testing.T) {
+	app := baseApp()
+	r, _ := newReconciler(t, app, wffc())
+	for _, mode := range []string{cleanupModeCache, cleanupModeReleases} {
+		sc := r.CleanupJob(app, mode).Spec.Template.Spec.Containers[0].SecurityContext
+		if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != 0 {
+			t.Fatalf("mode %s: cleanup must run as root (uid 0) to unlink build-owned files, got %v", mode, sc.RunAsUser)
+		}
+		if sc.Capabilities == nil {
+			t.Fatalf("mode %s: cleanup must set capabilities", mode)
+		}
+		has := func(want corev1.Capability) bool {
+			for _, c := range sc.Capabilities.Add {
+				if c == want {
+					return true
+				}
+			}
+			return false
+		}
+		if !has("DAC_OVERRIDE") || !has("FOWNER") {
+			t.Fatalf("mode %s: cleanup must add DAC_OVERRIDE + FOWNER, got %v", mode, sc.Capabilities.Add)
+		}
+		if len(sc.Capabilities.Drop) == 0 || sc.Capabilities.Drop[0] != "ALL" {
+			t.Fatalf("mode %s: cleanup must drop ALL other caps, got %v", mode, sc.Capabilities.Drop)
+		}
+	}
+}
+
 func TestCleanupJob_Hardened(t *testing.T) {
 	app := baseApp()
 	r, _ := newReconciler(t, app, wffc())
@@ -123,8 +155,13 @@ func TestCleanupJob_Hardened(t *testing.T) {
 		t.Fatalf("automountServiceAccountToken must be false")
 	}
 	sc := ps.Containers[0].SecurityContext
-	if sc == nil || sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
-		t.Fatalf("cleanup container must runAsNonRoot")
+	// Cleanup runs as root (it must unlink build-owned files) but with privilege
+	// escalation disabled and all caps except DAC_OVERRIDE/FOWNER dropped.
+	if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Fatalf("cleanup container must set allowPrivilegeEscalation=false")
+	}
+	if ps.AutomountServiceAccountToken == nil || *ps.AutomountServiceAccountToken {
+		t.Fatalf("cleanup pod must not mount a service-account token")
 	}
 	if ps.Containers[0].TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
 		t.Fatalf("cleanup container must use FallbackToLogsOnError")

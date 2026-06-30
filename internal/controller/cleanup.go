@@ -33,6 +33,27 @@ const (
 	cleanupModeReleases = "releases"
 )
 
+// cleanupSecurityContext runs the prune as root with ONLY DAC_OVERRIDE +
+// FOWNER. The cache/output PVCs are written by the BUILD image's user (e.g.
+// cimg/node's uid 3434, dirs mode 0755 group root), so the prune must unlink
+// files it does not own. fsGroup can't help: kind's local-path (and any
+// hostPath-backed storage) ignores it, and a non-root uid can't hold an added
+// capability effectively (no ambient caps in k8s). DAC_OVERRIDE+FOWNER as root
+// is storage- and build-uid-agnostic; everything else stays dropped, the pod
+// has no service-account token, and it mounts only the one PVC it prunes.
+func cleanupSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		RunAsUser:                ptr.To(int64(0)),
+		RunAsNonRoot:             ptr.To(false),
+		AllowPrivilegeEscalation: ptr.To(false),
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+			Add:  []corev1.Capability{"DAC_OVERRIDE", "FOWNER"},
+		},
+	}
+}
+
 func cleanupJobName(app *bakerv1alpha1.FrontendApp, mode string) string {
 	return app.Name + "-cleanup-" + mode
 }
@@ -104,7 +125,8 @@ func (r *FrontendAppReconciler) CleanupJob(app *bakerv1alpha1.FrontendApp, mode 
 		RestartPolicy:                corev1.RestartPolicyNever,
 		AutomountServiceAccountToken: ptr.To(false),
 		SecurityContext: &corev1.PodSecurityContext{
-			RunAsNonRoot:   ptr.To(true),
+			// Root is required at the container level (see cleanupSecurityContext);
+			// keep the pod-level seccomp profile and let the container pin the rest.
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 		Containers: []corev1.Container{{
@@ -113,7 +135,7 @@ func (r *FrontendAppReconciler) CleanupJob(app *bakerv1alpha1.FrontendApp, mode 
 			Env:                      env,
 			VolumeMounts:             mounts,
 			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-			SecurityContext:          hardenedSecurityContext(),
+			SecurityContext:          cleanupSecurityContext(),
 		}},
 		Volumes: volumes,
 	}
