@@ -42,6 +42,7 @@ cleanup:
 test:
 	bash ./test/copier_test.sh
 	bash ./test/clone_test.sh
+	bash ./test/cleanup_test.sh
 
 shellcheck:
 	shellcheck -x -s bash \
@@ -50,7 +51,8 @@ shellcheck:
 		du/entrypoint.sh \
 		cleanup/entrypoint.sh \
 		test/copier_test.sh \
-		test/clone_test.sh
+		test/clone_test.sh \
+		test/cleanup_test.sh
 
 digests:
 	@echo "clone:   $(CLONE_BASE)"

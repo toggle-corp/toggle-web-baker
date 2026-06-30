@@ -26,6 +26,29 @@ const (
 	// CREATION time, so on success the operator records the hash of the spec the
 	// build ACTUALLY ran — not the (possibly edited) live spec at observe-time.
 	SpecHashAnnotation = "baker.toggle-corp.com/spec-hash"
+
+	// CleanupCacheRequestedAtAnnotation carries a manual cache-cleanup request
+	// token. The operator compares its value against status.cleanup.cache to
+	// decide whether to launch a MODE=cache cleanup pod. It is set by the console
+	// alongside CleanupCacheByAnnotation, mirroring the rebuild annotations.
+	CleanupCacheRequestedAtAnnotation = "cleanup-cache.baker.toggle-corp.com/requested-at"
+
+	// CleanupCacheByAnnotation carries the user who requested a manual cache
+	// cleanup (set by the console alongside CleanupCacheRequestedAtAnnotation),
+	// so the operator can attribute the action in status.cleanup.cache.
+	CleanupCacheByAnnotation = "cleanup-cache.baker.toggle-corp.com/by"
+
+	// CleanupReleasesRequestedAtAnnotation carries a manual release-prune request
+	// token. The operator compares its value against status.cleanup.releases to
+	// decide whether to launch a MODE=releases cleanup pod. It is set by the
+	// console alongside CleanupReleasesByAnnotation, mirroring the rebuild
+	// annotations.
+	CleanupReleasesRequestedAtAnnotation = "cleanup-releases.baker.toggle-corp.com/requested-at"
+
+	// CleanupReleasesByAnnotation carries the user who requested a manual release
+	// prune (set by the console alongside CleanupReleasesRequestedAtAnnotation),
+	// so the operator can attribute the action in status.cleanup.releases.
+	CleanupReleasesByAnnotation = "cleanup-releases.baker.toggle-corp.com/by"
 )
 
 // Phase is the derived top-level lifecycle phase (computed from conditions).
@@ -419,6 +442,38 @@ type StorageStatus struct {
 	ThresholdState string `json:"thresholdState,omitempty"`
 }
 
+// CleanupActionStatus is the per-action record for one cleanup kind (cache or
+// release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
+// mirrors the triggering annotation so the operator can detect a fresh request.
+type CleanupActionStatus struct {
+	// RequestedAt mirrors the cleanup request annotation's token.
+	// +optional
+	RequestedAt string `json:"requestedAt,omitempty"`
+	// RequestedBy is the user who requested the cleanup.
+	// +optional
+	RequestedBy string `json:"requestedBy,omitempty"`
+	// Phase is the lifecycle of the cleanup helper: Pending|Running|Succeeded|Failed.
+	// +optional
+	Phase string `json:"phase,omitempty"`
+	// LastCompleted is when the cleanup helper last finished.
+	// +optional
+	LastCompleted string `json:"lastCompleted,omitempty"`
+	// ReclaimedBytes is the space reclaimed by the last completed cleanup.
+	// +optional
+	ReclaimedBytes int64 `json:"reclaimedBytes,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// CleanupStatus groups the per-action cleanup records. Each is operator-written
+// in response to a cleanup-cache / cleanup-releases annotation request.
+type CleanupStatus struct {
+	// +optional
+	Cache *CleanupActionStatus `json:"cache,omitempty"`
+	// +optional
+	Releases *CleanupActionStatus `json:"releases,omitempty"`
+}
+
 // ManualTrigger records the last manual rebuild request.
 type ManualTrigger struct {
 	// +optional
@@ -477,6 +532,10 @@ type FrontendAppStatus struct {
 	Storage StorageStatus `json:"storage,omitempty"`
 	// +optional
 	LastManualTrigger ManualTrigger `json:"lastManualTrigger,omitempty"`
+
+	// Cleanup records the per-action cleanup state (cache prune / release prune).
+	// +optional
+	Cleanup *CleanupStatus `json:"cleanup,omitempty"`
 }
 
 // +kubebuilder:object:root=true

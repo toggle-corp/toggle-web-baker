@@ -614,6 +614,69 @@ spec:
                 maxItems: 5
                 type: array
                 x-kubernetes-list-type: atomic
+              cleanup:
+                description: Cleanup records the per-action cleanup state (cache prune
+                  / release prune).
+                properties:
+                  cache:
+                    description: |-
+                      CleanupActionStatus is the per-action record for one cleanup kind (cache or
+                      release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
+                      mirrors the triggering annotation so the operator can detect a fresh request.
+                    properties:
+                      lastCompleted:
+                        description: LastCompleted is when the cleanup helper last
+                          finished.
+                        type: string
+                      message:
+                        type: string
+                      phase:
+                        description: 'Phase is the lifecycle of the cleanup helper:
+                          Pending|Running|Succeeded|Failed.'
+                        type: string
+                      reclaimedBytes:
+                        description: ReclaimedBytes is the space reclaimed by the
+                          last completed cleanup.
+                        format: int64
+                        type: integer
+                      requestedAt:
+                        description: RequestedAt mirrors the cleanup request annotation's
+                          token.
+                        type: string
+                      requestedBy:
+                        description: RequestedBy is the user who requested the cleanup.
+                        type: string
+                    type: object
+                  releases:
+                    description: |-
+                      CleanupActionStatus is the per-action record for one cleanup kind (cache or
+                      release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
+                      mirrors the triggering annotation so the operator can detect a fresh request.
+                    properties:
+                      lastCompleted:
+                        description: LastCompleted is when the cleanup helper last
+                          finished.
+                        type: string
+                      message:
+                        type: string
+                      phase:
+                        description: 'Phase is the lifecycle of the cleanup helper:
+                          Pending|Running|Succeeded|Failed.'
+                        type: string
+                      reclaimedBytes:
+                        description: ReclaimedBytes is the space reclaimed by the
+                          last completed cleanup.
+                        format: int64
+                        type: integer
+                      requestedAt:
+                        description: RequestedAt mirrors the cleanup request annotation's
+                          token.
+                        type: string
+                      requestedBy:
+                        description: RequestedBy is the user who requested the cleanup.
+                        type: string
+                    type: object
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
