@@ -1,6 +1,7 @@
 package view
 
 import (
+	"reflect"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,11 +34,22 @@ func fullStatusObj() *unstructured.Unstructured {
 				"phase":          "Failed",
 				"result":         "Error",
 				"jobName":        "mapswipe-uat-build-7",
+				"podName":        "mapswipe-uat-build-7-abcde",
+				"trigger":        "Manual",
+				"failedStep":     "build",
 				"startTime":      "2026-06-25T09:50:00Z",
 				"completionTime": "2026-06-25T09:55:00Z",
 				"attempts":       int64(3),
 				"message":        "build failed",
 				"logsRef":        "mapswipe/pod/mapswipe-uat-build-7",
+				"steps": []any{
+					map[string]any{"name": "clone", "status": "Succeeded"},
+					map[string]any{"name": "build", "status": "Failed", "message": "yarn build exited 1"},
+				},
+			},
+			"buildHistory": []any{
+				map[string]any{"jobName": "mapswipe-uat-build-7", "result": "Failed", "trigger": "Manual"},
+				map[string]any{"jobName": "mapswipe-uat-build-6", "result": "Succeeded", "trigger": "Scheduled"},
 			},
 			"lastProcessedRebuild":    "2026-06-24T08:00:00Z",
 			"lastBuiltSpecHash":       "abc123",
@@ -85,6 +97,27 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	}
 	if a.Build.Attempts != 3 || a.Build.LogsRef == "" {
 		t.Errorf("build mapping wrong: %+v", a.Build)
+	}
+	if a.Build.PodName != "mapswipe-uat-build-7-abcde" || a.Build.Trigger != "Manual" || a.Build.FailedStep != "build" {
+		t.Errorf("build new fields wrong: %+v", a.Build)
+	}
+	if len(a.Build.Steps) != 2 {
+		t.Fatalf("want 2 steps, got %d", len(a.Build.Steps))
+	}
+	if a.Build.Steps[0].Name != "clone" || a.Build.Steps[0].Status != "Succeeded" {
+		t.Errorf("step[0] wrong: %+v", a.Build.Steps[0])
+	}
+	if a.Build.Steps[1].Status != "Failed" || a.Build.Steps[1].Message != "yarn build exited 1" {
+		t.Errorf("step[1] wrong: %+v", a.Build.Steps[1])
+	}
+	if len(a.BuildHistory) != 2 {
+		t.Fatalf("want 2 history entries, got %d", len(a.BuildHistory))
+	}
+	if a.BuildHistory[0].JobName != "mapswipe-uat-build-7" || a.BuildHistory[0].Result != "Failed" {
+		t.Errorf("history[0] wrong: %+v", a.BuildHistory[0])
+	}
+	if a.BuildHistory[1].Trigger != "Scheduled" {
+		t.Errorf("history[1] trigger wrong: %+v", a.BuildHistory[1])
 	}
 	if a.Release.Current != "rel-2026-06-24" {
 		t.Errorf("release.current wrong: %q", a.Release.Current)
@@ -180,7 +213,7 @@ func TestFromUnstructured_DefensiveOnWrongTypes(t *testing.T) {
 	if a.Conditions != nil {
 		t.Error("non-list conditions should be nil")
 	}
-	if (a.Build != Build{}) {
+	if !reflect.DeepEqual(a.Build, Build{}) {
 		t.Error("non-map build should be zero Build")
 	}
 }

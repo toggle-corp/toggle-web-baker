@@ -30,16 +30,28 @@ type Condition struct {
 // IsTrue reports whether the condition status is the string "True".
 func (c Condition) IsTrue() bool { return c.Status == "True" }
 
-// Build mirrors status.build.
+// Step is one entry of a build's ordered per-step timeline (status.build.steps[]
+// and each buildHistory[].steps[]). Status ∈ Pending|Running|Succeeded|Failed|Aborted.
+type Step struct {
+	Name    string
+	Status  string
+	Message string
+}
+
+// Build mirrors status.build and each element of status.buildHistory[] (same shape).
 type Build struct {
 	Phase          string
 	Result         string
 	JobName        string
+	PodName        string
+	Trigger        string // "Scheduled" | "Manual" | "SpecChange"
 	StartTime      string
 	CompletionTime string
 	Attempts       int64
+	FailedStep     string
 	Message        string
 	LogsRef        string
+	Steps          []Step
 }
 
 // Release mirrors status.release.
@@ -83,6 +95,9 @@ type App struct {
 
 	Conditions []Condition
 	Build      Build
+
+	// BuildHistory is newest-first, up to 5 entries, each the same shape as Build.
+	BuildHistory []Build
 
 	LastProcessedRebuild   string
 	LastBuiltSpecHash      string
@@ -183,6 +198,7 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 
 	a.Conditions = conditionsFrom(status["conditions"])
 	a.Build = buildFrom(status["build"])
+	a.BuildHistory = buildHistoryFrom(status["buildHistory"])
 	a.Release = releaseFrom(status["release"])
 	a.Storage = storageFrom(status["storage"])
 	a.ManualTrigger = manualTriggerFrom(status["lastManualTrigger"])
@@ -223,12 +239,52 @@ func buildFrom(v any) Build {
 		Phase:          asString(m["phase"]),
 		Result:         asString(m["result"]),
 		JobName:        asString(m["jobName"]),
+		PodName:        asString(m["podName"]),
+		Trigger:        asString(m["trigger"]),
 		StartTime:      asString(m["startTime"]),
 		CompletionTime: asString(m["completionTime"]),
 		Attempts:       asInt(m["attempts"]),
+		FailedStep:     asString(m["failedStep"]),
 		Message:        asString(m["message"]),
 		LogsRef:        asString(m["logsRef"]),
+		Steps:          stepsFrom(m["steps"]),
 	}
+}
+
+// stepsFrom maps status.build.steps[] (and buildHistory[].steps[]) defensively;
+// non-list or non-map entries are skipped, never panicking.
+func stepsFrom(v any) []Step {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]Step, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, Step{
+			Name:    asString(m["name"]),
+			Status:  asString(m["status"]),
+			Message: asString(m["message"]),
+		})
+	}
+	return out
+}
+
+// buildHistoryFrom maps status.buildHistory[] (newest-first), reusing buildFrom
+// so the history rows and the current build share one mapping (DRY).
+func buildHistoryFrom(v any) []Build {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]Build, 0, len(list))
+	for _, item := range list {
+		out = append(out, buildFrom(item))
+	}
+	return out
 }
 
 func releaseFrom(v any) Release {
