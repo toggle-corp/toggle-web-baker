@@ -520,7 +520,9 @@ func TestObserveBuild_SuccessFinalizesStepsAndHistory(t *testing.T) {
 	specHash := buildSpecFrom(app).Hash()
 	r, cl := newReconciler(t, app, wffc())
 	job := completeJob(t, cl, app, "demo-build-ok2", specHash)
-	// Copier pod that terminated 0 with a release-pointer message so the pointer flips.
+	// Copier pod that terminated 0 with NO release-pointer field in its message —
+	// the copier itself publishes the release, so a clean copier exit means the
+	// release step is done regardless of what the termination blob carries.
 	buildPodForJob(t, cl, app, job, "demo-build-ok2-pod",
 		[]corev1.ContainerStatus{
 			{Name: "clone", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
@@ -528,7 +530,7 @@ func TestObserveBuild_SuccessFinalizesStepsAndHistory(t *testing.T) {
 		},
 		[]corev1.ContainerStatus{{Name: "copier", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
 			ExitCode: 0,
-			Message:  `{"release":{"current":"2026-01-01T00-00-00"}}`,
+			Message:  `{"dataFreshness":"fresh"}`,
 		}}}},
 	)
 	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-ok2"}
@@ -543,7 +545,7 @@ func TestObserveBuild_SuccessFinalizesStepsAndHistory(t *testing.T) {
 		t.Fatalf("copier = %s, want Succeeded", got)
 	}
 	if got := stepStatus(app.Status.Build.Steps, bakerv1alpha1.StepRelease); got != bakerv1alpha1.StepStatusSucceeded {
-		t.Fatalf("release = %s, want Succeeded (pointer flipped)", got)
+		t.Fatalf("release = %s, want Succeeded on copier success (no release.current needed)", got)
 	}
 	if app.Status.Build.FailedStep != "" {
 		t.Fatalf("FailedStep = %q, want empty on success", app.Status.Build.FailedStep)

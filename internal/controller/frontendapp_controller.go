@@ -434,9 +434,11 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 	}
 
 	// Finalize the per-step timeline from the build pod's terminal container
-	// states. release is Succeeded only when the build succeeded AND the release
-	// pointer flipped (applyCopierTermination, above, sets Release.Current).
-	releaseDone := app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded && app.Status.Release.Current != ""
+	// states. The copier IS the release publisher (it assembles the release dir
+	// and flips the current symlink), so the synthetic release step is Succeeded
+	// exactly when the build (copier) succeeded — independent of whether the
+	// copier termination message populated status.release.current.
+	releaseDone := app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded
 	applicable := applicableSteps(app)
 	pod := r.findBuildPod(ctx, app, job)
 	if pod != nil {
