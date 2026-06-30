@@ -1,6 +1,7 @@
 package loki
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func TestBuildRequest_SelectorAndParams(t *testing.T) {
 	start := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 30, 12, 5, 0, 0, time.UTC)
 
-	req, err := c.buildRequest(nil, "mapswipe", "pod-1", "build", start, end, 50)
+	req, err := c.buildRequest(context.Background(), "mapswipe", "pod-1", "build", start, end, 50)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestBuildRequest_BearerTokenTakesPrecedence(t *testing.T) {
 		BasicAuthPass: "p",
 		BearerToken:   "tok",
 	})
-	req, err := c.buildRequest(nil, "ns", "pod", "", time.Time{}, time.Time{}, 0)
+	req, err := c.buildRequest(context.Background(), "ns", "pod", "", time.Time{}, time.Time{}, 0)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestBuildRequest_BearerTokenTakesPrecedence(t *testing.T) {
 
 func TestBuildRequest_OmitsContainerWhenEmpty_DefaultLimit(t *testing.T) {
 	c := New(Config{URL: "http://loki:3100"})
-	req, err := c.buildRequest(nil, "ns", "pod-1", "", time.Time{}, time.Time{}, 0)
+	req, err := c.buildRequest(context.Background(), "ns", "pod-1", "", time.Time{}, time.Time{}, 0)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}

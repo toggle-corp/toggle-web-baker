@@ -164,7 +164,7 @@ func (c *Client) PodLogTail(ctx context.Context, namespace, pod, container strin
 	if err != nil {
 		return nil, fmt.Errorf("stream logs %s/%s[%s]: %w", namespace, pod, container, err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	raw, err := io.ReadAll(stream)
 	if err != nil {

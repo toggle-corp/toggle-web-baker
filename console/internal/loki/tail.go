@@ -57,7 +57,7 @@ func (c *Client) Tail(ctx context.Context, namespace, pod, container string, sta
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
