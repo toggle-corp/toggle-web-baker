@@ -294,6 +294,53 @@ type BuildResult string
 const (
 	BuildResultSucceeded BuildResult = "Succeeded"
 	BuildResultFailed    BuildResult = "Failed"
+	// BuildResultAborted is a build that did not run to a clean pass/fail: it
+	// was superseded, evicted, or otherwise terminated mid-flight.
+	BuildResultAborted BuildResult = "Aborted"
+)
+
+// StepStatus is the state of one ordered step in a build's pipeline. Pending
+// renders greyed (not yet reached); the others map to their obvious icons.
+type StepStatus string
+
+const (
+	StepStatusPending   StepStatus = "Pending"
+	StepStatusRunning   StepStatus = "Running"
+	StepStatusSucceeded StepStatus = "Succeeded"
+	StepStatusFailed    StepStatus = "Failed"
+	StepStatusAborted   StepStatus = "Aborted"
+)
+
+// Canonical pipeline step names, in flow order. setup and fetch are emitted
+// only when the app defines those phases; release is SYNTHETIC — it is not a
+// build container but the operator's release-pointer flip after copier succeeds.
+const (
+	StepClone   = "clone"
+	StepSetup   = "setup"
+	StepFetch   = "fetch"
+	StepBuild   = "build"
+	StepCopier  = "copier"
+	StepRelease = "release"
+)
+
+// BuildStep is one entry of a build's ordered per-step timeline. Only steps
+// that actually apply to the app appear (no phantom skipped slots).
+type BuildStep struct {
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+	// +kubebuilder:validation:Required
+	Status StepStatus `json:"status"`
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// BuildTrigger records why a build ran, for the history list.
+type BuildTrigger string
+
+const (
+	BuildTriggerScheduled  BuildTrigger = "Scheduled"
+	BuildTriggerManual     BuildTrigger = "Manual"
+	BuildTriggerSpecChange BuildTrigger = "SpecChange"
 )
 
 // BuildPhase is the lifecycle of the current/last build pod.
@@ -305,7 +352,9 @@ const (
 	BuildPhaseComplete BuildPhase = "Complete"
 )
 
-// BuildStatus mirrors the current/last build Job.
+// BuildStatus is the unified per-build record. It mirrors the current/last
+// build Job in status.build, and the SAME shape is reused for every entry of
+// status.buildHistory — one type, one renderer.
 type BuildStatus struct {
 	// +optional
 	Phase BuildPhase `json:"phase,omitempty"`
@@ -313,12 +362,28 @@ type BuildStatus struct {
 	Result BuildResult `json:"result,omitempty"`
 	// +optional
 	JobName string `json:"jobName,omitempty"`
+	// PodName is the build pod for this Job, persisted so the read-only console
+	// (which can get but not list pods) can fetch logs, and so a Loki query can
+	// be scoped by pod label.
+	// +optional
+	PodName string `json:"podName,omitempty"`
 	// +optional
 	StartTime *metav1.Time `json:"startTime,omitempty"`
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 	// +optional
 	Attempts int `json:"attempts,omitempty"`
+	// Trigger records why this build ran.
+	// +optional
+	Trigger BuildTrigger `json:"trigger,omitempty"`
+	// Steps is the ordered per-step timeline (only applicable steps).
+	// +optional
+	// +listType=atomic
+	Steps []BuildStep `json:"steps,omitempty"`
+	// FailedStep names the step whose failure ended the build, when Result is
+	// Failed or Aborted.
+	// +optional
+	FailedStep string `json:"failedStep,omitempty"`
 	// +optional
 	Message string `json:"message,omitempty"`
 	// +optional
@@ -377,6 +442,13 @@ type FrontendAppStatus struct {
 
 	// +optional
 	Build BuildStatus `json:"build,omitempty"`
+
+	// BuildHistory is a newest-first ring buffer of recent terminal builds
+	// (Jobs that ran). The operator caps it; CEL bounds it defensively.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=5
+	BuildHistory []BuildStatus `json:"buildHistory,omitempty"`
 
 	// +optional
 	LastProcessedRebuild string `json:"lastProcessedRebuild,omitempty"`

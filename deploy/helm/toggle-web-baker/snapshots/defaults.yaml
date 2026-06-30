@@ -477,12 +477,20 @@ spec:
             description: FrontendAppStatus is the operator-owned observed state.
             properties:
               build:
-                description: BuildStatus mirrors the current/last build Job.
+                description: |-
+                  BuildStatus is the unified per-build record. It mirrors the current/last
+                  build Job in status.build, and the SAME shape is reused for every entry of
+                  status.buildHistory — one type, one renderer.
                 properties:
                   attempts:
                     type: integer
                   completionTime:
                     format: date-time
+                    type: string
+                  failedStep:
+                    description: |-
+                      FailedStep names the step whose failure ended the build, when Result is
+                      Failed or Aborted.
                     type: string
                   jobName:
                     type: string
@@ -494,13 +502,118 @@ spec:
                     description: BuildPhase is the lifecycle of the current/last build
                       pod.
                     type: string
+                  podName:
+                    description: |-
+                      PodName is the build pod for this Job, persisted so the read-only console
+                      (which can get but not list pods) can fetch logs, and so a Loki query can
+                      be scoped by pod label.
+                    type: string
                   result:
                     description: BuildResult is the terminal outcome of a build pod.
                     type: string
                   startTime:
                     format: date-time
                     type: string
+                  steps:
+                    description: Steps is the ordered per-step timeline (only applicable
+                      steps).
+                    items:
+                      description: |-
+                        BuildStep is one entry of a build's ordered per-step timeline. Only steps
+                        that actually apply to the app appear (no phantom skipped slots).
+                      properties:
+                        message:
+                          type: string
+                        name:
+                          type: string
+                        status:
+                          description: |-
+                            StepStatus is the state of one ordered step in a build's pipeline. Pending
+                            renders greyed (not yet reached); the others map to their obvious icons.
+                          type: string
+                      required:
+                      - name
+                      - status
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  trigger:
+                    description: Trigger records why this build ran.
+                    type: string
                 type: object
+              buildHistory:
+                description: |-
+                  BuildHistory is a newest-first ring buffer of recent terminal builds
+                  (Jobs that ran). The operator caps it; CEL bounds it defensively.
+                items:
+                  description: |-
+                    BuildStatus is the unified per-build record. It mirrors the current/last
+                    build Job in status.build, and the SAME shape is reused for every entry of
+                    status.buildHistory — one type, one renderer.
+                  properties:
+                    attempts:
+                      type: integer
+                    completionTime:
+                      format: date-time
+                      type: string
+                    failedStep:
+                      description: |-
+                        FailedStep names the step whose failure ended the build, when Result is
+                        Failed or Aborted.
+                      type: string
+                    jobName:
+                      type: string
+                    logsRef:
+                      type: string
+                    message:
+                      type: string
+                    phase:
+                      description: BuildPhase is the lifecycle of the current/last
+                        build pod.
+                      type: string
+                    podName:
+                      description: |-
+                        PodName is the build pod for this Job, persisted so the read-only console
+                        (which can get but not list pods) can fetch logs, and so a Loki query can
+                        be scoped by pod label.
+                      type: string
+                    result:
+                      description: BuildResult is the terminal outcome of a build
+                        pod.
+                      type: string
+                    startTime:
+                      format: date-time
+                      type: string
+                    steps:
+                      description: Steps is the ordered per-step timeline (only applicable
+                        steps).
+                      items:
+                        description: |-
+                          BuildStep is one entry of a build's ordered per-step timeline. Only steps
+                          that actually apply to the app appear (no phantom skipped slots).
+                        properties:
+                          message:
+                            type: string
+                          name:
+                            type: string
+                          status:
+                            description: |-
+                              StepStatus is the state of one ordered step in a build's pipeline. Pending
+                              renders greyed (not yet reached); the others map to their obvious icons.
+                            type: string
+                        required:
+                        - name
+                        - status
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    trigger:
+                      description: Trigger records why this build ran.
+                      type: string
+                  type: object
+                maxItems: 5
+                type: array
+                x-kubernetes-list-type: atomic
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
