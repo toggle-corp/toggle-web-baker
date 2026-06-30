@@ -135,9 +135,14 @@ emit_status() {
 		delta_removed=$((prev_count - cur_count))
 	fi
 
-	printf '{"releaseTs":"%s","dataFreshness":"%s","outputSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
-		"$RELEASE_TS" "$freshness" "$out_bytes" "$prev_count" "$cur_count" \
-		"$delta_added" "$delta_removed" | head -c 4000 >"$TERM_LOG" 2>/dev/null ||
+	# Field names match the operator's CopierMessage parser (internal/controller
+	# /ensure.go): release.current flips the served-release pointer; sizes is the
+	# per-volume du map the console renders (output = assembled release on the
+	# output PVC, source = build output on the work volume). outputSize is kept as
+	# a flat alias for humans reading the raw termination log.
+	printf '{"releaseTs":"%s","dataFreshness":"%s","release":{"current":"%s"},"sizes":{"output":%s,"source":%s},"outputSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
+		"$RELEASE_TS" "$freshness" "$RELEASE_TS" "$out_bytes" "$src_bytes" "$out_bytes" \
+		"$prev_count" "$cur_count" "$delta_added" "$delta_removed" | head -c 4000 >"$TERM_LOG" 2>/dev/null ||
 		printf 'copier: warning: could not write termination log\n' >&2
 
 	printf 'copier: published release %s (%s bytes)\n' "$RELEASE_TS" "$out_bytes" >&2

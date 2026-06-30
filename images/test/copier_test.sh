@@ -175,6 +175,33 @@ assert_eq "$val" "" "phase-env: missing key -> empty"
 val="$(read_phase_env_value "$TMP/nope" DATA_LAST_MODIFIED)"
 assert_eq "$val" "" "phase-env: missing file -> empty"
 
+# ---- emit_status termination JSON -------------------------------------------
+# Source the entrypoint (lib-only, main suppressed) to get emit_status, then
+# assert the blob carries the fields the operator's CopierMessage parser reads:
+# release.current (pointer flip) and the sizes map (storage bars). The config
+# block runs at source time, so OUTPUT_DIR is required and TERMINATION_LOG /
+# PHASE_ENV must be pointed at the tmpdir BEFORE sourcing. Exported so the
+# sourced emit_status sees them (and so shellcheck counts them as used).
+mkdir -p "$TMP/emit/releases/r-new"
+: >"$TMP/emit/releases/r-new/index.html"
+export OUTPUT_DIR=out
+export TERMINATION_LOG="$TMP/emit/term.json"
+export PHASE_ENV="$TMP/nope-phase-env" # missing -> empty freshness
+# shellcheck source=test/../copier/entrypoint.sh
+COPIER_LIB_ONLY=1 . "$HERE/../copier/entrypoint.sh"
+export RELEASE_ABS="$TMP/emit/releases/r-new"
+export RELEASE_TS="20260630T120000Z-1"
+emit_status 4096 8192 "" || no "emit_status: returned non-zero"
+blob="$(cat "$TMP/emit/term.json")"
+case "$blob" in
+	*'"release":{"current":"20260630T120000Z-1"}'*) ok "emit_status: emits release.current for the pointer flip" ;;
+	*) no "emit_status: missing release.current ([$blob])" ;;
+esac
+case "$blob" in
+	*'"sizes":{"output":4096,"source":8192}'*) ok "emit_status: emits sizes map (output+source) for storage bars" ;;
+	*) no "emit_status: missing/wrong sizes map ([$blob])" ;;
+esac
+
 # ---- summary ----------------------------------------------------------------
 printf '\n# %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
