@@ -31,6 +31,28 @@ focused and validated by the matching test layer below.
 
 Lint with `just lint` (Go) and `make -C images shellcheck` (shell).
 
+## ALWAYS run the REAL golangci-lint on BOTH modules before pushing
+
+`just lint` is NOT enough to catch what CI catches. Two gaps bite repeatedly:
+
+- When `golangci-lint` is absent it falls back to `go vet`, which does NOT run
+  `errcheck` / `staticcheck` (e.g. unchecked `*.Close()`, `SA1012` nil Context).
+- Even when `golangci-lint` IS installed, `just lint` only lints the operator
+  (root) module — it never lints the `console/` module (a SEPARATE Go module).
+
+CI runs `golangci-lint v2.12.2` against the operator module AND `console/`
+independently (`.github/workflows/ci.yml`, `working-directory: console`). After
+each commit, before pushing, run that exact linter on BOTH modules so a lint
+failure is caught locally, not by CI:
+
+```sh
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+golangci-lint run ./...            # operator module (repo root)
+cd console && golangci-lint run ./... && cd ..   # console module
+```
+
+Both must report `0 issues`. A lint failure in EITHER module is a CI failure.
+
 ## ALWAYS check Helm snapshots before committing
 
 Any change to `api/v1alpha1/` or the CRD flows into the chart (`just manifests`
