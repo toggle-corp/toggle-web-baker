@@ -163,6 +163,13 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Recompute the storage threshold badge from the merged sizes vs spec.storage.
 	app.Status.Storage.ThresholdState = domain.EvaluateThresholdState(app.Status.Storage.Sizes, storageConfigFrom(app))
 
+	// 9c. On-demand cleanup (cache prune / release prune). Observe finished
+	// cleanup Jobs, then start any fresh request — serialized against the build
+	// (which takes precedence) and against each other via domain.DecideCleanup.
+	if err := r.reconcileCleanup(ctx, app, active); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// 10. nginx + Service + Ingress, ONLY after a successful deploy.
 	if r.hasSucceededOnce(app) {
 		if err := r.ensureServing(ctx, app); err != nil {
