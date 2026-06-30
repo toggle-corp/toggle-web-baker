@@ -36,6 +36,18 @@ var funcMap = template.FuncMap{
 		rel, abs := view.RelativeTime(ts)
 		return relTime{Rel: rel, Abs: abs}
 	},
+	// cleanupCtx bundles the App, the action kind, and the action status into one
+	// value so the cleanupaction sub-template can render a prune row + button.
+	"cleanupCtx": func(app view.App, kind string, action view.CleanupAction) cleanupView {
+		return cleanupView{App: app, Kind: kind, Action: action}
+	},
+}
+
+// cleanupView is the input to the cleanupaction sub-template.
+type cleanupView struct {
+	App    view.App
+	Kind   string // "cache" | "releases"
+	Action view.CleanupAction
 }
 
 // relTime pairs a relative phrase with the absolute timestamp for a tooltip.
@@ -67,6 +79,9 @@ type detailData struct {
 	Head      head
 	App       view.App
 	Requested bool // true when redirected here right after a rebuild POST
+	// CleanupRequested is "cache" / "releases" when redirected here right after a
+	// cleanup POST, driving the matching banner; empty otherwise.
+	CleanupRequested string
 }
 
 // partialData drives the pollable detail region fragment (flow + recent builds

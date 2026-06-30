@@ -18,6 +18,14 @@ import (
 const (
 	AnnotationRebuildRequestedAt = "rebuild.baker.toggle-corp.com/requested-at"
 	AnnotationRebuildBy          = "rebuild.baker.toggle-corp.com/by"
+
+	// Annotation keys the operator observes for the two cleanup actions. Duplicated
+	// here as plain strings (not imported from the operator) exactly as the rebuild
+	// keys are — the console never imports the operator's Go types.
+	AnnotationCleanupCacheRequestedAt    = "cleanup-cache.baker.toggle-corp.com/requested-at"
+	AnnotationCleanupCacheBy             = "cleanup-cache.baker.toggle-corp.com/by"
+	AnnotationCleanupReleasesRequestedAt = "cleanup-releases.baker.toggle-corp.com/requested-at"
+	AnnotationCleanupReleasesBy          = "cleanup-releases.baker.toggle-corp.com/by"
 )
 
 // Condition is one entry of status.conditions.
@@ -86,6 +94,18 @@ type StorageVolume struct {
 	HasBar bool
 }
 
+// CleanupAction mirrors one entry of status.cleanup ({cache,releases}). Phase ∈
+// Pending|Running|Succeeded|Failed.
+type CleanupAction struct {
+	RequestedAt, RequestedBy, Phase, LastCompleted, Message string
+	ReclaimedBytes                                          int64
+}
+
+// Cleanup mirrors status.cleanup, the operator's report of the two prune actions.
+type Cleanup struct {
+	Cache, Releases CleanupAction
+}
+
 // ManualTrigger mirrors status.lastManualTrigger.
 type ManualTrigger struct {
 	TriggeredBy string
@@ -119,6 +139,7 @@ type App struct {
 
 	Release       Release
 	Storage       Storage
+	Cleanup       Cleanup
 	ManualTrigger ManualTrigger
 
 	// HasStatus is false when the resource carries no .status yet (freshly
@@ -181,6 +202,19 @@ func (a App) Condition(t string) (Condition, bool) {
 func (a App) BuildActive() bool {
 	return a.Phase == "Building" || a.Build.Phase == "Running" || a.Build.Phase == "Pending"
 }
+
+// Active reports whether this cleanup action is in flight (Pending or Running).
+func (c CleanupAction) Active() bool { return c.Phase == "Pending" || c.Phase == "Running" }
+
+// ReclaimedHuman renders ReclaimedBytes via HumanizeBytes for the template.
+func (c CleanupAction) ReclaimedHuman() string { return HumanizeBytes(c.ReclaimedBytes) }
+
+// CleanupActive reports whether either cleanup action is in flight.
+func (a App) CleanupActive() bool { return a.Cleanup.Cache.Active() || a.Cleanup.Releases.Active() }
+
+// CleanupBusy gates the cleanup buttons: a cleanup is serialized behind builds
+// and other cleanups, so the buttons disable while a build OR a cleanup runs.
+func (a App) CleanupBusy() bool { return a.BuildActive() || a.CleanupActive() }
 
 func (a App) Ready() bool    { c, ok := a.Condition("Ready"); return ok && c.IsTrue() }
 func (a App) Degraded() bool { c, ok := a.Condition("Degraded"); return ok && c.IsTrue() }
@@ -257,6 +291,7 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 	a.Release = releaseFrom(status["release"])
 	specStorage, _, _ := unstructured.NestedMap(obj.Object, "spec", "storage")
 	a.Storage = storageFrom(status["storage"], specStorage)
+	a.Cleanup = cleanupFrom(status["cleanup"])
 	a.ManualTrigger = manualTriggerFrom(status["lastManualTrigger"])
 
 	return a
@@ -447,6 +482,34 @@ func firstPositive(vals ...int64) int64 {
 		}
 	}
 	return 0
+}
+
+// cleanupFrom maps status.cleanup defensively; a missing/mistyped value yields a
+// zero Cleanup, mirroring releaseFrom/manualTriggerFrom.
+func cleanupFrom(v any) Cleanup {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return Cleanup{}
+	}
+	return Cleanup{
+		Cache:    cleanupActionFrom(m["cache"]),
+		Releases: cleanupActionFrom(m["releases"]),
+	}
+}
+
+func cleanupActionFrom(v any) CleanupAction {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return CleanupAction{}
+	}
+	return CleanupAction{
+		RequestedAt:    asString(m["requestedAt"]),
+		RequestedBy:    asString(m["requestedBy"]),
+		Phase:          asString(m["phase"]),
+		LastCompleted:  asString(m["lastCompleted"]),
+		Message:        asString(m["message"]),
+		ReclaimedBytes: asInt(m["reclaimedBytes"]),
+	}
 }
 
 func manualTriggerFrom(v any) ManualTrigger {

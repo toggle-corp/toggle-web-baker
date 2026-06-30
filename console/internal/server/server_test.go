@@ -192,6 +192,145 @@ func TestRebuild_RejectsWhenNoUserHeader(t *testing.T) {
 	}
 }
 
+func TestCleanupCache_PatchesAnnotationsAndRedirects(t *testing.T) {
+	frozen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	orig := view.Now
+	view.Now = func() time.Time { return frozen }
+	defer func() { view.Now = orig }()
+
+	srv, dyn := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/ns/mapswipe/app/mapswipe-uat/cleanup-cache", nil)
+	req.SetPathValue("namespace", "mapswipe")
+	req.SetPathValue("name", "mapswipe-uat")
+	req.Header.Set("X-Auth-Request-User", "octocat")
+	rec := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/ns/mapswipe/app/mapswipe-uat?cleanup=cache" {
+		t.Errorf("redirect Location = %q", loc)
+	}
+	got, err := dyn.Resource(k8s.GVR).Namespace("mapswipe").Get(context.Background(), "mapswipe-uat", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get after patch: %v", err)
+	}
+	ann := got.GetAnnotations()
+	if ann[view.AnnotationCleanupCacheBy] != "octocat" {
+		t.Errorf("cache by = %q, want octocat", ann[view.AnnotationCleanupCacheBy])
+	}
+	if ann[view.AnnotationCleanupCacheRequestedAt] != frozen.Format(time.RFC3339) {
+		t.Errorf("cache requested-at = %q", ann[view.AnnotationCleanupCacheRequestedAt])
+	}
+}
+
+func TestCleanupCache_RejectsWhenNoUserHeader(t *testing.T) {
+	srv, dyn := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/ns/mapswipe/app/mapswipe-uat/cleanup-cache", nil)
+	req.SetPathValue("namespace", "mapswipe")
+	req.SetPathValue("name", "mapswipe-uat")
+	rec := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	got, _ := dyn.Resource(k8s.GVR).Namespace("mapswipe").Get(context.Background(), "mapswipe-uat", metav1.GetOptions{})
+	if _, ok := got.GetAnnotations()[view.AnnotationCleanupCacheRequestedAt]; ok {
+		t.Error("cleanup-cache annotation must not be set when no user header present")
+	}
+}
+
+func TestCleanupReleases_PatchesAnnotationsAndRedirects(t *testing.T) {
+	frozen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	orig := view.Now
+	view.Now = func() time.Time { return frozen }
+	defer func() { view.Now = orig }()
+
+	srv, dyn := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/ns/mapswipe/app/mapswipe-uat/cleanup-releases", nil)
+	req.SetPathValue("namespace", "mapswipe")
+	req.SetPathValue("name", "mapswipe-uat")
+	req.Header.Set("X-Forwarded-User", "hubber")
+	rec := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/ns/mapswipe/app/mapswipe-uat?cleanup=releases" {
+		t.Errorf("redirect Location = %q", loc)
+	}
+	got, _ := dyn.Resource(k8s.GVR).Namespace("mapswipe").Get(context.Background(), "mapswipe-uat", metav1.GetOptions{})
+	ann := got.GetAnnotations()
+	if ann[view.AnnotationCleanupReleasesBy] != "hubber" {
+		t.Errorf("releases by = %q, want hubber", ann[view.AnnotationCleanupReleasesBy])
+	}
+	if ann[view.AnnotationCleanupReleasesRequestedAt] != frozen.Format(time.RFC3339) {
+		t.Errorf("releases requested-at = %q", ann[view.AnnotationCleanupReleasesRequestedAt])
+	}
+}
+
+// cleanupBusyStatus is a current build mid-flight, so CleanupBusy() is true and
+// the cleanup buttons must render disabled.
+func cleanupBusyStatus() map[string]any {
+	return map[string]any{
+		"phase": "Building",
+		"build": map[string]any{"phase": "Running", "jobName": "b-1"},
+		"cleanup": map[string]any{
+			"cache": map[string]any{
+				"phase": "Succeeded", "reclaimedBytes": int64(1048576),
+				"lastCompleted": "2026-06-25T09:05:00Z", "message": "pruned layers",
+			},
+		},
+	}
+}
+
+func TestStorageCard_RendersCleanupButtonsDisabledWhenBusy(t *testing.T) {
+	dyn := seededDyn(t, cleanupBusyStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/cleanup-cache") || !strings.Contains(body, "/cleanup-releases") {
+		t.Errorf("storage card should render both cleanup forms; body=%s", body)
+	}
+	if !strings.Contains(body, "disabled") {
+		t.Errorf("cleanup buttons should be disabled while busy; body=%s", body)
+	}
+	// Cleanup status (reclaimed/message/phase) should surface.
+	if !strings.Contains(body, "pruned layers") {
+		t.Errorf("should render the cleanup message; body=%s", body)
+	}
+	if !strings.Contains(body, view.HumanizeBytes(1048576)) {
+		t.Errorf("should render reclaimed bytes humanized; body=%s", body)
+	}
+}
+
+func TestStorageCard_CleanupButtonsEnabledWhenIdle(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if !strings.Contains(body, "/cleanup-cache") {
+		t.Errorf("idle storage card should still render cleanup forms; body=%s", body)
+	}
+	if strings.Contains(body, "disabled") {
+		t.Errorf("cleanup buttons must NOT be disabled when idle; body=%s", body)
+	}
+}
+
 func TestList_RendersSeededApp(t *testing.T) {
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

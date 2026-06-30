@@ -103,11 +103,39 @@
       {{else}}
         <div class="muted">No storage measured.</div>
       {{end}}
+
+      {{/* Cleanup actions: mirror the rebuild flow — POST patches an annotation,
+           the operator prunes. Buttons disable while a build or cleanup runs
+           (CleanupBusy). This fragment is innerHTML-swapped each poll, so the
+           disabled state tracks live phase. */}}
+      <div class="cleanup" style="margin-top:12px;border-top:1px solid var(--border,#ddd);padding-top:10px">
+        {{template "cleanupaction" cleanupCtx $ "cache" $.Cleanup.Cache}}
+        {{template "cleanupaction" cleanupCtx $ "releases" $.Cleanup.Releases}}
+      </div>
     </div>
   </div>
 
 </div>
 {{end}}
+{{end}}
+
+{{/* cleanupaction renders one prune row (status + button). Input is a
+     cleanupView: App, Kind ("cache"|"releases"), Action (view.CleanupAction). */}}
+{{define "cleanupaction"}}
+<div class="vol cleanup-row">
+  <div class="vol-head">
+    <span class="k">{{if eq .Kind "cache"}}Build cache prune{{else}}Old releases prune{{end}}</span>
+    <span class="v">
+      {{if .Action.Phase}}<span class="badge b-{{if eq .Action.Phase "Succeeded"}}ready{{else if eq .Action.Phase "Failed"}}degraded{{else}}pending{{end}}">{{.Action.Phase}}</span>{{else}}<span class="small muted">—</span>{{end}}
+    </span>
+  </div>
+  {{if .Action.LastCompleted}}{{$ct := reltime .Action.LastCompleted}}<div class="small muted">last completed <span title="{{$ct.Abs}}">{{$ct.Rel}}</span> · reclaimed {{.Action.ReclaimedHuman}}</div>{{end}}
+  {{if .Action.Message}}<div class="small muted">{{.Action.Message}}</div>{{end}}
+  <form method="POST" action="/ns/{{.App.Namespace}}/app/{{.App.Name}}/cleanup-{{.Kind}}" style="margin-top:6px"
+        {{if eq .Kind "cache"}}onsubmit="return confirm('Prune the build cache for {{.App.Name}}? Regenerable; safe.');"{{else}}onsubmit="return confirm('Delete OLD releases of {{.App.Name}}? Keeps the current and previous release. This cannot be undone.');"{{end}}>
+    <button type="submit" {{if .App.CleanupBusy}}disabled title="busy: a build or cleanup is in progress"{{end}}>{{if eq .Kind "cache"}}Prune cache{{else}}Prune old releases{{end}}</button>
+  </form>
+</div>
 {{end}}
 
 {{/* partial.gohtml is the bare fragment the poller swaps into #live-region. */}}

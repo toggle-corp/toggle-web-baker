@@ -49,6 +49,8 @@ type FrontendAppPatcher interface {
 	List(ctx context.Context) ([]view.App, error)
 	Get(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error)
 	RequestRebuild(ctx context.Context, namespace, name, user string) error
+	RequestCleanupCache(ctx context.Context, namespace, name, user string) error
+	RequestCleanupReleases(ctx context.Context, namespace, name, user string) error
 }
 
 var _ FrontendAppPatcher = (*Client)(nil)
@@ -129,6 +131,33 @@ func (c *Client) RequestRebuild(ctx context.Context, namespace, name, user strin
 	return nil
 }
 
+// RequestCleanupCache merge-patches the cache-cleanup annotations; the operator
+// observes requested-at and prunes the build cache. Annotations only — no Job or
+// Pod is created by the console.
+func (c *Client) RequestCleanupCache(ctx context.Context, namespace, name, user string) error {
+	patch := cleanupPatch(view.AnnotationCleanupCacheRequestedAt, view.AnnotationCleanupCacheBy, user, view.Now())
+	_, err := c.dyn.Resource(GVR).Namespace(namespace).Patch(
+		ctx, name, types.MergePatchType, patch, metav1.PatchOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("patch cleanup-cache annotation on %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// RequestCleanupReleases merge-patches the releases-cleanup annotations; the
+// operator observes requested-at and prunes old releases. Annotations only.
+func (c *Client) RequestCleanupReleases(ctx context.Context, namespace, name, user string) error {
+	patch := cleanupPatch(view.AnnotationCleanupReleasesRequestedAt, view.AnnotationCleanupReleasesBy, user, view.Now())
+	_, err := c.dyn.Resource(GVR).Namespace(namespace).Patch(
+		ctx, name, types.MergePatchType, patch, metav1.PatchOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("patch cleanup-releases annotation on %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
 // errNoClientset is returned by the pod methods when the Client was built
 // without a typed clientset (e.g. NewWithDynamic in tests). Callers treat it
 // like any other pod-read failure and fall back.
@@ -185,6 +214,18 @@ func rebuildPatch(user string, now time.Time) []byte {
 		`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
 		view.AnnotationRebuildRequestedAt, now.Format(time.RFC3339),
 		view.AnnotationRebuildBy, user,
+	)
+	return []byte(body)
+}
+
+// cleanupPatch builds the merge-patch body for one cleanup action, setting its
+// requested-at + by annotations. Generalized over the key pair so both cache and
+// releases reuse it; the console writes only annotations.
+func cleanupPatch(requestedAtKey, byKey, user string, now time.Time) []byte {
+	body := fmt.Sprintf(
+		`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
+		requestedAtKey, now.Format(time.RFC3339),
+		byKey, user,
 	)
 	return []byte(body)
 }

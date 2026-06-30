@@ -273,6 +273,92 @@ func TestFromUnstructured_DefensiveOnWrongTypes(t *testing.T) {
 	}
 }
 
+func TestFromUnstructured_Cleanup(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "mapswipe", "name": "mapswipe-uat"},
+		"status": map[string]any{
+			"cleanup": map[string]any{
+				"cache": map[string]any{
+					"requestedAt":    "2026-06-25T09:00:00Z",
+					"requestedBy":    "octocat",
+					"phase":          "Succeeded",
+					"lastCompleted":  "2026-06-25T09:05:00Z",
+					"reclaimedBytes": int64(1048576),
+					"message":        "pruned 3 layers",
+				},
+				"releases": map[string]any{
+					"phase":          "Running",
+					"requestedBy":    "hubber",
+					"reclaimedBytes": float64(512),
+				},
+			},
+		},
+	}}
+	a := FromUnstructured(obj)
+	if a.Cleanup.Cache.Phase != "Succeeded" || a.Cleanup.Cache.RequestedBy != "octocat" {
+		t.Errorf("cache cleanup wrong: %+v", a.Cleanup.Cache)
+	}
+	if a.Cleanup.Cache.ReclaimedBytes != 1048576 {
+		t.Errorf("cache reclaimedBytes = %d, want 1048576", a.Cleanup.Cache.ReclaimedBytes)
+	}
+	if a.Cleanup.Cache.Message != "pruned 3 layers" || a.Cleanup.Cache.LastCompleted != "2026-06-25T09:05:00Z" {
+		t.Errorf("cache message/lastCompleted wrong: %+v", a.Cleanup.Cache)
+	}
+	if a.Cleanup.Releases.Phase != "Running" || a.Cleanup.Releases.ReclaimedBytes != 512 {
+		t.Errorf("releases cleanup wrong: %+v", a.Cleanup.Releases)
+	}
+}
+
+func TestFromUnstructured_CleanupAbsentIsZero(t *testing.T) {
+	a := FromUnstructured(fullStatusObj()) // no status.cleanup
+	if (a.Cleanup != Cleanup{}) {
+		t.Errorf("absent cleanup should be zero value, got %+v", a.Cleanup)
+	}
+	// Wrong type must not panic and stays zero.
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "ns", "name": "x"},
+		"status":   map[string]any{"cleanup": "not-a-map"},
+	}}
+	if (FromUnstructured(obj).Cleanup != Cleanup{}) {
+		t.Error("mistyped cleanup should be zero value")
+	}
+}
+
+func TestApp_CleanupBusy(t *testing.T) {
+	cases := []struct {
+		name     string
+		appPhase string
+		bldPhase string
+		cachePh  string
+		relPh    string
+		wantBusy bool
+	}{
+		{"all idle", "Ready", "Complete", "Succeeded", "Succeeded", false},
+		{"empty", "", "", "", "", false},
+		{"build active", "Building", "", "", "", true},
+		{"cache pending", "Ready", "Complete", "Pending", "", true},
+		{"cache running", "Ready", "Complete", "Running", "", true},
+		{"releases pending", "Ready", "Complete", "", "Pending", true},
+		{"releases running", "Ready", "Complete", "Succeeded", "Running", true},
+		{"both failed -> idle", "Ready", "Complete", "Failed", "Failed", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := App{
+				Phase: c.appPhase,
+				Build: Build{Phase: c.bldPhase},
+				Cleanup: Cleanup{
+					Cache:    CleanupAction{Phase: c.cachePh},
+					Releases: CleanupAction{Phase: c.relPh},
+				},
+			}
+			if got := a.CleanupBusy(); got != c.wantBusy {
+				t.Errorf("CleanupBusy()=%v, want %v", got, c.wantBusy)
+			}
+		})
+	}
+}
+
 func TestApp_BuildActive(t *testing.T) {
 	cases := []struct {
 		name     string

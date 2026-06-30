@@ -63,6 +63,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}/partial", s.handlePartial)
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}/logs", s.handleLogs)
 	mux.HandleFunc("POST /ns/{namespace}/app/{name}/rebuild", s.handleRebuild)
+	mux.HandleFunc("POST /ns/{namespace}/app/{name}/cleanup-cache", s.handleCleanupCache)
+	mux.HandleFunc("POST /ns/{namespace}/app/{name}/cleanup-releases", s.handleCleanupReleases)
 	return mux
 }
 
@@ -110,9 +112,10 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	app := view.FromUnstructured(obj)
 	s.attachBuildMetrics(r.Context(), ns, &app)
 	render(w, "detail", detailData{
-		Head:      head{Title: name, User: userFrom(r)},
-		App:       app,
-		Requested: r.URL.Query().Get("rebuild") == "requested",
+		Head:             head{Title: name, User: userFrom(r)},
+		App:              app,
+		Requested:        r.URL.Query().Get("rebuild") == "requested",
+		CleanupRequested: r.URL.Query().Get("cleanup"),
 	})
 }
 
@@ -399,6 +402,41 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	// Redirect back to the detail page so the new lastManualTrigger shows up on
 	// the next reconcile; 303 turns the POST into a GET.
 	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?rebuild=requested", http.StatusSeeOther)
+}
+
+// handleCleanupCache mirrors handleRebuild: it requires a user, patches the
+// cache-cleanup annotations, and 303-redirects to the detail page with the flag.
+func (s *Server) handleCleanupCache(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	user := userFrom(r)
+	if user == "" {
+		s.renderError(w, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
+		return
+	}
+	if err := s.apps.RequestCleanupCache(r.Context(), ns, name, user); err != nil {
+		s.renderError(w, http.StatusBadGateway, "Cache cleanup request failed", err)
+		return
+	}
+	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?cleanup=cache", http.StatusSeeOther)
+}
+
+// handleCleanupReleases mirrors handleRebuild for the release-prune action.
+func (s *Server) handleCleanupReleases(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	user := userFrom(r)
+	if user == "" {
+		s.renderError(w, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
+		return
+	}
+	if err := s.apps.RequestCleanupReleases(r.Context(), ns, name, user); err != nil {
+		s.renderError(w, http.StatusBadGateway, "Release cleanup request failed", err)
+		return
+	}
+	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?cleanup=releases", http.StatusSeeOther)
 }
 
 // userFrom reads the GitHub username oauth2-proxy injects into the upstream

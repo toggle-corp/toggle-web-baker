@@ -15,6 +15,9 @@
 
 {{if $.Requested}}<div class="banner banner-warn">Rebuild requested. The operator will pick it up on its next reconcile.</div>{{end}}
 
+{{if eq $.CleanupRequested "cache"}}<div class="banner banner-warn">Cache cleanup requested. The operator will pick it up on its next reconcile.</div>{{end}}
+{{if eq $.CleanupRequested "releases"}}<div class="banner banner-warn">Release cleanup requested. The operator will pick it up on its next reconcile.</div>{{end}}
+
 <p>
   {{template "statusbadge" .}}
   {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE — current spec not yet deployed</span>{{end}}
