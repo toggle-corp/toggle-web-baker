@@ -66,10 +66,8 @@ type Release struct {
 type Storage struct {
 	MeasuredAt     string
 	ThresholdState string
-	Sizes          []KV // sorted by key for stable rendering
-	LastRunDeltas  []KV
-	// Volumes is the rich, per-volume rendering: humanized size, last-run delta,
-	// and (when a cap is known from spec.storage) a fill bar. Key-sorted.
+	// Volumes is the per-volume rendering: humanized size, last-run delta, and
+	// (when a cap is known from spec.storage) a fill bar. Key-sorted.
 	Volumes []StorageVolume
 }
 
@@ -85,12 +83,6 @@ type StorageVolume struct {
 	BarPct int
 	Over   bool
 	HasBar bool
-}
-
-// KV is a single rendered map entry.
-type KV struct {
-	Key   string
-	Value string
 }
 
 // ManualTrigger mirrors status.lastManualTrigger.
@@ -323,14 +315,11 @@ func storageFrom(v any, specStorage map[string]any) Storage {
 	if !ok {
 		return Storage{}
 	}
-	s := Storage{
+	return Storage{
 		MeasuredAt:     asString(m["measuredAt"]),
 		ThresholdState: asString(m["thresholdState"]),
-		Sizes:          mapToKV(m["sizes"]),
-		LastRunDeltas:  mapToKV(m["lastRunDeltas"]),
+		Volumes:        volumesFrom(m["sizes"], m["lastRunDeltas"], specStorage),
 	}
-	s.Volumes = volumesFrom(m["sizes"], m["lastRunDeltas"], specStorage)
-	return s
 }
 
 // volumesFrom builds the rich per-volume rows. Each status.storage.sizes entry
@@ -424,21 +413,6 @@ func manualTriggerFrom(v any) ManualTrigger {
 		TriggeredBy: asString(m["triggeredBy"]),
 		Time:        asString(m["time"]),
 	}
-}
-
-// mapToKV flattens a string-keyed status map into a key-sorted slice. Values
-// are rendered with asString so numbers (byte counts) and strings both work.
-func mapToKV(v any) []KV {
-	m, ok := v.(map[string]any)
-	if !ok || len(m) == 0 {
-		return nil
-	}
-	out := make([]KV, 0, len(m))
-	for k, val := range m {
-		out = append(out, KV{Key: k, Value: asString(val)})
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
 }
 
 // Now is overridable in tests; production rebuild timestamps use the real clock.

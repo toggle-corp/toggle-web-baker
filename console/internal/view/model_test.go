@@ -157,21 +157,18 @@ func TestServingLastGood_HealthClassAndLabel(t *testing.T) {
 	}
 }
 
-func TestStorageMaps_CoercedAndSorted(t *testing.T) {
+func TestStorageVolumes_SortedAndHumanized(t *testing.T) {
 	a := FromUnstructured(fullStatusObj())
-	if len(a.Storage.Sizes) != 2 {
-		t.Fatalf("want 2 size entries, got %d", len(a.Storage.Sizes))
+	if len(a.Storage.Volumes) != 2 {
+		t.Fatalf("want 2 volumes, got %d", len(a.Storage.Volumes))
 	}
-	// sorted by key: cache before data
-	if a.Storage.Sizes[0].Key != "cache" || a.Storage.Sizes[1].Key != "data" {
-		t.Errorf("sizes not key-sorted: %+v", a.Storage.Sizes)
+	// key-sorted: cache before data
+	if a.Storage.Volumes[0].Name != "cache" || a.Storage.Volumes[1].Name != "data" {
+		t.Errorf("volumes not key-sorted: %+v", a.Storage.Volumes)
 	}
-	// numeric byte count rendered without decimal point
-	if a.Storage.Sizes[1].Value != "1048576" {
-		t.Errorf("numeric size coercion wrong: %q", a.Storage.Sizes[1].Value)
-	}
-	if a.Storage.LastRunDeltas[0].Value != "512" {
-		t.Errorf("float delta coercion wrong: %q", a.Storage.LastRunDeltas[0].Value)
+	// numeric byte count humanized (1048576 == 1 MiB)
+	if got := a.Storage.Volumes[1].Human; got != HumanizeBytes(1048576) {
+		t.Errorf("data size = %q, want %q", got, HumanizeBytes(1048576))
 	}
 }
 
@@ -230,11 +227,6 @@ func TestStorageVolumes_CapMappingAndBars(t *testing.T) {
 	dc := byName["data-cache"]
 	if !dc.HasBar || dc.Cap != 2000 || !dc.Over {
 		t.Errorf("data-cache volume wrong: %+v", dc)
-	}
-
-	// Back-compat: Sizes/LastRunDeltas still populated.
-	if len(a.Storage.Sizes) != 3 {
-		t.Errorf("Sizes should still be populated: %+v", a.Storage.Sizes)
 	}
 }
 

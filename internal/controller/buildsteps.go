@@ -49,6 +49,19 @@ func containerStepStatus(cs *corev1.ContainerStatus) bakerv1alpha1.StepStatus {
 	}
 }
 
+// allSucceeded marks every applicable step Succeeded. It is the fallback used
+// when a SUCCEEDED build's pod is already gone (TTL-reaped or evicted) before
+// the terminal observe: the per-step states can't be read, but a successful
+// build means every step passed, so the timeline must not contradict the result
+// by showing Pending steps.
+func allSucceeded(applicable []string) []bakerv1alpha1.BuildStep {
+	out := make([]bakerv1alpha1.BuildStep, 0, len(applicable))
+	for _, name := range applicable {
+		out = append(out, bakerv1alpha1.BuildStep{Name: name, Status: bakerv1alpha1.StepStatusSucceeded})
+	}
+	return out
+}
+
 // findContainerStatus returns the named container status, or nil if absent.
 func findContainerStatus(statuses []corev1.ContainerStatus, name string) *corev1.ContainerStatus {
 	for i := range statuses {

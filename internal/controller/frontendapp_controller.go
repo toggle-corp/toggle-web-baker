@@ -20,7 +20,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -435,11 +437,18 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 	// states. release is Succeeded only when the build succeeded AND the release
 	// pointer flipped (applyCopierTermination, above, sets Release.Current).
 	releaseDone := app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded && app.Status.Release.Current != ""
+	applicable := applicableSteps(app)
 	pod := r.findBuildPod(ctx, app, job)
 	if pod != nil {
 		app.Status.Build.PodName = pod.Name
 	}
-	app.Status.Build.Steps = deriveBuildSteps(applicableSteps(app), pod, releaseDone)
+	switch {
+	case pod == nil && app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded:
+		// Pod already gone at terminal observe; a success means every step passed.
+		app.Status.Build.Steps = allSucceeded(applicable)
+	default:
+		app.Status.Build.Steps = deriveBuildSteps(applicable, pod, releaseDone)
+	}
 	app.Status.Build.FailedStep = failedStep(app.Status.Build.Steps)
 
 	// Append a COPY of the finalized record to the newest-first history ring
@@ -579,6 +588,12 @@ func jobFinished(j *batchv1.Job) *batchv1.JobCondition {
 // without polling. Build pods are Job-owned (not app-owned), so this can't use
 // Owns(&Pod{}); it keys off the build-role + instance labels on the pod. Any
 // non-build pod (or non-pod object) maps to nothing.
+// isBuildPod is the watch predicate: only build-role pods are relevant to the
+// reconciler, so all other pod events are dropped before they reach the queue.
+func isBuildPod(obj client.Object) bool {
+	return obj.GetLabels()["baker.toggle-corp.com/role"] == "build"
+}
+
 func mapBuildPodToApp(_ context.Context, obj client.Object) []ctrlreconcile.Request {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
@@ -615,7 +630,10 @@ func (r *FrontendAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.RoleBinding{}).
 		// Build pods are Job-owned, not app-owned, so we can't Owns(&Pod{}); watch
 		// them and map back to the owning app via the build labels for realtime
-		// per-step status updates.
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(mapBuildPodToApp)).
+		// per-step status updates. The predicate drops the bulk of cluster pod
+		// events (only build-role pods enqueue) so unrelated pod churn never wakes
+		// the reconciler.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(mapBuildPodToApp),
+			builder.WithPredicates(predicate.NewPredicateFuncs(isBuildPod))).
 		Complete(r)
 }

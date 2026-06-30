@@ -323,6 +323,37 @@ func doGet(srv *Server, path, ns, name string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// The container picker and ?container= param accept only real pod containers —
+// the synthetic "release" step has no container, and an arbitrary value must
+// not flow into a log query.
+func TestContainerSelection_ExcludesReleaseAndRejectsUnknown(t *testing.T) {
+	rec := view.Build{Steps: []view.Step{
+		{Name: "clone", Status: "Succeeded"},
+		{Name: "build", Status: "Failed"},
+		{Name: "copier", Status: "Pending"},
+		{Name: "release", Status: "Pending"},
+	}}
+	steps := containerSteps(rec)
+	for _, s := range steps {
+		if s.Name == "release" {
+			t.Fatalf("release must be excluded from container steps: %+v", steps)
+		}
+	}
+	if validContainer(steps, "release") {
+		t.Error("release must not be a valid container")
+	}
+	if validContainer(steps, "bogus\"}") {
+		t.Error("arbitrary value must be rejected")
+	}
+	if !validContainer(steps, "build") {
+		t.Error("build is a real container and should be valid")
+	}
+	// Default favors the failed step.
+	if got := defaultContainer(steps); got != "build" {
+		t.Errorf("defaultContainer = %q, want build (the failed step)", got)
+	}
+}
+
 func TestLogs_LivePodForRunningBuild(t *testing.T) {
 	dyn := seededDyn(t, runningBuildStatus())
 	pods := &fakePodReader{logLines: []string{"cloning repo", "yarn build"}}

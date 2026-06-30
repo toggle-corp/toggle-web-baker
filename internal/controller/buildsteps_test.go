@@ -9,6 +9,37 @@ import (
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
 
+// allSucceeded marks every applicable step Succeeded — the fallback for a
+// succeeded build whose pod was already reaped.
+func TestAllSucceeded(t *testing.T) {
+	steps := allSucceeded([]string{"clone", "build", "copier", "release"})
+	if len(steps) != 4 {
+		t.Fatalf("want 4 steps, got %d", len(steps))
+	}
+	for _, s := range steps {
+		if s.Status != bakerv1alpha1.StepStatusSucceeded {
+			t.Errorf("step %q = %s, want Succeeded", s.Name, s.Status)
+		}
+	}
+}
+
+// isBuildPod is the watch predicate: only build-role pods pass.
+func TestIsBuildPod(t *testing.T) {
+	build := &corev1.Pod{}
+	build.Labels = map[string]string{"baker.toggle-corp.com/role": "build"}
+	if !isBuildPod(build) {
+		t.Error("build-role pod should pass the predicate")
+	}
+	other := &corev1.Pod{}
+	other.Labels = map[string]string{"app": "something-else"}
+	if isBuildPod(other) {
+		t.Error("non-build pod should be filtered out")
+	}
+	if isBuildPod(&corev1.Pod{}) {
+		t.Error("unlabeled pod should be filtered out")
+	}
+}
+
 // applicableSteps: clone/build/copier/release always present; setup/fetch only
 // when the app configures an Image or Command for that phase. Ordered.
 func TestApplicableSteps(t *testing.T) {

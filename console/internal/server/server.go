@@ -141,13 +141,45 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only the build's real pod containers are valid log targets; reject any
+	// other ?container= value (a stray value would otherwise be interpolated
+	// into the Loki selector and break the query) and fall back to the default.
+	steps := containerSteps(rec)
 	container := r.URL.Query().Get("container")
-	if container == "" {
-		container = defaultContainer(rec)
+	if !validContainer(steps, container) {
+		container = defaultContainer(steps)
 	}
 
-	data := s.resolveLogs(r.Context(), ns, rec, isCurrent, container)
+	data := s.resolveLogs(r.Context(), ns, rec, isCurrent, container, steps)
 	render(w, "logpane", data)
+}
+
+// releaseStepName is the synthetic final step (the operator's release-pointer
+// flip). It has no pod container and therefore no logs.
+const releaseStepName = "release"
+
+// containerSteps returns the build steps that map to a real pod container —
+// every step except the synthetic "release". These are the only valid values
+// for the container picker and the ?container= param.
+func containerSteps(rec view.Build) []view.Step {
+	out := make([]view.Step, 0, len(rec.Steps))
+	for _, st := range rec.Steps {
+		if st.Name == releaseStepName {
+			continue
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// validContainer reports whether name is one of the build's real containers.
+func validContainer(steps []view.Step, name string) bool {
+	for _, st := range steps {
+		if st.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // pickBuild selects the BuildStatus to show. An empty or "current" build param
@@ -168,27 +200,34 @@ func pickBuild(app view.App, build string) (rec view.Build, isCurrent, found boo
 	return view.Build{}, false, false
 }
 
-// defaultContainer chooses which step's logs to show by default: the failed
-// step, else the running step, else "build".
-func defaultContainer(rec view.Build) string {
-	if rec.FailedStep != "" {
-		return rec.FailedStep
+// defaultContainer chooses which real container's logs to show by default: the
+// failed/aborted step, else the running step, else the last container (copier),
+// else "build". steps must already exclude the synthetic release step.
+func defaultContainer(steps []view.Step) string {
+	for _, st := range steps {
+		if st.Status == "Failed" || st.Status == "Aborted" {
+			return st.Name
+		}
 	}
-	for _, st := range rec.Steps {
+	for _, st := range steps {
 		if st.Status == "Running" {
 			return st.Name
 		}
 	}
+	if len(steps) > 0 {
+		return steps[len(steps)-1].Name
+	}
 	return "build"
 }
 
-// resolveLogs determines the source and fetches the lines, degrading gracefully.
-func (s *Server) resolveLogs(ctx context.Context, ns string, rec view.Build, isCurrent bool, container string) logpaneData {
+// resolveLogs determines the source and fetches the lines, degrading
+// gracefully. steps is the container-picker option list (release excluded).
+func (s *Server) resolveLogs(ctx context.Context, ns string, rec view.Build, isCurrent bool, container string, steps []view.Step) logpaneData {
 	data := logpaneData{
 		Namespace: ns,
 		Build:     rec,
 		Container: container,
-		Steps:     rec.Steps,
+		Steps:     steps,
 	}
 
 	// inProgress only when this is the CURRENT build and its phase is not done.
