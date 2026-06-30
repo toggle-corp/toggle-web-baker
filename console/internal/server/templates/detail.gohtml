@@ -91,7 +91,7 @@
 <div id="live-region"
      data-partial="/ns/{{.Namespace}}/app/{{.Name}}/partial"
      data-logs="/ns/{{.Namespace}}/app/{{.Name}}/logs"
-     {{if or (eq .Phase "Building") (eq .Build.Phase "Running") (eq .Build.Phase "Pending")}}data-active="1"{{end}}>
+     {{if .BuildActive}}data-active="1"{{end}}>
   {{template "liveregion" .}}
 </div>
 
@@ -115,10 +115,20 @@
 
   function active(){return region.getAttribute('data-active')==='1';}
 
-  // Poll the live region (flow/history/storage) and swap its innards.
+  // follow mode (default on): chase the current build + active step. When off,
+  // the pane is pinned to the displayed build + selected container.
+  var follow=true;
+
+  // Poll the live region (flow/history/storage) and swap its innards. After the
+  // swap, re-read the freshly rendered data-build-active so the cadence and
+  // pollLogs engage/disengage as builds start and finish.
   function pollRegion(){
     fetch(partialURL,{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.text();})
-      .then(function(html){region.innerHTML=html;})
+      .then(function(html){
+        region.innerHTML=html;
+        var flag=region.querySelector('[data-build-active]');
+        if(flag){region.setAttribute('data-active', flag.getAttribute('data-build-active'));}
+      })
       .catch(function(){})
       .finally(function(){setTimeout(pollRegion, active()?3000:20000);});
   }
@@ -129,9 +139,15 @@
     if(!logpane){return;}
     var pre=logpane.querySelector('pre');
     var atBottom=pre?(pre.scrollTop+pre.clientHeight>=pre.scrollHeight-4):true;
-    var build=logpane.getAttribute('data-current-build')||'';
-    var c=curContainer();
-    var url=logsBase+'?build='+encodeURIComponent(build)+(c?('&container='+encodeURIComponent(c)):'');
+    var url;
+    if(follow){
+      // Follow: let the server resolve the current build + active container.
+      url=logsBase+'?follow=1';
+    }else{
+      var build=logpane.getAttribute('data-current-build')||'';
+      var c=curContainer();
+      url=logsBase+'?build='+encodeURIComponent(build)+(c?('&container='+encodeURIComponent(c)):'');
+    }
     fetch(url,{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.text();})
       .then(function(html){
         logpane.innerHTML=html;
@@ -139,10 +155,21 @@
         if(np&&atBottom){np.scrollTop=np.scrollHeight;}
       }).catch(function(){});
   }
-  // Re-bind container change (event delegation survives innerHTML swaps).
+  // Event delegation survives the innerHTML swaps of the fragment.
   if(logpane){
     logpane.addEventListener('change',function(e){
-      if(e.target&&e.target.matches('[data-log-container]')){loadLogs();}
+      if(!e.target){return;}
+      // Picking a container switches to manual and pins the displayed build.
+      if(e.target.matches('[data-log-container]')){
+        follow=false;
+        var pane=logpane.querySelector('.logpane');
+        var job=pane?pane.getAttribute('data-build'):'';
+        if(job){logpane.setAttribute('data-current-build', job);}
+        loadLogs();
+      }else if(e.target.matches('[data-follow-toggle]')){
+        follow=e.target.checked;
+        loadLogs();
+      }
     });
   }
 

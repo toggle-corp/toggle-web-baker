@@ -433,6 +433,71 @@ func TestLogs_SelectsHistoryBuildByJobName(t *testing.T) {
 	}
 }
 
+func TestLogs_FollowSelectsCurrentBuildAndActiveContainer(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{logLines: []string{"yarn build"}}
+	loki := &fakeLokiTailer{configured: true}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	// follow=1 ignores the &container=clone hint and chases the active step.
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?follow=1&container=clone",
+		"mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// Active container for the running build is the running step ("build").
+	if pods.lastLogContainer != "build" {
+		t.Errorf("follow container = %q, want build (active step)", pods.lastLogContainer)
+	}
+	if pods.lastLogPod != "mapswipe-uat-build-8-xyz" {
+		t.Errorf("follow pod = %q, want current build pod", pods.lastLogPod)
+	}
+	// The follow checkbox must render checked.
+	if !strings.Contains(body, "data-follow-toggle") || !strings.Contains(body, "checked") {
+		t.Errorf("follow checkbox should render checked; body=%s", body)
+	}
+}
+
+func TestLogs_FollowIgnoresBuildParamAndResolvesCurrent(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true, lines: []string{"current build log"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	// follow=1 must ignore the stale &build=...-8 and pin the CURRENT build (-9).
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?follow=1&build=mapswipe-uat-build-8",
+		"mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-build="mapswipe-uat-build-9"`) {
+		t.Errorf("follow should resolve the current build (-9); body=%s", body)
+	}
+}
+
+func TestLogs_ManualBuildParamLeavesFollowOff(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true, lines: []string{"old build log"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	// No follow param: the history build (-8) must be returned, checkbox unchecked.
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?build=mapswipe-uat-build-8&container=build",
+		"mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-build="mapswipe-uat-build-8"`) {
+		t.Errorf("manual path should resolve the history build (-8); body=%s", body)
+	}
+	if strings.Contains(body, "checked") {
+		t.Errorf("follow checkbox must NOT be checked on the manual path; body=%s", body)
+	}
+}
+
 func TestPartial_RendersLiveRegionFragmentNotFullPage(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
 	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{})
@@ -449,6 +514,24 @@ func TestPartial_RendersLiveRegionFragmentNotFullPage(t *testing.T) {
 	// Should contain the recent-builds content (a history job name).
 	if !strings.Contains(body, "mapswipe-uat-build-9") {
 		t.Errorf("partial should show recent builds; body=%s", body)
+	}
+}
+
+func TestPartial_EmitsBuildActiveDataAttr(t *testing.T) {
+	// Building → data-build-active="1".
+	dynB := seededDyn(t, runningBuildStatus())
+	srvB := New(k8s.NewWithDynamic(dynB), &fakePodReader{}, &fakeLokiTailer{})
+	recB := doGet(srvB, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if !strings.Contains(recB.Body.String(), `data-build-active="1"`) {
+		t.Errorf("building partial should emit data-build-active=1; body=%s", recB.Body.String())
+	}
+
+	// Idle → data-build-active="0".
+	dynI := seededDyn(t, completedBuildStatus())
+	srvI := New(k8s.NewWithDynamic(dynI), &fakePodReader{}, &fakeLokiTailer{})
+	recI := doGet(srvI, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if !strings.Contains(recI.Body.String(), `data-build-active="0"`) {
+		t.Errorf("idle partial should emit data-build-active=0; body=%s", recI.Body.String())
 	}
 }
 

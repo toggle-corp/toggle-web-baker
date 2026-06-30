@@ -86,6 +86,7 @@ type logpaneData struct {
 	Lines       []string
 	Unavailable string // non-empty → render this instead of lines
 	FetchErr    error  // internal; folded into Unavailable
+	Follow      bool   // follow mode: container tracks the active step, always current build
 }
 
 type errorData struct {

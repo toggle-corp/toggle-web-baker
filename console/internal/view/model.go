@@ -137,6 +137,13 @@ func (a App) Condition(t string) (Condition, bool) {
 	return Condition{}, false
 }
 
+// BuildActive reports whether a build is in flight, so the poller can run the
+// fast cadence and refresh the live log pane. It mirrors the condition the
+// detail page uses for its initial data-active.
+func (a App) BuildActive() bool {
+	return a.Phase == "Building" || a.Build.Phase == "Running" || a.Build.Phase == "Pending"
+}
+
 func (a App) Ready() bool    { c, ok := a.Condition("Ready"); return ok && c.IsTrue() }
 func (a App) Degraded() bool { c, ok := a.Condition("Degraded"); return ok && c.IsTrue() }
 func (a App) BuildFailed() bool {

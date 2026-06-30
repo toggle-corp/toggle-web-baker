@@ -272,3 +272,27 @@ func TestFromUnstructured_DefensiveOnWrongTypes(t *testing.T) {
 		t.Error("non-map build should be zero Build")
 	}
 }
+
+func TestApp_BuildActive(t *testing.T) {
+	cases := []struct {
+		name     string
+		appPhase string
+		bldPhase string
+		wantTrue bool
+	}{
+		{"app building", "Building", "", true},
+		{"build running", "Ready", "Running", true},
+		{"build pending", "Ready", "Pending", true},
+		{"idle", "Ready", "Complete", false},
+		{"succeeded", "Ready", "Succeeded", false},
+		{"empty", "", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := App{Phase: c.appPhase, Build: Build{Phase: c.bldPhase}}
+			if got := a.BuildActive(); got != c.wantTrue {
+				t.Errorf("BuildActive()=%v, want %v", got, c.wantTrue)
+			}
+		})
+	}
+}

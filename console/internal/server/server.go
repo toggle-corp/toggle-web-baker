@@ -134,7 +134,15 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	app := view.FromUnstructured(obj)
 
+	// Follow mode chases the live build: it ignores the build and container
+	// params, always resolving the current build and its active container (so a
+	// newly started build is picked up, and the container tracks Failed→Running→last).
+	follow := r.URL.Query().Get("follow") == "1"
+
 	build := r.URL.Query().Get("build")
+	if follow {
+		build = "current"
+	}
 	rec, isCurrent, found := pickBuild(app, build)
 	if !found {
 		s.renderError(w, http.StatusNotFound, "build not found", errors.New("no build matches "+build))
@@ -146,11 +154,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	// into the Loki selector and break the query) and fall back to the default.
 	steps := containerSteps(rec)
 	container := r.URL.Query().Get("container")
-	if !validContainer(steps, container) {
+	if follow || !validContainer(steps, container) {
 		container = defaultContainer(steps)
 	}
 
 	data := s.resolveLogs(r.Context(), ns, rec, isCurrent, container, steps)
+	data.Follow = follow
 	render(w, "logpane", data)
 }
 
