@@ -7,6 +7,7 @@ package view
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -67,6 +68,23 @@ type Storage struct {
 	ThresholdState string
 	Sizes          []KV // sorted by key for stable rendering
 	LastRunDeltas  []KV
+	// Volumes is the rich, per-volume rendering: humanized size, last-run delta,
+	// and (when a cap is known from spec.storage) a fill bar. Key-sorted.
+	Volumes []StorageVolume
+}
+
+// StorageVolume is one rendered storage volume row. Bytes is the raw size from
+// status.storage.sizes; Cap is the byte cap mapped from spec.storage (0 when
+// unknown). HasBar is true only when a positive cap was resolved.
+type StorageVolume struct {
+	Name   string
+	Bytes  int64
+	Human  string
+	Delta  string
+	Cap    int64
+	BarPct int
+	Over   bool
+	HasBar bool
 }
 
 // KV is a single rendered map entry.
@@ -200,7 +218,8 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 	a.Build = buildFrom(status["build"])
 	a.BuildHistory = buildHistoryFrom(status["buildHistory"])
 	a.Release = releaseFrom(status["release"])
-	a.Storage = storageFrom(status["storage"])
+	specStorage, _, _ := unstructured.NestedMap(obj.Object, "spec", "storage")
+	a.Storage = storageFrom(status["storage"], specStorage)
 	a.ManualTrigger = manualTriggerFrom(status["lastManualTrigger"])
 
 	return a
@@ -299,17 +318,101 @@ func releaseFrom(v any) Release {
 	}
 }
 
-func storageFrom(v any) Storage {
+func storageFrom(v any, specStorage map[string]any) Storage {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return Storage{}
 	}
-	return Storage{
+	s := Storage{
 		MeasuredAt:     asString(m["measuredAt"]),
 		ThresholdState: asString(m["thresholdState"]),
 		Sizes:          mapToKV(m["sizes"]),
 		LastRunDeltas:  mapToKV(m["lastRunDeltas"]),
 	}
+	s.Volumes = volumesFrom(m["sizes"], m["lastRunDeltas"], specStorage)
+	return s
+}
+
+// volumesFrom builds the rich per-volume rows. Each status.storage.sizes entry
+// becomes a StorageVolume; a cap is resolved DEFENSIVELY by normalizing the key
+// name (lowercased): containing "output" → spec.storage.output.capBytes;
+// "data" → dataCache.cleanupBytes or .alertBytes (first positive); else
+// "cache" → cache.cleanupBytes or .alertBytes. No match or cap<=0 → no bar.
+func volumesFrom(sizes, deltas, specStorage any) []StorageVolume {
+	sizeMap, ok := sizes.(map[string]any)
+	if !ok || len(sizeMap) == 0 {
+		return nil
+	}
+	deltaMap, _ := deltas.(map[string]any)
+
+	out := make([]StorageVolume, 0, len(sizeMap))
+	for name, raw := range sizeMap {
+		bytes := asInt(raw)
+		capBytes := capForKey(name, specStorage)
+		v := StorageVolume{
+			Name:  name,
+			Bytes: bytes,
+			Human: HumanizeBytes(bytes),
+			Delta: HumanizeDelta(asInt(deltaMap[name])),
+			Cap:   capBytes,
+		}
+		if capBytes > 0 {
+			pct, over := StorageBar(bytes, capBytes)
+			if pct != StorageBarNoBar {
+				v.HasBar = true
+				v.BarPct = pct
+				v.Over = over
+			}
+		}
+		out = append(out, v)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// capForKey resolves a volume's byte cap from spec.storage by fuzzy-matching the
+// status size key. Order matters: "output" is checked before "cache" because a
+// hypothetical "output-cache" should map to the output cap.
+func capForKey(key string, specStorage any) int64 {
+	spec, ok := specStorage.(map[string]any)
+	if !ok {
+		return 0
+	}
+	k := strings.ToLower(key)
+	switch {
+	case strings.Contains(k, "output"):
+		return nestedInt(spec, "output", "capBytes")
+	case strings.Contains(k, "data"):
+		return firstPositive(
+			nestedInt(spec, "dataCache", "cleanupBytes"),
+			nestedInt(spec, "dataCache", "alertBytes"),
+		)
+	case strings.Contains(k, "cache"):
+		return firstPositive(
+			nestedInt(spec, "cache", "cleanupBytes"),
+			nestedInt(spec, "cache", "alertBytes"),
+		)
+	default:
+		return 0
+	}
+}
+
+// nestedInt reads spec[group][field] as an int64, defensively (0 on any miss).
+func nestedInt(spec map[string]any, group, field string) int64 {
+	g, ok := spec[group].(map[string]any)
+	if !ok {
+		return 0
+	}
+	return asInt(g[field])
+}
+
+func firstPositive(vals ...int64) int64 {
+	for _, v := range vals {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func manualTriggerFrom(v any) ManualTrigger {

@@ -40,6 +40,23 @@ spec:
             - { name: http, containerPort: 8080 }
           env:
             - { name: LISTEN_ADDR, value: ":8080" }
+            {{- with .Values.console.loki }}
+            {{- if .url }}
+            - { name: LOKI_URL, value: {{ .url | quote }} }
+            {{- end }}
+            {{- if .tenantId }}
+            - { name: LOKI_TENANT_ID, value: {{ .tenantId | quote }} }
+            {{- end }}
+            {{- if .basicAuthUser }}
+            - { name: LOKI_BASIC_AUTH_USER, value: {{ .basicAuthUser | quote }} }
+            {{- end }}
+            {{- if .basicAuthPass }}
+            - { name: LOKI_BASIC_AUTH_PASS, value: {{ .basicAuthPass | quote }} }
+            {{- end }}
+            {{- if .bearerToken }}
+            - { name: LOKI_BEARER_TOKEN, value: {{ .bearerToken | quote }} }
+            {{- end }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/k8s"
+	"github.com/toggle-corp/toggle-web-baker/console/internal/loki"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/server"
 )
 
@@ -26,9 +27,17 @@ func main() {
 		log.Fatalf("console: kubernetes client: %v", err)
 	}
 
+	lokiClient := loki.New(loki.Config{
+		URL:           os.Getenv("LOKI_URL"),
+		BasicAuthUser: os.Getenv("LOKI_BASIC_AUTH_USER"),
+		BasicAuthPass: os.Getenv("LOKI_BASIC_AUTH_PASS"),
+		BearerToken:   os.Getenv("LOKI_BEARER_TOKEN"),
+		TenantID:      os.Getenv("LOKI_TENANT_ID"),
+	})
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(client).Routes(),
+		Handler:           server.New(client, client, lokiClient).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

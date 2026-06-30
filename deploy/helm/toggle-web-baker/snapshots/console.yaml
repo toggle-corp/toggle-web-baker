@@ -1119,6 +1119,8 @@ spec:
             - { name: http, containerPort: 8080 }
           env:
             - { name: LISTEN_ADDR, value: ":8080" }
+            - { name: LOKI_URL, value: "http://loki.monitoring.svc:3100" }
+            - { name: LOKI_TENANT_ID, value: "baker" }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

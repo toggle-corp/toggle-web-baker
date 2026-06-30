@@ -11,6 +11,7 @@ import (
 	"github.com/toggle-corp/toggle-web-baker/console/internal/k8s"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,13 +19,66 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
+// fakePodReader fakes the PodReader interface so log handler tests run without a
+// cluster. getErr makes GetPod fail (pod gone); logLines/logErr drive PodLogTail.
+type fakePodReader struct {
+	getErr   error
+	pod      *corev1.Pod
+	logLines []string
+	logErr   error
+
+	lastLogContainer string
+	lastLogPod       string
+}
+
+func (f *fakePodReader) GetPod(_ context.Context, _, name string) (*corev1.Pod, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.pod != nil {
+		return f.pod, nil
+	}
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}}, nil
+}
+
+func (f *fakePodReader) PodLogTail(_ context.Context, _, pod, container string, _ int64) ([]string, error) {
+	f.lastLogPod = pod
+	f.lastLogContainer = container
+	return f.logLines, f.logErr
+}
+
+// fakeLokiTailer fakes the LokiTailer interface.
+type fakeLokiTailer struct {
+	configured bool
+	lines      []string
+	err        error
+}
+
+func (f *fakeLokiTailer) Configured() bool { return f.configured }
+func (f *fakeLokiTailer) Tail(_ context.Context, _, _, _ string, _, _ time.Time, _ int) ([]string, error) {
+	return f.lines, f.err
+}
+
 // newTestServer wires the real Client over a fake dynamic client seeded with
 // one FrontendApp, so the handlers exercise the actual list/get/patch paths.
+// The pod reader and loki tailer default to harmless fakes; tests that need
+// specific log behaviour build a server directly with New.
 func newTestServer(t *testing.T) (*Server, *dynamicfake.FakeDynamicClient) {
+	t.Helper()
+	dyn := seededDyn(t, nil)
+	return New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}), dyn
+}
+
+// seededDyn builds a fake dynamic client seeded with one FrontendApp. statusExtra
+// is merged into the default status when non-nil (lets log tests inject a build).
+func seededDyn(t *testing.T, status map[string]any) *dynamicfake.FakeDynamicClient {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	listKinds := map[schema.GroupVersionResource]string{
 		k8s.GVR: "FrontendAppList",
+	}
+	if status == nil {
+		status = map[string]any{"phase": "Ready"}
 	}
 	app := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
@@ -33,10 +87,9 @@ func newTestServer(t *testing.T) (*Server, *dynamicfake.FakeDynamicClient) {
 			"namespace": "mapswipe",
 			"name":      "mapswipe-uat",
 		},
-		"status": map[string]any{"phase": "Ready"},
+		"status": status,
 	}}
-	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, app)
-	return New(k8s.NewWithDynamic(dyn)), dyn
+	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, app)
 }
 
 func TestRebuild_PatchesAnnotationsWithHeaderUser(t *testing.T) {
@@ -211,6 +264,188 @@ func TestDetail_RendersStatus(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Request rebuild") {
 		t.Error("detail page should render the rebuild button")
+	}
+}
+
+// runningBuildStatus is a current build mid-flight (no completionTime → live pod).
+func runningBuildStatus() map[string]any {
+	return map[string]any{
+		"phase": "Building",
+		"build": map[string]any{
+			"phase":     "Running",
+			"jobName":   "mapswipe-uat-build-8",
+			"podName":   "mapswipe-uat-build-8-xyz",
+			"startTime": "2026-06-25T10:00:00Z",
+			"steps": []any{
+				map[string]any{"name": "clone", "status": "Succeeded"},
+				map[string]any{"name": "build", "status": "Running"},
+			},
+		},
+	}
+}
+
+// completedBuildStatus is a finished build with history (completionTime set).
+func completedBuildStatus() map[string]any {
+	return map[string]any{
+		"phase": "Ready",
+		"build": map[string]any{
+			"phase":          "Complete",
+			"result":         "Succeeded",
+			"jobName":        "mapswipe-uat-build-9",
+			"podName":        "mapswipe-uat-build-9-abc",
+			"startTime":      "2026-06-25T09:00:00Z",
+			"completionTime": "2026-06-25T09:05:00Z",
+			"steps": []any{
+				map[string]any{"name": "clone", "status": "Succeeded"},
+				map[string]any{"name": "build", "status": "Succeeded"},
+			},
+		},
+		"buildHistory": []any{
+			map[string]any{
+				"jobName": "mapswipe-uat-build-9", "result": "Succeeded", "trigger": "Scheduled",
+				"podName": "mapswipe-uat-build-9-abc", "completionTime": "2026-06-25T09:05:00Z",
+			},
+			map[string]any{
+				"jobName": "mapswipe-uat-build-8", "result": "Failed", "trigger": "Manual",
+				"completionTime": "2026-06-24T09:05:00Z", "failedStep": "build",
+			},
+		},
+	}
+}
+
+func doGet(srv *Server, path, ns, name string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.SetPathValue("namespace", ns)
+	req.SetPathValue("name", name)
+	req.Header.Set("X-Auth-Request-User", "octocat")
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestLogs_LivePodForRunningBuild(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{logLines: []string{"cloning repo", "yarn build"}}
+	loki := &fakeLokiTailer{configured: true} // configured, but live pod wins
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "yarn build") {
+		t.Errorf("log pane should contain the live pod lines; body=%s", body)
+	}
+	if !strings.Contains(strings.ToLower(body), "live pod") {
+		t.Errorf("source note should say live pod; body=%s", body)
+	}
+	// Default container for a running build is the running step ("build").
+	if pods.lastLogContainer != "build" {
+		t.Errorf("default container = %q, want build", pods.lastLogContainer)
+	}
+	if pods.lastLogPod != "mapswipe-uat-build-8-xyz" {
+		t.Errorf("pod = %q", pods.lastLogPod)
+	}
+}
+
+func TestLogs_LokiForCompletedBuild(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true, lines: []string{"archived line 1", "archived line 2"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "archived line 2") {
+		t.Errorf("should show Loki lines; body=%s", body)
+	}
+	if !strings.Contains(body, "Loki") {
+		t.Errorf("source note should mention Loki; body=%s", body)
+	}
+}
+
+func TestLogs_UnavailableWhenNoLokiAndNoPod(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	// Loki not configured AND pod is gone → unavailable.
+	pods := &fakePodReader{getErr: context.DeadlineExceeded}
+	loki := &fakeLokiTailer{configured: false}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "unavailable") {
+		t.Errorf("should render an unavailable note; body=%s", rec.Body.String())
+	}
+}
+
+func TestLogs_SelectsHistoryBuildByJobName(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	// Older history build (build-8) has no podName and Loki off → pod fallback
+	// won't apply; but Loki configured → Loki used and scoped to that build.
+	loki := &fakeLokiTailer{configured: true, lines: []string{"old build log"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?build=mapswipe-uat-build-8&container=build",
+		"mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "old build log") {
+		t.Errorf("should resolve the history build; body=%s", rec.Body.String())
+	}
+}
+
+func TestPartial_RendersLiveRegionFragmentNotFullPage(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{})
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// Fragment, not a full page: no <html> doctype.
+	if strings.Contains(body, "<!doctype html>") {
+		t.Error("partial should be a fragment, not a full page")
+	}
+	// Should contain the recent-builds content (a history job name).
+	if !strings.Contains(body, "mapswipe-uat-build-9") {
+		t.Errorf("partial should show recent builds; body=%s", body)
+	}
+}
+
+func TestDetail_EmbedsLiveRegionAndPoller(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{})
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="live-region"`) {
+		t.Error("detail should contain the pollable #live-region")
+	}
+	if !strings.Contains(body, "/partial") {
+		t.Error("detail poller should target the /partial endpoint")
+	}
+	if !strings.Contains(body, "/logs") {
+		t.Error("detail should reference the /logs endpoint")
+	}
+}
+
+func TestDetail_NotFoundOnMissingApp(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := doGet(srv, "/ns/mapswipe/app/does-not-exist", "mapswipe", "does-not-exist")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 

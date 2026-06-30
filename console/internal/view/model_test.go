@@ -175,6 +175,69 @@ func TestStorageMaps_CoercedAndSorted(t *testing.T) {
 	}
 }
 
+func TestStorageVolumes_CapMappingAndBars(t *testing.T) {
+	// status.storage.sizes carries an "output" key (mapped to a cap → has a bar)
+	// and a "cache" key (no cap → size only). spec.storage supplies the caps.
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "ns", "name": "vols"},
+		"spec": map[string]any{
+			"storage": map[string]any{
+				"output": map[string]any{"capBytes": int64(1000)},
+				// cache has no cleanup/alert → no cap → no bar
+				"cache": map[string]any{},
+				// dataCache: cleanupBytes wins when alertBytes is zero/absent
+				"dataCache": map[string]any{"cleanupBytes": int64(2000)},
+			},
+		},
+		"status": map[string]any{
+			"storage": map[string]any{
+				"sizes":         map[string]any{"output": int64(500), "cache": int64(123), "data-cache": int64(2500)},
+				"lastRunDeltas": map[string]any{"output": int64(100)},
+			},
+		},
+	}}
+	a := FromUnstructured(obj)
+	vols := a.Storage.Volumes
+	if len(vols) != 3 {
+		t.Fatalf("want 3 volumes, got %d: %+v", len(vols), vols)
+	}
+	byName := map[string]StorageVolume{}
+	for _, v := range vols {
+		byName[v.Name] = v
+	}
+
+	out := byName["output"]
+	if !out.HasBar || out.Cap != 1000 || out.BarPct != 50 || out.Over {
+		t.Errorf("output volume wrong: %+v", out)
+	}
+	if out.Human != "500 B" {
+		t.Errorf("output Human = %q", out.Human)
+	}
+	if out.Delta != HumanizeDelta(100) {
+		t.Errorf("output Delta = %q", out.Delta)
+	}
+
+	cache := byName["cache"]
+	if cache.HasBar || cache.Cap != 0 {
+		t.Errorf("cache should have no bar: %+v", cache)
+	}
+	if cache.Human != "123 B" {
+		t.Errorf("cache Human = %q", cache.Human)
+	}
+
+	// "data-cache" key contains "data" → maps to dataCache.cleanupBytes (2000).
+	// used 2500 > cap 2000 → over.
+	dc := byName["data-cache"]
+	if !dc.HasBar || dc.Cap != 2000 || !dc.Over {
+		t.Errorf("data-cache volume wrong: %+v", dc)
+	}
+
+	// Back-compat: Sizes/LastRunDeltas still populated.
+	if len(a.Storage.Sizes) != 3 {
+		t.Errorf("Sizes should still be populated: %+v", a.Storage.Sizes)
+	}
+}
+
 func TestFromUnstructured_NoStatus(t *testing.T) {
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"namespace": "ns", "name": "fresh"},

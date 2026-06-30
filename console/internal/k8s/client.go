@@ -7,16 +7,20 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
@@ -31,8 +35,12 @@ var GVR = schema.GroupVersionResource{
 }
 
 // Client is the dynamic-client-backed reader/patcher used by the HTTP server.
+// clientset is the typed kubernetes client used for the pod-log capability; it
+// is nil-safe (tests built via NewWithDynamic have no clientset and the pod
+// methods then return an error rather than panicking).
 type Client struct {
-	dyn dynamic.Interface
+	dyn       dynamic.Interface
+	clientset kubernetes.Interface
 }
 
 // FrontendAppPatcher is the narrow capability the server depends on; tests
@@ -57,10 +65,17 @@ func New() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build dynamic client: %w", err)
 	}
-	return NewWithDynamic(dyn), nil
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build clientset: %w", err)
+	}
+	c := NewWithDynamic(dyn)
+	c.clientset = cs
+	return c, nil
 }
 
 // NewWithDynamic wraps an existing dynamic client (used by tests with the fake).
+// The typed clientset is left nil; pod-log methods then return an error.
 func NewWithDynamic(dyn dynamic.Interface) *Client {
 	return &Client{dyn: dyn}
 }
@@ -112,6 +127,55 @@ func (c *Client) RequestRebuild(ctx context.Context, namespace, name, user strin
 		return fmt.Errorf("patch rebuild annotation on %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+// errNoClientset is returned by the pod methods when the Client was built
+// without a typed clientset (e.g. NewWithDynamic in tests). Callers treat it
+// like any other pod-read failure and fall back.
+var errNoClientset = fmt.Errorf("k8s: no typed clientset configured")
+
+// GetPod fetches a single build pod so the console can confirm a retained pod
+// exists (the read-only console can get, but not list, pods).
+func (c *Client) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
+	if c.clientset == nil {
+		return nil, errNoClientset
+	}
+	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get pod %s/%s: %w", namespace, name, err)
+	}
+	return pod, nil
+}
+
+// PodLogTail streams the last `tail` lines of one container's logs from a
+// retained/live build pod. It reads the stream fully, splits into lines, and
+// drops a trailing empty line. Any failure is returned so callers can fall back
+// to Loki or render an "unavailable" note.
+func (c *Client) PodLogTail(ctx context.Context, namespace, pod, container string, tail int64) ([]string, error) {
+	if c.clientset == nil {
+		return nil, errNoClientset
+	}
+	opts := &corev1.PodLogOptions{Container: container}
+	if tail > 0 {
+		opts.TailLines = &tail
+	}
+	req := c.clientset.CoreV1().Pods(namespace).GetLogs(pod, opts)
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("stream logs %s/%s[%s]: %w", namespace, pod, container, err)
+	}
+	defer stream.Close()
+
+	raw, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, fmt.Errorf("read logs %s/%s[%s]: %w", namespace, pod, container, err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	// Drop a single trailing empty line (logs typically end with a newline).
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	return lines, nil
 }
 
 // rebuildPatch builds the merge-patch body. Exposed package-internal so the

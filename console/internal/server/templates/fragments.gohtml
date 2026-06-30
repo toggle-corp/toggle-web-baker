@@ -1,0 +1,111 @@
+{{/* flowstrip renders a Build's ordered steps. Input is a view.Build. */}}
+{{define "flowstrip"}}
+<div class="flow">
+  {{range $i, $s := .Steps}}
+    {{if $i}}<span class="flow-sep" aria-hidden="true">→</span>{{end}}
+    <span class="step {{$s.CSSClass}}" title="{{$s.AriaLabel}}{{if $s.Message}} — {{$s.Message}}{{end}}" aria-label="{{$s.AriaLabel}}">
+      <span aria-hidden="true">{{$s.Icon}}</span> {{$s.Name}}
+    </span>
+  {{else}}
+    <span class="muted small">no steps</span>
+  {{end}}
+</div>
+{{end}}
+
+{{/* liveregion is the pollable detail fragment: flow card + recent builds +
+     storage. Input is a view.App. Shared by detail.gohtml and partial.gohtml. */}}
+{{define "liveregion"}}
+{{with .}}
+<div class="grid">
+
+  <div class="card">
+    <h2>Build flow</h2>
+    <div class="body">
+      {{template "flowstrip" .Build}}
+      <div class="kv" style="margin-top:8px"><span class="k">Phase</span><span class="v">{{dash .Build.Phase}}</span></div>
+      <div class="kv"><span class="k">Result</span><span class="v">{{dash .Build.Result}}</span></div>
+      <div class="kv"><span class="k">Trigger</span><span class="v">{{dash .Build.Trigger}}</span></div>
+      <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
+      {{$st := reltime .Build.StartTime}}
+      <div class="kv"><span class="k">Started</span><span class="v"><span title="{{$st.Abs}}">{{$st.Rel}}</span></span></div>
+      {{if .Build.FailedStep}}<div class="kv"><span class="k">Failed step</span><span class="v b-false">{{.Build.FailedStep}}</span></div>{{end}}
+      {{if .Build.Message}}<div class="small muted" style="padding-top:6px">{{.Build.Message}}</div>{{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Recent builds</h2>
+    <div class="body">
+      {{range .BuildHistory}}
+        <div class="build-row">
+          <div class="build-row-head">
+            <span class="badge b-{{if eq .Result "Succeeded"}}ready{{else if eq .Result "Failed"}}degraded{{else}}pending{{end}}">{{dash .Result}}</span>
+            <span class="small muted">{{dash .Trigger}}</span>
+            {{$bt := reltime .CompletionTime}}
+            <span class="small muted" title="{{$bt.Abs}}">{{$bt.Rel}}</span>
+          </div>
+          {{template "flowstrip" .}}
+          {{if .JobName}}
+            <details data-logs-build="{{.JobName}}">
+              <summary class="small">logs · <code>{{.JobName}}</code></summary>
+              <div class="logs-body small muted">open to load…</div>
+            </details>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="muted">No recent builds.</div>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Storage</h2>
+    <div class="body">
+      <div class="kv"><span class="k">Threshold state</span>
+        <span class="v"><span class="badge b-{{if eq .Storage.ThresholdState "OK"}}ready{{else if .Storage.ThresholdState}}b-stale{{else}}pending{{end}}">{{dash .Storage.ThresholdState}}</span></span></div>
+      {{$mt := reltime .Storage.MeasuredAt}}
+      <div class="kv"><span class="k">Measured</span><span class="v"><span title="{{$mt.Abs}}">{{$mt.Rel}}</span></span></div>
+      {{range .Storage.Volumes}}
+        <div class="vol">
+          <div class="vol-head">
+            <span class="k">{{.Name}}</span>
+            <span class="v">{{.Human}} <span class="small muted">· {{.Delta}}</span></span>
+          </div>
+          {{if .HasBar}}
+            <div class="bar {{if .Over}}bar-over{{end}}" title="{{.Human}} of cap ({{.BarPct}}%)">
+              <div class="bar-fill" style="width:{{if gt .BarPct 100}}100{{else}}{{.BarPct}}{{end}}%"></div>
+            </div>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="muted">No storage measured.</div>
+      {{end}}
+    </div>
+  </div>
+
+</div>
+{{end}}
+{{end}}
+
+{{/* partial.gohtml is the bare fragment the poller swaps into #live-region. */}}
+{{define "partial.gohtml"}}{{template "liveregion" .App}}{{end}}
+
+{{/* logpane is the log fragment. Input is logpaneData. */}}
+{{define "logpane.gohtml"}}
+<div class="logpane">
+  <div class="logpane-head">
+    <label class="small muted">container
+      <select class="theme-select" data-log-container>
+        {{range .Steps}}<option value="{{.Name}}" {{if eq .Name $.Container}}selected{{end}}>{{.Name}}</option>{{else}}<option value="{{$.Container}}" selected>{{$.Container}}</option>{{end}}
+      </select>
+    </label>
+    {{if .SourceNote}}<span class="small muted">source: {{.SourceNote}}</span>{{end}}
+  </div>
+  {{if .Unavailable}}
+    <p class="small muted">{{.Unavailable}}</p>
+  {{else}}
+    <pre>{{range .Lines}}{{.}}
+{{end}}</pre>
+  {{end}}
+</div>
+{{end}}

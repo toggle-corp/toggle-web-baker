@@ -49,20 +49,6 @@
   </div>
 
   <div class="card">
-    <h2>Build</h2>
-    <div class="body">
-      <div class="kv"><span class="k">Phase</span><span class="v">{{dash .Build.Phase}}</span></div>
-      <div class="kv"><span class="k">Result</span><span class="v">{{dash .Build.Result}}</span></div>
-      <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
-      <div class="kv"><span class="k">Started</span><span class="v">{{dash .Build.StartTime}}</span></div>
-      <div class="kv"><span class="k">Completed</span><span class="v">{{dash .Build.CompletionTime}}</span></div>
-      <div class="kv"><span class="k">Job</span><span class="v"><code>{{dash .Build.JobName}}</code></span></div>
-      <div class="kv"><span class="k">Logs ref</span><span class="v"><code>{{dash .Build.LogsRef}}</code></span></div>
-      {{if .Build.Message}}<div class="small muted" style="padding-top:6px">{{.Build.Message}}</div>{{end}}
-    </div>
-  </div>
-
-  <div class="card">
     <h2>Schedule</h2>
     <div class="body">
       <div class="kv"><span class="k">Last build</span><span class="v">{{dash .LastBuildTime}}</span></div>
@@ -78,16 +64,6 @@
       <div class="kv"><span class="k">Current</span><span class="v">{{dash .Release.Current}}</span></div>
       <div class="kv"><span class="k">Previous</span><span class="v">{{dash .Release.Previous}}</span></div>
       <div class="kv"><span class="k">Serving since</span><span class="v">{{dash .Release.ServingSince}}</span></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Storage</h2>
-    <div class="body">
-      <div class="kv"><span class="k">Threshold state</span><span class="v">{{dash .Storage.ThresholdState}}</span></div>
-      <div class="kv"><span class="k">Measured at</span><span class="v">{{dash .Storage.MeasuredAt}}</span></div>
-      {{range .Storage.Sizes}}<div class="kv"><span class="k">size · {{.Key}}</span><span class="v">{{.Value}}</span></div>{{end}}
-      {{range .Storage.LastRunDeltas}}<div class="kv"><span class="k">delta · {{.Key}}</span><span class="v">{{.Value}}</span></div>{{end}}
     </div>
   </div>
 
@@ -109,6 +85,90 @@
   </div>
 
 </div>
+
+{{/* Pollable live region: build flow, recent builds, storage. Refreshed by JS
+     against /ns/.../partial. data-active marks fast-poll while a build runs. */}}
+<div id="live-region"
+     data-partial="/ns/{{.Namespace}}/app/{{.Name}}/partial"
+     data-logs="/ns/{{.Namespace}}/app/{{.Name}}/logs"
+     {{if or (eq .Phase "Building") (eq .Build.Phase "Running") (eq .Build.Phase "Pending")}}data-active="1"{{end}}>
+  {{template "liveregion" .}}
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Build logs</h2>
+  <div class="body">
+    <div id="logpane" data-current-build="{{.Build.JobName}}">
+      <p class="small muted">Loading logs…</p>
+    </div>
+  </div>
+</div>
 {{end}}
+
+<script>
+(function(){
+  var region=document.getElementById('live-region');
+  var logpane=document.getElementById('logpane');
+  if(!region){return;}
+  var partialURL=region.getAttribute('data-partial');
+  var logsBase=region.getAttribute('data-logs');
+
+  function active(){return region.getAttribute('data-active')==='1';}
+
+  // Poll the live region (flow/history/storage) and swap its innards.
+  function pollRegion(){
+    fetch(partialURL,{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.text();})
+      .then(function(html){region.innerHTML=html;})
+      .catch(function(){})
+      .finally(function(){setTimeout(pollRegion, active()?3000:20000);});
+  }
+
+  // --- Log pane: preserve selected container + scroll across refreshes. ---
+  function curContainer(){var s=logpane.querySelector('[data-log-container]');return s?s.value:'';}
+  function loadLogs(){
+    if(!logpane){return;}
+    var pre=logpane.querySelector('pre');
+    var atBottom=pre?(pre.scrollTop+pre.clientHeight>=pre.scrollHeight-4):true;
+    var build=logpane.getAttribute('data-current-build')||'';
+    var c=curContainer();
+    var url=logsBase+'?build='+encodeURIComponent(build)+(c?('&container='+encodeURIComponent(c)):'');
+    fetch(url,{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.text();})
+      .then(function(html){
+        logpane.innerHTML=html;
+        var np=logpane.querySelector('pre');
+        if(np&&atBottom){np.scrollTop=np.scrollHeight;}
+      }).catch(function(){});
+  }
+  // Re-bind container change (event delegation survives innerHTML swaps).
+  if(logpane){
+    logpane.addEventListener('change',function(e){
+      if(e.target&&e.target.matches('[data-log-container]')){loadLogs();}
+    });
+  }
+
+  // Lazy-load a history build's logs when its <details> opens.
+  document.addEventListener('toggle',function(e){
+    var d=e.target;
+    if(!(d&&d.tagName==='DETAILS'&&d.hasAttribute('data-logs-build')&&d.open)){return;}
+    var body=d.querySelector('.logs-body');
+    if(!body||body.getAttribute('data-loaded')==='1'){return;}
+    var job=d.getAttribute('data-logs-build');
+    fetch(logsBase+'?build='+encodeURIComponent(job),{headers:{'X-Requested-With':'fetch'}})
+      .then(function(r){return r.text();})
+      .then(function(html){body.innerHTML=html;body.setAttribute('data-loaded','1');body.classList.remove('muted');})
+      .catch(function(){});
+  },true);
+
+  // Refresh the current-build log pane every 3s only while in-progress.
+  function pollLogs(){
+    if(active()){loadLogs();}
+    setTimeout(pollLogs, active()?3000:60000);
+  }
+
+  loadLogs();
+  setTimeout(pollRegion, active()?3000:20000);
+  setTimeout(pollLogs, active()?3000:60000);
+})();
+</script>
 {{template "foot"}}
 {{end}}

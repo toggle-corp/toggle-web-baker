@@ -30,6 +30,18 @@ var funcMap = template.FuncMap{
 	// mkhead builds a head value for templates (like the error page) that do
 	// not carry their own head struct.
 	"mkhead": func(title string) head { return head{Title: title} },
+	// reltime renders a timestamp as a relative phrase plus an absolute tooltip,
+	// so templates can do <span title="{{.Abs}}">{{.Rel}}</span>.
+	"reltime": func(ts string) relTime {
+		rel, abs := view.RelativeTime(ts)
+		return relTime{Rel: rel, Abs: abs}
+	},
+}
+
+// relTime pairs a relative phrase with the absolute timestamp for a tooltip.
+type relTime struct {
+	Rel string
+	Abs string
 }
 
 // head is the data the shared layout head/header needs.
@@ -55,6 +67,25 @@ type detailData struct {
 	Head      head
 	App       view.App
 	Requested bool // true when redirected here right after a rebuild POST
+}
+
+// partialData drives the pollable detail region fragment (flow + recent builds
+// + storage).
+type partialData struct {
+	App view.App
+}
+
+// logpaneData drives the log pane fragment: the container select, a source
+// note, and either the lines or an unavailable message.
+type logpaneData struct {
+	Namespace   string
+	Build       view.Build
+	Container   string
+	Steps       []view.Step // option list for the container <select>
+	SourceNote  string      // "live pod" / "Loki" / "pod (Loki unavailable)"
+	Lines       []string
+	Unavailable string // non-empty → render this instead of lines
+	FetchErr    error  // internal; folded into Unavailable
 }
 
 type errorData struct {

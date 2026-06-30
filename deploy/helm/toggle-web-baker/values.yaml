@@ -96,6 +96,20 @@ console:
     enabled: true
     entrypoint: websecure
 
+  # Loki wiring for the build-log viewer. When url is empty the console falls
+  # back to live/retained build pods (it can get, but not list, pods). All
+  # fields are optional and only rendered into the Deployment env when set.
+  #
+  # NOTE: bearerToken / basicAuthPass are passed via plain values here for now
+  # (non-secret-ish; the console only reads build logs). If your Loki token is
+  # sensitive, mount it via an existing Secret + envFrom instead.
+  loki:
+    url: ""           # Loki base URL, no path (e.g. http://loki.monitoring:3100)
+    tenantId: ""      # X-Scope-OrgID for multi-tenant Loki
+    basicAuthUser: ""
+    basicAuthPass: ""
+    bearerToken: ""
+
   oauth2Proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
     githubOrg: toggle-corp

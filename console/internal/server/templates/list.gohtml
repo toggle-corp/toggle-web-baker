@@ -9,7 +9,8 @@
     <tr class="row-{{.HealthClass}}">
       <td>{{template "statusbadge" .}}</td>
       <td><a href="/ns/{{.Namespace}}/app/{{.Name}}"><strong>{{.Name}}</strong></a>
-          <div class="small muted">{{.Namespace}}</div></td>
+          <div class="small muted">{{.Namespace}}</div>
+          {{template "flowstrip" .Build}}</td>
       <td>{{dash .Phase}}</td>
       <td>{{if .SpecStale}}<span class="badge b-stale">STALE</span>{{else}}<span class="small muted">in sync</span>{{end}}</td>
       <td class="small">{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener">{{.URL}}</a>{{else}}<span class="muted">—</span>{{end}}</td>

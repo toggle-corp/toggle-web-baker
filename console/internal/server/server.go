@@ -4,24 +4,46 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/k8s"
+	"github.com/toggle-corp/toggle-web-baker/console/internal/loki"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
-// Server holds the FrontendApp client. The client is an interface so tests can
-// drive the handlers with a fake dynamic client.
-type Server struct {
-	apps k8s.FrontendAppPatcher
+// PodReader is the pod-log capability the log handler depends on. The real
+// k8s.Client satisfies it; tests fake it without a clientset.
+type PodReader interface {
+	GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error)
+	PodLogTail(ctx context.Context, namespace, pod, container string, tail int64) ([]string, error)
 }
 
-// New constructs the server around a FrontendApp client.
-func New(apps k8s.FrontendAppPatcher) *Server {
-	return &Server{apps: apps}
+// LokiTailer is the durable-log capability the log handler depends on. The real
+// *loki.Client satisfies it; an unconfigured client reports Configured()==false.
+type LokiTailer interface {
+	Configured() bool
+	Tail(ctx context.Context, namespace, pod, container string, start, end time.Time, limit int) ([]string, error)
+}
+
+// Server holds the FrontendApp client plus the log-source capabilities. All
+// three are interfaces so tests can drive the handlers with fakes.
+type Server struct {
+	apps   k8s.FrontendAppPatcher
+	pods   PodReader
+	tailer LokiTailer
+}
+
+// New constructs the server around a FrontendApp client, a pod reader, and a
+// Loki tailer.
+func New(apps k8s.FrontendAppPatcher, pods PodReader, tailer LokiTailer) *Server {
+	return &Server{apps: apps, pods: pods, tailer: tailer}
 }
 
 // Routes returns the configured mux. Go 1.22+ pattern routing carries the
@@ -32,6 +54,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /signed-out", s.handleSignedOut)
 	mux.HandleFunc("GET /", s.handleList)
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}", s.handleDetail)
+	mux.HandleFunc("GET /ns/{namespace}/app/{name}/partial", s.handlePartial)
+	mux.HandleFunc("GET /ns/{namespace}/app/{name}/logs", s.handleLogs)
 	mux.HandleFunc("POST /ns/{namespace}/app/{name}/rebuild", s.handleRebuild)
 	return mux
 }
@@ -82,6 +106,142 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		App:       view.FromUnstructured(obj),
 		Requested: r.URL.Query().Get("rebuild") == "requested",
 	})
+}
+
+// handlePartial returns just the dynamic detail region (flow strip + recent
+// builds + storage) for the poller. It is an HTML fragment, not a full page.
+func (s *Server) handlePartial(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	obj, err := s.apps.Get(r.Context(), ns, name)
+	if err != nil {
+		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
+		return
+	}
+	render(w, "partial", partialData{App: view.FromUnstructured(obj)})
+}
+
+// handleLogs returns the log pane fragment for one build. It resolves the log
+// source (live pod / Loki / retained pod / unavailable) and renders the
+// container <select>, a one-line source note, and the lines (or a note).
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	obj, err := s.apps.Get(r.Context(), ns, name)
+	if err != nil {
+		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
+		return
+	}
+	app := view.FromUnstructured(obj)
+
+	build := r.URL.Query().Get("build")
+	rec, isCurrent, found := pickBuild(app, build)
+	if !found {
+		s.renderError(w, http.StatusNotFound, "build not found", errors.New("no build matches "+build))
+		return
+	}
+
+	container := r.URL.Query().Get("container")
+	if container == "" {
+		container = defaultContainer(rec)
+	}
+
+	data := s.resolveLogs(r.Context(), ns, rec, isCurrent, container)
+	render(w, "logpane", data)
+}
+
+// pickBuild selects the BuildStatus to show. An empty or "current" build param
+// selects App.Build; otherwise it matches a history entry by JobName. isCurrent
+// reports whether the selected record is the current build (vs history).
+func pickBuild(app view.App, build string) (rec view.Build, isCurrent, found bool) {
+	if build == "" || build == "current" {
+		return app.Build, true, true
+	}
+	if app.Build.JobName == build {
+		return app.Build, true, true
+	}
+	for _, h := range app.BuildHistory {
+		if h.JobName == build {
+			return h, false, true
+		}
+	}
+	return view.Build{}, false, false
+}
+
+// defaultContainer chooses which step's logs to show by default: the failed
+// step, else the running step, else "build".
+func defaultContainer(rec view.Build) string {
+	if rec.FailedStep != "" {
+		return rec.FailedStep
+	}
+	for _, st := range rec.Steps {
+		if st.Status == "Running" {
+			return st.Name
+		}
+	}
+	return "build"
+}
+
+// resolveLogs determines the source and fetches the lines, degrading gracefully.
+func (s *Server) resolveLogs(ctx context.Context, ns string, rec view.Build, isCurrent bool, container string) logpaneData {
+	data := logpaneData{
+		Namespace: ns,
+		Build:     rec,
+		Container: container,
+		Steps:     rec.Steps,
+	}
+
+	// inProgress only when this is the CURRENT build and its phase is not done.
+	inProgress := isCurrent && (rec.Phase == "Running" || rec.Phase == "Pending") && rec.CompletionTime == ""
+
+	lokiConfigured := s.tailer != nil && s.tailer.Configured()
+
+	podRetained := false
+	if rec.PodName != "" && s.pods != nil {
+		if _, err := s.pods.GetPod(ctx, ns, rec.PodName); err == nil {
+			podRetained = true
+		}
+	}
+
+	src := loki.ResolveLogSource(inProgress, lokiConfigured, podRetained)
+	switch src {
+	case loki.SourceLivePod:
+		data.SourceNote = "live pod"
+		data.Lines, data.FetchErr = s.podLines(ctx, ns, rec.PodName, container)
+	case loki.SourcePodFallback:
+		data.SourceNote = "pod (Loki unavailable)"
+		data.Lines, data.FetchErr = s.podLines(ctx, ns, rec.PodName, container)
+	case loki.SourceLoki:
+		data.SourceNote = "Loki"
+		start, _ := time.Parse(time.RFC3339, rec.StartTime)
+		end := view.Now()
+		if rec.CompletionTime != "" {
+			if t, err := time.Parse(time.RFC3339, rec.CompletionTime); err == nil {
+				end = t
+			}
+		}
+		data.Lines, data.FetchErr = s.tailer.Tail(ctx, ns, rec.PodName, container, start, end, 100)
+	default: // SourceUnavailable
+		data.Unavailable = "logs unavailable — job " + dashOr(rec.JobName) + " / pod " + dashOr(rec.PodName)
+	}
+	if data.FetchErr != nil {
+		data.Unavailable = "logs unavailable — " + data.FetchErr.Error()
+	}
+	return data
+}
+
+func (s *Server) podLines(ctx context.Context, ns, pod, container string) ([]string, error) {
+	if s.pods == nil {
+		return nil, errors.New("pod reader unavailable")
+	}
+	return s.pods.PodLogTail(ctx, ns, pod, container, 100)
+}
+
+func dashOr(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 // ErrNoUser is returned when neither oauth2-proxy user header is present. In

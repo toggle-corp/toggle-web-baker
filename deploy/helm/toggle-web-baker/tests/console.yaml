@@ -6,5 +6,8 @@ operator:
 console:
   enabled: true
   host: baker-console.example.org
+  loki:
+    url: http://loki.monitoring.svc:3100
+    tenantId: baker
   oauth2Proxy:
     existingSecret: baker-oauth2-proxy
