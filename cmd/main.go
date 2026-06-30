@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -63,6 +64,7 @@ func main() {
 	flag.Var(&clusterCIDRs, "cluster-cidrs", "MANDATORY pod+service CIDRs excluded from build-pod egress")
 	flag.StringVar(&cfg.TraefikGroup, "traefik-group", "traefik.io", "API group of the Traefik Middleware CRD")
 	flag.StringVar(&cfg.ImagePullSecret, "image-pull-secret", "", "imagePullSecret stamped onto all platform pods")
+	flag.DurationVar(&cfg.MeasureInterval, "storage-measure-interval", time.Hour, "debounce floor between post-build du storage measurements")
 
 	flag.StringVar(&cfg.Images.Clone, "image-clone", "", "digest-pinned clone image")
 	flag.StringVar(&cfg.Images.Copier, "image-copier", "", "digest-pinned copier image")

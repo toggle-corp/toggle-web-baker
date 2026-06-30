@@ -3,7 +3,19 @@
 // FrontendApp CRD types into these calls.
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// Threshold states reported in status.storage.thresholdState. The console
+// renders "OK" as a healthy badge and any other non-empty value as a warning
+// badge; "" means nothing has been measured yet.
+const (
+	ThresholdStateOK       = "OK"
+	ThresholdStateAlert    = "Alert"
+	ThresholdStateCritical = "Critical"
+)
 
 // VolumeThresholds are absolute byte thresholds for one storage volume.
 // A zero value means the threshold is not set for that volume (local-path
@@ -38,6 +50,62 @@ func ValidateStorage(cfg StorageConfig) error {
 		}
 	}
 	return nil
+}
+
+// EvaluateThresholdState classifies the worst per-volume storage state from the
+// measured sizes against the configured thresholds. It is the pure source of
+// status.storage.thresholdState. Returns "" when nothing has been measured.
+//
+//   - Critical: a volume is at/over its hard cap (capBytes) — output only — so
+//     a deploy would be blocked.
+//   - Alert:    any volume is at/over its alertBytes.
+//   - OK:       sizes are known and nothing crosses an alert/cap threshold.
+//
+// Critical outranks Alert. Keys with no configured thresholds (e.g. the
+// copier's "source" checkout) are ignored.
+func EvaluateThresholdState(sizes map[string]int64, cfg StorageConfig) string {
+	if len(sizes) == 0 {
+		return ""
+	}
+	critical, alert := false, false
+	for key, size := range sizes {
+		v, ok := thresholdsForKey(key, cfg)
+		if !ok {
+			continue
+		}
+		if v.CapBytes > 0 && size >= v.CapBytes {
+			critical = true
+		}
+		if v.AlertBytes > 0 && size >= v.AlertBytes {
+			alert = true
+		}
+	}
+	switch {
+	case critical:
+		return ThresholdStateCritical
+	case alert:
+		return ThresholdStateAlert
+	default:
+		return ThresholdStateOK
+	}
+}
+
+// thresholdsForKey maps a status.storage.sizes key to its configured thresholds
+// by substring, mirroring the console's capForKey resolution: "output" →
+// Output, "data" → DataCache (checked before "cache" so "dataCache" resolves
+// correctly), else "cache" → Cache.
+func thresholdsForKey(key string, cfg StorageConfig) (VolumeThresholds, bool) {
+	k := strings.ToLower(key)
+	switch {
+	case strings.Contains(k, "output"):
+		return cfg.Output, true
+	case strings.Contains(k, "data"):
+		return cfg.DataCache, true
+	case strings.Contains(k, "cache"):
+		return cfg.Cache, true
+	default:
+		return VolumeThresholds{}, false
+	}
 }
 
 func validateVolume(name string, v VolumeThresholds) error {

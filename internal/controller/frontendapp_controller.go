@@ -155,6 +155,14 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
+	// 9b. Observe finished du measurement Jobs and merge cache/dataCache sizes
+	// into status.storage.sizes (alongside the copier's output/source entries).
+	if err := r.observeMeasurement(ctx, app); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Recompute the storage threshold badge from the merged sizes vs spec.storage.
+	app.Status.Storage.ThresholdState = domain.EvaluateThresholdState(app.Status.Storage.Sizes, storageConfigFrom(app))
+
 	// 10. nginx + Service + Ingress, ONLY after a successful deploy.
 	if r.hasSucceededOnce(app) {
 		if err := r.ensureServing(ctx, app); err != nil {
@@ -415,7 +423,15 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		// hash in the main reconcile loop; do NOT force it false here, or an edit
 		// mid-build would be masked.
 		app.Status.SpecStale = domain.IsStale(buildSpecFrom(app), app.Status.LastBuiltSpecHash)
+		// Capture the prior measuredAt BEFORE applyCopierTermination refreshes it,
+		// so the post-build measurement debounce sees the real last-measured time.
+		prevMeasuredAt := app.Status.Storage.MeasuredAt
 		r.applyCopierTermination(ctx, app, job)
+		// Spawn the cache/dataCache du Jobs (best-effort: a transient create error
+		// must not wedge the just-recorded build success).
+		if err := r.maybeStartMeasurement(ctx, app, prevMeasuredAt); err != nil {
+			log.FromContext(ctx).Error(err, "failed to start storage measurement")
+		}
 		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionTrue, bakerv1alpha1.ReasonReady, "build succeeded")
 		// On success, clear any prior Degraded condition (requirement 3).
 		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionFalse, bakerv1alpha1.ReasonReady, "build succeeded")

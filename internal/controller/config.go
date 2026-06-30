@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net"
+	"time"
 )
 
 // PlatformImages are the platform-locked image refs the operator stamps onto
@@ -40,6 +41,11 @@ type OperatorConfig struct {
 	// ImagePullSecret, when set, is stamped onto every platform pod.
 	ImagePullSecret string
 
+	// MeasureInterval is the debounce floor between storage (du) measurements.
+	// Measurement runs after a successful build, but at most once per interval so
+	// rapid back-to-back rebuilds don't spawn redundant du Jobs. Defaults to 1h.
+	MeasureInterval time.Duration
+
 	Images PlatformImages
 }
 
@@ -72,6 +78,9 @@ func (c *OperatorConfig) Validate() error {
 func (c *OperatorConfig) Defaults() {
 	if c.TraefikGroup == "" {
 		c.TraefikGroup = "traefik.io"
+	}
+	if c.MeasureInterval <= 0 {
+		c.MeasureInterval = time.Hour
 	}
 	if c.Images.Clone == "" {
 		c.Images.Clone = "ghcr.io/toggle-corp/toggle-web-baker-clone@sha256:0000000000000000000000000000000000000000000000000000000000000000"

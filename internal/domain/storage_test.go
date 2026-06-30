@@ -54,6 +54,55 @@ func TestValidateStorage_AcceptsValidOrdering(t *testing.T) {
 	}
 }
 
+func TestEvaluateThresholdState_EmptyWhenNoSizes(t *testing.T) {
+	cfg := StorageConfig{Cache: VolumeThresholds{AlertBytes: 1 << 30}}
+	if got := EvaluateThresholdState(nil, cfg); got != "" {
+		t.Fatalf("no measured sizes must yield \"\" (pending), got %q", got)
+	}
+}
+
+func TestEvaluateThresholdState_OKWhenUnderThresholds(t *testing.T) {
+	cfg := StorageConfig{
+		Cache:     VolumeThresholds{CleanupBytes: 2 << 30, AlertBytes: 4 << 30},
+		DataCache: VolumeThresholds{CleanupBytes: 1 << 30, AlertBytes: 3 << 30},
+		Output:    VolumeThresholds{AlertBytes: 8 << 30, CapBytes: 10 << 30},
+	}
+	sizes := map[string]int64{"cache": 1 << 30, "dataCache": 512 << 20, "output": 2 << 30, "source": 9 << 30}
+	if got := EvaluateThresholdState(sizes, cfg); got != ThresholdStateOK {
+		t.Fatalf("all under alert (source has no thresholds) must be OK, got %q", got)
+	}
+}
+
+func TestEvaluateThresholdState_AlertWhenCacheOverAlert(t *testing.T) {
+	cfg := StorageConfig{Cache: VolumeThresholds{CleanupBytes: 2 << 30, AlertBytes: 4 << 30}}
+	sizes := map[string]int64{"cache": 4 << 30} // == alert counts
+	if got := EvaluateThresholdState(sizes, cfg); got != ThresholdStateAlert {
+		t.Fatalf("cache at alert must be Alert, got %q", got)
+	}
+}
+
+func TestEvaluateThresholdState_CriticalWhenOutputOverCap(t *testing.T) {
+	cfg := StorageConfig{Output: VolumeThresholds{AlertBytes: 8 << 30, CapBytes: 10 << 30}}
+	// Output over cap AND over alert; the cap (Critical) must win over Alert.
+	sizes := map[string]int64{"output": 11 << 30}
+	if got := EvaluateThresholdState(sizes, cfg); got != ThresholdStateCritical {
+		t.Fatalf("output over cap must be Critical, got %q", got)
+	}
+}
+
+func TestEvaluateThresholdState_DataCacheKeyResolvesToDataThresholds(t *testing.T) {
+	// "dataCache" contains both "data" and "cache"; it must resolve to the
+	// dataCache thresholds (data checked first), mirroring the console.
+	cfg := StorageConfig{
+		Cache:     VolumeThresholds{AlertBytes: 100 << 30}, // huge: would be OK if misresolved
+		DataCache: VolumeThresholds{AlertBytes: 1 << 30},
+	}
+	sizes := map[string]int64{"dataCache": 2 << 30}
+	if got := EvaluateThresholdState(sizes, cfg); got != ThresholdStateAlert {
+		t.Fatalf("dataCache must resolve to dataCache thresholds, got %q", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
