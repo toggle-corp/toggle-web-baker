@@ -14,7 +14,7 @@ import (
 var (
 	reLogErr  = regexp.MustCompile(`(?i)(\berror\b|\berrors\b|\bfatal\b|\bfailed\b|\bfailure\b|\bpanic\b|npm ERR!|exit (code|status) [1-9])`)
 	reLogWarn = regexp.MustCompile(`(?i)(\bwarn\b|\bwarning\b|\bdeprecated\b)`)
-	reLogOk   = regexp.MustCompile(`(?i)(\bsucceeded\b|\bsuccessfully\b|\bsuccess\b|build complete|\bdone\b)`)
+	reLogOk   = regexp.MustCompile(`(?i)(\bsucceeded\b|\bsuccessfully\b|\bsuccess\b|build complete)`)
 	// Leading timestamp: RFC3339 (2026-07-01T12:00:00Z) or a bracketed/bare clock
 	// ([12:00:00] / 12:00:00.123). Captured so it can be dimmed independently.
 	reLogTS = regexp.MustCompile(`^(\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\S*\]?|\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]|\d{2}:\d{2}:\d{2}(?:\.\d+)?)(\s+)`)

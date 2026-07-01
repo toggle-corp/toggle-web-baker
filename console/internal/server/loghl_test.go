@@ -22,6 +22,7 @@ func TestHighlightLogLine_ClassifiesLevels(t *testing.T) {
 		{"warning", "WARN deprecated API in use", "log-warn"},
 		{"success", "Build complete: Succeeded", "log-ok"},
 		{"plain", "cloning repository into /workspace", ""},
+		{"no false-green on done", "Nothing to be done for 'all'", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

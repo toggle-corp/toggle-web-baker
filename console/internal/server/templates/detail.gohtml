@@ -158,6 +158,10 @@
     var job=pane?pane.getAttribute('data-build'):'';
     if(job){logpane.setAttribute('data-current-build', job);}
   }
+  // logSeq guards against out-of-order responses: a poll and a user click can
+  // have loads in flight at once, and a slower earlier response must not clobber
+  // a newer view (e.g. a live follow=1 reply overwriting a just-pinned history).
+  var logSeq=0;
   function loadLogs(){
     if(!logpane){return;}
     var pre=logpane.querySelector('pre');
@@ -171,8 +175,10 @@
       var c=curContainer();
       url=logsBase+'?build='+encodeURIComponent(build)+(c?('&container='+encodeURIComponent(c)):'');
     }
+    var seq=++logSeq;
     fetch(url,{headers:{'X-Requested-With':'fetch'}}).then(function(r){return r.text();})
       .then(function(html){
+        if(seq!==logSeq){return;} // a newer load superseded this response
         logpane.innerHTML=html;
         var np=logpane.querySelector('pre');
         if(np&&atBottom){np.scrollTop=np.scrollHeight;}
@@ -204,7 +210,7 @@
   if(region){
     region.addEventListener('click',function(e){
       var btn=e.target&&e.target.closest?e.target.closest('[data-view-logs]'):null;
-      if(!btn){return;}
+      if(!btn||!logpane){return;}
       follow=false;
       selectedJob=btn.getAttribute('data-view-logs')||'';
       logpane.setAttribute('data-current-build', selectedJob);
@@ -214,12 +220,16 @@
     });
   }
 
-  // Refresh the pane every 3s, but only while it shows the live/active build —
-  // a pinned history build is static, so polling it would just refetch identical
-  // lines.
+  // Refresh the pane while it shows the live build: every 3s during the build,
+  // plus ONE final refresh on the finish edge (wasActive && !active) so the last
+  // lines land and the now-defunct "follow active step" toggle drops out of the
+  // fragment. A pinned history build is static, so it is never polled.
+  var wasActive=active();
   function pollLogs(){
-    if(active()&&follow){loadLogs();}
-    setTimeout(pollLogs, active()?3000:60000);
+    var a=active();
+    if(follow&&(a||wasActive)){loadLogs();}
+    wasActive=a;
+    setTimeout(pollLogs, a?3000:60000);
   }
 
   loadLogs();

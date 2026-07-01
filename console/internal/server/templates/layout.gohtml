@@ -113,9 +113,11 @@
   .build-row.selected{background:var(--panel2);border-radius:6px;
     padding:8px;margin:8px -8px;border-bottom-color:transparent}
   .viewlogs{font-size:12px;padding:3px 12px}
-  /* Log pane. */
+  /* Log pane. A fixed height (shared var, so the populated <pre> and the empty
+     state stay identical and the page height never jumps) with internal scroll. */
+  #logpane{--logpane-h:min(60vh,640px)}
   .logpane-head{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-  .logpane pre{height:min(60vh,640px);min-height:340px;overflow:auto;background:var(--panel2);
+  .logpane pre{height:var(--logpane-h);min-height:340px;overflow:auto;background:var(--panel2);
     padding:10px;border-radius:6px;white-space:pre-wrap;margin:0}
   /* Semantic log colouring (heuristic, line-level; see loghl.go). */
   .log-err{color:var(--degraded)}
@@ -123,7 +125,7 @@
   .log-ok{color:var(--ready)}
   .log-ts{color:var(--muted)}
   /* Empty/loading/unavailable state fills the fixed box with a centred note. */
-  .logpane-empty{height:min(60vh,640px);min-height:340px;display:flex;align-items:center;
+  .logpane-empty{height:var(--logpane-h);min-height:340px;display:flex;align-items:center;
     justify-content:center;background:var(--panel2);border-radius:6px;margin:0;text-align:center}
 </style>
 </head>
