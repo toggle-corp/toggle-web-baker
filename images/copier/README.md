@@ -58,7 +58,6 @@ Success (`< 4KB`):
 ```json
 {
   "releaseTs": "20260625T101500Z-42",
-  "dataFreshness": "<value of DATA_LAST_MODIFIED from /workspace/phase-env, or empty>",
   "sizes": {
     "output": 12345678,
     "outputTotal": 45678901

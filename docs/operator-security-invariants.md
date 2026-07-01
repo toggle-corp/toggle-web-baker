@@ -67,7 +67,7 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
   untrusted dependency code runs. Therefore: **the fetch script must use the
   secret only to make its API call and must never write it (raw) to `phase-env`
   or `dataCache`.** Only derived, non-secret data flows forward. `phase-env`
-  carries scalars by convention (e.g. `DATA_LAST_MODIFIED`), never credentials.
+  carries non-secret scalars by convention, never credentials.
   The operator cannot enforce this; it is a load-bearing contract on the trusted
   author. Residual risk (a fetch author who deliberately relays the secret) is
   accepted under the threat model.

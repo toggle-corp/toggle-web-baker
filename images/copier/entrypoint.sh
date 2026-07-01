@@ -118,9 +118,6 @@ main() {
 # emit_status <output_bytes> <source_bytes> <prev_release_basename>
 emit_status() {
 	local out_bytes="$1" src_bytes="$2" prev_release="$3"
-	local freshness
-	freshness="$(read_phase_env_value "$PHASE_ENV" DATA_LAST_MODIFIED)"
-	freshness="$(json_escape "$freshness")"
 
 	# Delta vs the previously-current release, if any (added/removed file counts).
 	local prev_count=0 cur_count delta_added=0 delta_removed=0
@@ -154,8 +151,8 @@ emit_status() {
 	# PVC (releases dir, post-retention). sourceSize/outputSize are flat top-level
 	# aliases for humans reading the raw termination log (source = build output on
 	# the work volume; output = current release).
-	printf '{"releaseTs":"%s","dataFreshness":"%s","release":{"current":"%s"},"sizes":{"output":%s,"outputTotal":%s},"outputSize":%s,"sourceSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
-		"$RELEASE_TS" "$freshness" "$RELEASE_TS" "$out_bytes" "$total_bytes" "$out_bytes" "$src_bytes" \
+	printf '{"releaseTs":"%s","release":{"current":"%s"},"sizes":{"output":%s,"outputTotal":%s},"outputSize":%s,"sourceSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
+		"$RELEASE_TS" "$RELEASE_TS" "$out_bytes" "$total_bytes" "$out_bytes" "$src_bytes" \
 		"$prev_count" "$cur_count" "$delta_added" "$delta_removed" | head -c 4000 >"$TERM_LOG" 2>/dev/null ||
 		printf 'copier: warning: could not write termination log\n' >&2
 

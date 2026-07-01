@@ -167,12 +167,12 @@ assert_eq "$left" "0" "retention: keep=0 prunes all"
 
 # ---- phase-env reader -------------------------------------------------------
 PE="$TMP/phase-env"
-printf 'FOO=bar\nDATA_LAST_MODIFIED="2026-06-25T00:00:00Z"\n' >"$PE"
-val="$(read_phase_env_value "$PE" DATA_LAST_MODIFIED)"
-assert_eq "$val" "2026-06-25T00:00:00Z" "phase-env: reads DATA_LAST_MODIFIED (quotes stripped)"
+printf 'BAR=baz\nFOO="2026-06-25T00:00:00Z"\n' >"$PE"
+val="$(read_phase_env_value "$PE" FOO)"
+assert_eq "$val" "2026-06-25T00:00:00Z" "phase-env: reads FOO (quotes stripped)"
 val="$(read_phase_env_value "$PE" MISSING)"
 assert_eq "$val" "" "phase-env: missing key -> empty"
-val="$(read_phase_env_value "$TMP/nope" DATA_LAST_MODIFIED)"
+val="$(read_phase_env_value "$TMP/nope" FOO)"
 assert_eq "$val" "" "phase-env: missing file -> empty"
 
 # ---- emit_status termination JSON -------------------------------------------

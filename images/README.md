@@ -50,7 +50,7 @@ All four write to `/dev/termination-log`, kept `< 4KB`.
 copier success:
 
 ```json
-{"releaseTs":"20260625T101500Z-42","dataFreshness":"<DATA_LAST_MODIFIED or empty>","outputSize":12345678,"deltas":{"prevFileCount":120,"fileCount":131,"filesAdded":11,"filesRemoved":0}}
+{"releaseTs":"20260625T101500Z-42","outputSize":12345678,"deltas":{"prevFileCount":120,"fileCount":131,"filesAdded":11,"filesRemoved":0}}
 ```
 
 cleanup success:
@@ -75,8 +75,7 @@ cleanup success:
 ## Phase-env convention
 
 `/workspace/phase-env` is a plain `KEY=VALUE` file (one per line) any phase may
-write. It is **convention, not contract** — the copier reads
-`DATA_LAST_MODIFIED` from it if present and ignores its absence.
+write. It is **convention, not contract**.
 
 ## Env reference
 
