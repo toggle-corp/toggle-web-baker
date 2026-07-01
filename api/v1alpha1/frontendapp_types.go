@@ -81,6 +81,7 @@ const (
 	ReasonReady               = "Ready"
 	ReasonInvalidStorageClass = "InvalidStorageClass"
 	ReasonImageNotAllowed     = "ImageNotAllowed"
+	ReasonUnknownNodeVersion  = "UnknownNodeVersion"
 	ReasonInvalidStorage      = "InvalidStorage"
 	ReasonInvalidSpec         = "InvalidSpec"
 	ReasonMissingTLSSecret    = "MissingTLSSecret"

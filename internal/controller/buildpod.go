@@ -10,6 +10,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
+	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
 // Volume + mount paths shared across the build pod.
@@ -39,17 +40,27 @@ func hardenedSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-// phaseSecurityContext is the hardened context for a user-supplied phase
-// container (setup / fetch / build), pinning runAsUser when the app sets one.
-// runAsNonRoot alone is not enough for an image whose USER is a non-numeric
-// name (e.g. cimg/node's `circleci`): the kubelet cannot verify a named user is
-// non-root and admission fails, so the app supplies the numeric UID here.
-func phaseSecurityContext(p bakerv1alpha1.PhaseSpec) *corev1.SecurityContext {
+// resolvedSecurityContext is the hardened context for a phase container,
+// pinning the resolved runAsUser (the managed node image's UID, or a BYO phase's
+// own runAsUser). runAsNonRoot alone is not enough for an image whose USER is a
+// non-numeric name (e.g. cimg/node's `circleci`): the kubelet cannot verify a
+// named user is non-root and admission fails, so a numeric UID is pinned here.
+func resolvedSecurityContext(rp domain.ResolvedPhase) *corev1.SecurityContext {
 	sc := hardenedSecurityContext()
-	if p.RunAsUser != nil {
-		sc.RunAsUser = p.RunAsUser
+	if rp.RunAsUser != nil {
+		sc.RunAsUser = rp.RunAsUser
 	}
 	return sc
+}
+
+// withHome prepends HOME when the resolution injects one (managed node phases,
+// where HOME must point at a writable path under readOnlyRootFilesystem). BYO
+// and clone-fallback phases inject nothing — the app owns its own env.
+func withHome(rp domain.ResolvedPhase, env []corev1.EnvVar) []corev1.EnvVar {
+	if rp.Home == "" {
+		return env
+	}
+	return append([]corev1.EnvVar{{Name: "HOME", Value: rp.Home}}, env...)
 }
 
 // nginxUID is the UID/GID baked into docker.io/nginxinc/nginx-unprivileged.
@@ -131,12 +142,10 @@ func toSecretEnvVars(in []bakerv1alpha1.EnvVarWithSecret) []corev1.EnvVar {
 	return out
 }
 
-// imageOr returns the phase image if set, else a fallback.
-func imageOr(phase bakerv1alpha1.PhaseSpec, fallback string) string {
-	if phase.Image != "" {
-		return phase.Image
-	}
-	return fallback
+// resolvePhase computes the effective image/UID/HOME for one phase, applying the
+// spec.nodeVersion mapping and per-phase BYO overrides (see domain.ResolvePhase).
+func (r *FrontendAppReconciler) resolvePhase(app *bakerv1alpha1.FrontendApp, phase bakerv1alpha1.PhaseSpec) domain.ResolvedPhase {
+	return domain.ResolvePhase(phase.Image, phase.RunAsUser, app.Spec.NodeVersion, r.Config.NodeImages, r.Config.Images.Clone)
 }
 
 // buildVolumesAndMounts returns the pod volumes plus the cache/work mounts,
@@ -226,16 +235,22 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		SecurityContext: hardenedSecurityContext(),
 	}
 
+	// Resolve each phase's effective image/UID/HOME (nodeVersion mapping + BYO
+	// overrides). HOME is injected only for managed node phases.
+	setupR := r.resolvePhase(app, app.Spec.Setup)
+	fetchR := r.resolvePhase(app, app.Spec.Fetch)
+	buildR := r.resolvePhase(app, app.Spec.Build)
+
 	// setup: install deps. Mounts cache (RW for pnpm store / yarn cache).
 	setupMounts := append(append([]corev1.VolumeMount{}, base...), cacheMount)
 	setup := corev1.Container{
 		Name:            "setup",
-		Image:           imageOr(app.Spec.Setup, r.Config.Images.Clone),
+		Image:           setupR.Image,
 		Command:         commandOrNoop(app.Spec.Setup.Command),
 		WorkingDir:      workMountPath,
-		Env:             append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Setup.Env)...),
+		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Setup.Env)...)),
 		VolumeMounts:    setupMounts,
-		SecurityContext: phaseSecurityContext(app.Spec.Setup),
+		SecurityContext: resolvedSecurityContext(setupR),
 	}
 
 	// fetch: the ONLY container that receives secrets. Writes to /data.
@@ -245,12 +260,12 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		corev1.VolumeMount{Name: volData, MountPath: dataMountPath})
 	fetch := corev1.Container{
 		Name:            "fetch",
-		Image:           imageOr(app.Spec.Fetch, r.Config.Images.Clone),
+		Image:           fetchR.Image,
 		Command:         commandOrNoop(app.Spec.Fetch.Command),
 		WorkingDir:      workMountPath,
-		Env:             fetchEnv,
+		Env:             withHome(fetchR, fetchEnv),
 		VolumeMounts:    fetchMounts,
-		SecurityContext: phaseSecurityContext(app.Spec.Fetch),
+		SecurityContext: resolvedSecurityContext(fetchR),
 	}
 
 	// build: public buildArgs + NODE_OPTIONS etc. Mounts cache RW (both PMs) and
@@ -263,13 +278,13 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true})
 	build := corev1.Container{
 		Name:            "build",
-		Image:           imageOr(app.Spec.Build, r.Config.Images.Clone),
+		Image:           buildR.Image,
 		Command:         app.Spec.Build.Command,
 		WorkingDir:      workMountPath,
-		Env:             buildEnv,
+		Env:             withHome(buildR, buildEnv),
 		VolumeMounts:    buildMounts,
 		Resources:       buildResourceRequirements(app),
-		SecurityContext: phaseSecurityContext(app.Spec.Build),
+		SecurityContext: resolvedSecurityContext(buildR),
 	}
 
 	// copier (MAIN): the only container mounting the output PVC. Publishes the

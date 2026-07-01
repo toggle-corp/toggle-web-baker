@@ -9,6 +9,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
+	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
 func reconcilerForPod() *FrontendAppReconciler {
@@ -158,8 +159,11 @@ func TestBuildJob_HardenedSecurity(t *testing.T) {
 // spec.build.runAsUser pins the build container's numeric UID (needed for images
 // whose USER is a non-numeric name, e.g. cimg/node's `circleci`). Phases without
 // runAsUser keep the default hardened context (RunAsUser nil).
+// BYO path: a phase with its own image pins its own runAsUser; an image-less
+// phase (fetch here, with no nodeVersion) must NOT inherit it.
 func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
 	app := baseApp()
+	app.Spec.Build.Image = "docker.io/cimg/node:18.20"
 	app.Spec.Build.RunAsUser = ptr.To(int64(3434))
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
@@ -176,6 +180,74 @@ func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
 	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
 	if fetch.SecurityContext.RunAsUser != nil {
 		t.Fatalf("fetch runAsUser = %v, want nil", *fetch.SecurityContext.RunAsUser)
+	}
+}
+
+func envValue(c *corev1.Container, name string) (string, bool) {
+	for _, e := range c.Env {
+		if e.Name == name {
+			return e.Value, true
+		}
+	}
+	return "", false
+}
+
+// nodeVersion resolves every image-less phase to the operator's managed image,
+// pins its UID, and injects the writable HOME — the app author writes none of it.
+func TestBuildJob_NodeVersionResolvesManagedImageUIDAndHome(t *testing.T) {
+	app := baseApp()
+	app.Spec.NodeVersion = 18
+	app.Spec.Build.Command = []string{"yarn", "build"}
+	r := reconcilerForPod()
+	r.Config.NodeImages = map[string]domain.NodeImage{
+		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
+	}
+	job := r.BuildJob(app, "tok")
+
+	for _, name := range []string{"setup", "fetch", "build"} {
+		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
+		if c.Image != "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa" {
+			t.Fatalf("%s image = %q, want managed node18", name, c.Image)
+		}
+		if c.SecurityContext.RunAsUser == nil || *c.SecurityContext.RunAsUser != 1000 {
+			t.Fatalf("%s runAsUser = %v, want 1000", name, c.SecurityContext.RunAsUser)
+		}
+		if home, ok := envValue(c, "HOME"); !ok || home != "/work" {
+			t.Fatalf("%s HOME = %q (present=%v), want /work", name, home, ok)
+		}
+	}
+}
+
+// A per-phase image override opts that phase fully out of the managed toolchain:
+// its own image, its own runAsUser, and NO injected managed HOME — while the
+// other phases still inherit the managed image.
+func TestBuildJob_PhaseImageOverrideOptsOutOfManaged(t *testing.T) {
+	app := baseApp()
+	app.Spec.NodeVersion = 18
+	app.Spec.Build.Command = []string{"yarn", "build"}
+	app.Spec.Fetch.Image = "docker.io/library/python:3.12"
+	app.Spec.Fetch.RunAsUser = ptr.To(int64(4242))
+	app.Spec.Fetch.Command = []string{"python", "fetch.py"}
+	r := reconcilerForPod()
+	r.Config.NodeImages = map[string]domain.NodeImage{
+		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
+	}
+	job := r.BuildJob(app, "tok")
+
+	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
+	if fetch.Image != "docker.io/library/python:3.12" {
+		t.Fatalf("fetch image override lost, got %q", fetch.Image)
+	}
+	if fetch.SecurityContext.RunAsUser == nil || *fetch.SecurityContext.RunAsUser != 4242 {
+		t.Fatalf("fetch must keep its own UID 4242, got %v", fetch.SecurityContext.RunAsUser)
+	}
+	if _, ok := envValue(fetch, "HOME"); ok {
+		t.Fatalf("BYO fetch must not get an injected managed HOME")
+	}
+	// build still inherits the managed image + UID.
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	if build.Image != "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa" {
+		t.Fatalf("build should inherit managed image, got %q", build.Image)
 	}
 }
 

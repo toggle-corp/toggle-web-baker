@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -18,12 +19,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -99,6 +100,13 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// 2. Registry allowlist: reject disallowed phase images (reconcile-time).
 	if err := domain.CheckImagesAllowed(r.Config.RegistryAllowlist, phaseImages(app)); err != nil {
 		return r.fail(ctx, app, bakerv1alpha1.ReasonImageNotAllowed, err.Error())
+	}
+
+	// 2b. nodeVersion must resolve against the operator's node-image map. The map
+	// is admin/chart config (not spec), so this cannot be a CEL rule; the message
+	// routes the fix to a cluster admin rather than implying a spec edit.
+	if err := r.validateNodeVersion(app); err != nil {
+		return r.fail(ctx, app, bakerv1alpha1.ReasonUnknownNodeVersion, err.Error())
 	}
 
 	// 3. Storage threshold ordering (operator-side, mirrors the CEL markers).
@@ -209,6 +217,23 @@ func phaseImages(app *bakerv1alpha1.FrontendApp) []domain.PhaseImage {
 	return out
 }
 
+// validateNodeVersion checks that a set spec.nodeVersion resolves in the
+// operator's node-image map. nodeVersion 0 (unset, BYO image) always passes.
+func (r *FrontendAppReconciler) validateNodeVersion(app *bakerv1alpha1.FrontendApp) error {
+	if app.Spec.NodeVersion == 0 {
+		return nil
+	}
+	if _, ok := domain.LookupNodeImage(r.Config.NodeImages, app.Spec.NodeVersion); ok {
+		return nil
+	}
+	known := make([]string, 0, len(r.Config.NodeImages))
+	for k := range r.Config.NodeImages {
+		known = append(known, k)
+	}
+	sort.Strings(known)
+	return fmt.Errorf("nodeVersion %d is not available; known versions: %v. Ask a cluster admin to add it to the operator's node-image map (Helm values operator.nodeImages)", app.Spec.NodeVersion, known)
+}
+
 func storageConfigFrom(app *bakerv1alpha1.FrontendApp) domain.StorageConfig {
 	s := app.Spec.Storage
 	return domain.StorageConfig{
@@ -231,6 +256,7 @@ func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
 		Repo:           app.Spec.Repo,
 		Ref:            app.Spec.Ref,
 		PackageManager: string(app.Spec.PackageManager),
+		NodeVersion:    app.Spec.NodeVersion,
 		Setup:          domain.PhaseSpec{Image: app.Spec.Setup.Image, Command: app.Spec.Setup.Command, RunAsUser: app.Spec.Setup.RunAsUser},
 		Fetch:          domain.PhaseSpec{Image: app.Spec.Fetch.Image, Command: app.Spec.Fetch.Command, RunAsUser: app.Spec.Fetch.RunAsUser},
 		Build:          domain.PhaseSpec{Image: app.Spec.Build.Image, Command: app.Spec.Build.Command, RunAsUser: app.Spec.Build.RunAsUser},

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
+	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
 func testScheme(t *testing.T) *runtime.Scheme {
@@ -223,6 +225,36 @@ func TestReconcile_ImageNotAllowedRejected(t *testing.T) {
 	cond := findCondition(got, bakerv1alpha1.ConditionReady)
 	if cond == nil || cond.Reason != bakerv1alpha1.ReasonImageNotAllowed {
 		t.Fatalf("expected Ready=False/ImageNotAllowed, got %+v", cond)
+	}
+}
+
+// nodeVersion not present in the operator's node-image map must fail the app at
+// reconcile (the map is admin/chart config, not spec, so this can't be a CEL
+// rule). The message must name the bad version and the known set, and route the
+// fix to a cluster admin. No build Job is created.
+func TestReconcile_UnknownNodeVersionRejected(t *testing.T) {
+	app := baseApp()
+	app.Spec.NodeVersion = 19
+	app.Spec.Build.Command = []string{"yarn", "build"}
+	r, cl := newReconciler(t, app, wffc())
+	r.Config.NodeImages = map[string]domain.NodeImage{
+		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
+	}
+	reconcile(t, r, app) // finalizer
+	reconcile(t, r, app)
+
+	got := getApp(t, cl, "demo", "apps")
+	cond := findCondition(got, bakerv1alpha1.ConditionReady)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != bakerv1alpha1.ReasonUnknownNodeVersion {
+		t.Fatalf("expected Ready=False/UnknownNodeVersion, got %+v", cond)
+	}
+	if !strings.Contains(cond.Message, "19") || !strings.Contains(cond.Message, "18") {
+		t.Fatalf("message must name the bad version and the known set, got %q", cond.Message)
+	}
+	jobs := &batchv1.JobList{}
+	_ = cl.List(context.Background(), jobs, client.InNamespace("apps"), client.MatchingLabels(buildLabelsFor(app)))
+	if len(jobs.Items) != 0 {
+		t.Fatalf("unknown nodeVersion must NOT trigger a build, got %d jobs", len(jobs.Items))
 	}
 }
 
