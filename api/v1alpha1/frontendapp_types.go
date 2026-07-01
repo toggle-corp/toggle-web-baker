@@ -22,6 +22,11 @@ const (
 	// FinalizerName guards a best-effort abort of an in-flight build Job on delete.
 	FinalizerName = "baker.toggle-corp.com/finalizer"
 
+	// DefaultSchedule is the clock CronJob's schedule when Spec.Schedule is empty.
+	// It MUST match the +kubebuilder:default on Spec.Schedule (a magic comment
+	// that cannot reference this const) and the console's view.DefaultSchedule.
+	DefaultSchedule = "0 */12 * * *"
+
 	// SpecHashAnnotation stamps the build-relevant spec hash onto the build Job at
 	// CREATION time, so on success the operator records the hash of the spec the
 	// build ACTUALLY ran — not the (possibly edited) live spec at observe-time.

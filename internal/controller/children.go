@@ -79,7 +79,7 @@ func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *ba
 	)
 	schedule := app.Spec.Schedule
 	if schedule == "" {
-		schedule = "0 */12 * * *"
+		schedule = bakerv1alpha1.DefaultSchedule
 	}
 	podSpec := corev1.PodSpec{
 		RestartPolicy:      corev1.RestartPolicyNever,

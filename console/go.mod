@@ -3,6 +3,7 @@ module github.com/toggle-corp/toggle-web-baker/console
 go 1.26
 
 require (
+	github.com/robfig/cron/v3 v3.0.1
 	k8s.io/api v0.34.0
 	k8s.io/apimachinery v0.34.0
 	k8s.io/client-go v0.34.0

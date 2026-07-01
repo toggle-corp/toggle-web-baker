@@ -305,7 +305,10 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 	a.LastBuiltSpecHash = asString(status["lastBuiltSpecHash"])
 	a.LastBuildTime = asString(status["lastBuildTime"])
 	a.LastSuccessfulBuild = asString(status["lastSuccessfulBuildTime"])
-	a.NextScheduledBuildTime = asString(status["nextScheduledBuildTime"])
+	// Next scheduled is derived from spec.schedule (the CronJob clock), not
+	// status — the operator never writes status.nextScheduledBuildTime.
+	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
+	a.NextScheduledBuildTime = nextScheduled(asString(spec["schedule"]))
 	a.DataFreshness = asString(status["dataFreshness"])
 
 	a.Conditions = conditionsFrom(status["conditions"])
