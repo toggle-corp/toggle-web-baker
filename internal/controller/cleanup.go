@@ -256,6 +256,19 @@ func actionStatus(app *bakerv1alpha1.FrontendApp, mode string) *bakerv1alpha1.Cl
 	}
 }
 
+// sizeKeyForCleanupMode maps a cleanup mode to the status.storage.sizes key it
+// shrinks: cache -> "cache"; releases prune shrinks the whole releases dir =
+// the "outputTotal" key the copier emits (the current release under "output" is
+// protected and intentionally left alone).
+func sizeKeyForCleanupMode(mode string) string {
+	switch mode {
+	case cleanupModeReleases:
+		return "outputTotal"
+	default:
+		return "cache"
+	}
+}
+
 // cleanupActive reports whether ANY cleanup Job for this app is still running.
 func (r *FrontendAppReconciler) cleanupActive(ctx context.Context, app *bakerv1alpha1.FrontendApp) (bool, error) {
 	jobs := &batchv1.JobList{}
@@ -354,6 +367,15 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 			st.Phase = "Succeeded"
 			st.ReclaimedBytes = res.Reclaimed
 			st.Message = msg
+			// res.After is a fresh du of the pruned target, so feed it back into
+			// status.storage.sizes via recordSize — refreshing sizes + MeasuredAt
+			// without a separate measurement Job (the negative LastRunDeltas
+			// legitimately shows the reclaimed space). Guard against a skip or an
+			// early-exit ("releases dir not found") which report after=0 and must
+			// not clobber a real prior measurement with 0.
+			if res.Action != "skip" && res.After > 0 {
+				r.recordSize(app, sizeKeyForCleanupMode(mode), res.After)
+			}
 		} else {
 			st.Phase = "Failed"
 			st.ReclaimedBytes = 0

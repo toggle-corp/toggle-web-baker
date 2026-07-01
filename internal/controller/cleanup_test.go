@@ -366,6 +366,106 @@ func TestReconcile_ObservesCompletedReleaseCleanup(t *testing.T) {
 	}
 }
 
+// A completed cache prune feeds its fresh du (the JSON "after") back into
+// status.storage.sizes["cache"], so the console reflects the reclaimed space
+// without waiting for a post-build measurement.
+func TestReconcile_CacheCleanupWritesBackSize(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.CleanupCacheRequestedAtAnnotation: "c-1",
+	}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{
+		Cache: &bakerv1alpha1.CleanupActionStatus{RequestedAt: "c-1", Phase: "Running"},
+	}
+	app.Status.Storage.Sizes = map[string]int64{"cache": 1000}
+	r, cl := newReconciler(t, app, wffc())
+	if err := cl.Status().Update(context.Background(), app); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	completeCleanupJob(t, cl, app, cleanupModeCache,
+		`{"action":"pnpm store prune","before":1000,"after":300,"reclaimed":700,"threshold":0}`)
+
+	reconcile(t, r, app)
+	reconcile(t, r, app)
+
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Storage.Sizes["cache"] != 300 {
+		t.Fatalf(`sizes["cache"] = %d, want 300`, got.Status.Storage.Sizes["cache"])
+	}
+	if got.Status.Storage.LastRunDeltas["cache"] != -700 {
+		t.Fatalf(`lastRunDeltas["cache"] = %d, want -700`, got.Status.Storage.LastRunDeltas["cache"])
+	}
+}
+
+// A completed release prune shrinks the whole releases dir, which the copier
+// reports under sizes["outputTotal"] (the current release under "output" is
+// protected). The JSON "after" is written back to that key.
+func TestReconcile_ReleaseCleanupWritesBackSize(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.CleanupReleasesRequestedAtAnnotation: "r-1",
+	}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{
+		Releases: &bakerv1alpha1.CleanupActionStatus{RequestedAt: "r-1", Phase: "Running"},
+	}
+	app.Status.Storage.Sizes = map[string]int64{"outputTotal": 9000, "output": 111}
+	r, cl := newReconciler(t, app, wffc())
+	if err := cl.Status().Update(context.Background(), app); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	completeCleanupJob(t, cl, app, cleanupModeReleases,
+		`{"action":"release-prune","kept":3,"deleted":2,"before":9000,"after":5000,"reclaimed":4000}`)
+
+	reconcile(t, r, app)
+	reconcile(t, r, app)
+
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Storage.Sizes["outputTotal"] != 5000 {
+		t.Fatalf(`sizes["outputTotal"] = %d, want 5000`, got.Status.Storage.Sizes["outputTotal"])
+	}
+	// The current release ("output") is protected from the prune and must be
+	// left untouched by the writeback.
+	if got.Status.Storage.Sizes["output"] != 111 {
+		t.Fatalf(`sizes["output"] = %d, want 111 (untouched)`, got.Status.Storage.Sizes["output"])
+	}
+}
+
+// A skip / early-exit result reports after=0 and must NOT clobber a real prior
+// measurement with 0.
+func TestReconcile_SkippedCleanupDoesNotWriteBackSize(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.CleanupCacheRequestedAtAnnotation: "c-1",
+	}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{
+		Cache: &bakerv1alpha1.CleanupActionStatus{RequestedAt: "c-1", Phase: "Running"},
+	}
+	app.Status.Storage.Sizes = map[string]int64{"cache": 1000}
+	r, cl := newReconciler(t, app, wffc())
+	if err := cl.Status().Update(context.Background(), app); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	completeCleanupJob(t, cl, app, cleanupModeCache,
+		`{"action":"skip","reason":"under-threshold","before":1000,"after":0,"threshold":0}`)
+
+	reconcile(t, r, app)
+	reconcile(t, r, app)
+
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Storage.Sizes["cache"] != 1000 {
+		t.Fatalf(`skip must not clobber sizes["cache"]; got %d, want 1000`, got.Status.Storage.Sizes["cache"])
+	}
+	if _, ok := got.Status.Storage.LastRunDeltas["cache"]; ok {
+		t.Fatalf("skip must not record a delta for cache")
+	}
+}
+
 // A skip result (threshold not crossed / nothing to prune) is surfaced as
 // Succeeded with the skip reason and zero reclaimed.
 func TestReconcile_ObservesSkippedCacheCleanup(t *testing.T) {
