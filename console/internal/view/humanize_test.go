@@ -2,7 +2,6 @@ package view
 
 import (
 	"testing"
-	"time"
 )
 
 func TestHumanizeBytes(t *testing.T) {
@@ -59,32 +58,6 @@ func TestHumanizeDelta(t *testing.T) {
 	for _, c := range cases {
 		if got := HumanizeDelta(c.n); got != c.want {
 			t.Errorf("HumanizeDelta(%d) = %q, want %q", c.n, got, c.want)
-		}
-	}
-}
-
-func TestRelativeTime(t *testing.T) {
-	fixed := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
-	old := Now
-	Now = func() time.Time { return fixed }
-	defer func() { Now = old }()
-
-	cases := []struct {
-		ts      string
-		wantRel string
-		wantAbs string
-	}{
-		{"2026-06-30T11:58:00Z", "2m ago", "2026-06-30T11:58:00Z"},
-		{"2026-06-30T11:59:30Z", "just now", "2026-06-30T11:59:30Z"},
-		{"2026-06-30T12:00:00Z", "just now", "2026-06-30T12:00:00Z"},
-		{"2026-06-30T12:05:00Z", "in 5m", "2026-06-30T12:05:00Z"},
-		{"", "—", ""},
-		{"not-a-time", "—", ""},
-	}
-	for _, c := range cases {
-		rel, abs := RelativeTime(c.ts)
-		if rel != c.wantRel || abs != c.wantAbs {
-			t.Errorf("RelativeTime(%q) = (%q,%q), want (%q,%q)", c.ts, rel, abs, c.wantRel, c.wantAbs)
 		}
 	}
 }

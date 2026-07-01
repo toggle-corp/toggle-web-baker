@@ -2,7 +2,6 @@ package view
 
 import (
 	"fmt"
-	"time"
 )
 
 // Humanizers are pure (modulo the overridable Now var) so the templates can
@@ -52,43 +51,5 @@ func HumanizeDelta(n int64) string {
 	default:
 		// HumanizeBytes already prefixes the minus sign.
 		return "▼ " + HumanizeBytes(n)
-	}
-}
-
-// RelativeTime parses an RFC3339 timestamp and returns a relative phrase plus
-// the original UTC string (for a tooltip). Future timestamps (e.g. the next
-// scheduled build) render "in Nm". Empty/unparseable input → ("—", "").
-func RelativeTime(ts string) (rel string, abs string) {
-	if ts == "" {
-		return "—", ""
-	}
-	t, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return "—", ""
-	}
-	d := Now().Sub(t)
-	future := d < 0
-	if future {
-		d = -d
-	}
-	if d < time.Minute {
-		return "just now", ts
-	}
-	human := humanizeDuration(d)
-	if future {
-		return "in " + human, ts
-	}
-	return human + " ago", ts
-}
-
-// humanizeDuration renders a positive duration at its largest whole unit.
-func humanizeDuration(d time.Duration) string {
-	switch {
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }

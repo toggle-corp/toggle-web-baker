@@ -74,7 +74,7 @@
     <h2>Manual rebuild</h2>
     <div class="body">
       <div class="kv"><span class="k">Last triggered by</span><span class="v">{{dash .ManualTrigger.TriggeredBy}}</span></div>
-      <div class="kv"><span class="k">Last triggered at</span><span class="v">{{dash .ManualTrigger.Time}}</span></div>
+      <div class="kv"><span class="k">Last triggered at</span><span class="v">{{timetag .ManualTrigger.Time}}</span></div>
       <div style="padding-top:12px">
         <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/rebuild"
               onsubmit="return confirm('Request a manual rebuild of {{.Name}}? This patches the rebuild annotation; the operator decides when to act.');">
