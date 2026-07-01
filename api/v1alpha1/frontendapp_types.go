@@ -86,7 +86,16 @@ const (
 	ReasonInvalidSpec         = "InvalidSpec"
 	ReasonMissingTLSSecret    = "MissingTLSSecret"
 	ReasonConfigError         = "ConfigError"
+	// ReasonOOMKilled is set on the BuildSucceeded/Degraded conditions when a
+	// build container was OOMKilled, so the reason is visible in `kubectl` /
+	// the conditions table — not just status.build.termination.
+	ReasonOOMKilled = "OOMKilled"
 )
+
+// TerminationReasonOOMKilled is the container terminated reason Kubernetes sets
+// when the kubelet's OOM killer reaps a build container. It is the authoritative
+// OOM signal (stronger than exit code 137, which can also be a plain SIGKILL).
+const TerminationReasonOOMKilled = "OOMKilled"
 
 // ConfigMapKeySelector selects a key from a ConfigMap in the app namespace.
 type ConfigMapKeySelector struct {
@@ -443,6 +452,36 @@ type BuildStatus struct {
 	Message string `json:"message,omitempty"`
 	// +optional
 	LogsRef string `json:"logsRef,omitempty"`
+	// Termination records how a build container abnormally terminated (currently
+	// OOMKilled), captured from the failed pod's container state at terminal
+	// observe so the fact survives the pod being reaped. Nil unless a container
+	// terminated with a non-empty reason.
+	// +optional
+	Termination *BuildTermination `json:"termination,omitempty"`
+}
+
+// BuildTermination captures a build container's abnormal termination, derived
+// once at terminal observe from the failed pod's container state and persisted
+// on status.build (so it survives the pod being evicted/reaped). OOMKilled is
+// the first case; the shape generalizes to any container terminated reason.
+type BuildTermination struct {
+	// Reason is the container's terminated reason (e.g. "OOMKilled").
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// Container is the build step/container that terminated (e.g. "build").
+	// +optional
+	Container string `json:"container,omitempty"`
+	// ExitCode is the container's exit code (137 for an OOM kill).
+	// +optional
+	ExitCode int32 `json:"exitCode,omitempty"`
+	// MemoryLimit is the memory limit that container ran with, as the Kubernetes
+	// quantity string it was configured with (e.g. "512Mi"). Read from the pod
+	// spec so it reflects the build that actually ran, not a later spec edit.
+	// +optional
+	MemoryLimit string `json:"memoryLimit,omitempty"`
+	// FinishedAt is when the container terminated.
+	// +optional
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 
 // ReleaseStatus tracks the served release pointers.

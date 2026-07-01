@@ -525,6 +525,37 @@ spec:
                       type: object
                     type: array
                     x-kubernetes-list-type: atomic
+                  termination:
+                    description: |-
+                      Termination records how a build container abnormally terminated (currently
+                      OOMKilled), captured from the failed pod's container state at terminal
+                      observe so the fact survives the pod being reaped. Nil unless a container
+                      terminated with a non-empty reason.
+                    properties:
+                      container:
+                        description: Container is the build step/container that terminated
+                          (e.g. "build").
+                        type: string
+                      exitCode:
+                        description: ExitCode is the container's exit code (137 for
+                          an OOM kill).
+                        format: int32
+                        type: integer
+                      finishedAt:
+                        description: FinishedAt is when the container terminated.
+                        format: date-time
+                        type: string
+                      memoryLimit:
+                        description: |-
+                          MemoryLimit is the memory limit that container ran with, as the Kubernetes
+                          quantity string it was configured with (e.g. "512Mi"). Read from the pod
+                          spec so it reflects the build that actually ran, not a later spec edit.
+                        type: string
+                      reason:
+                        description: Reason is the container's terminated reason (e.g.
+                          "OOMKilled").
+                        type: string
+                    type: object
                   trigger:
                     description: Trigger records why this build ran.
                     type: string
@@ -599,6 +630,37 @@ spec:
                         type: object
                       type: array
                       x-kubernetes-list-type: atomic
+                    termination:
+                      description: |-
+                        Termination records how a build container abnormally terminated (currently
+                        OOMKilled), captured from the failed pod's container state at terminal
+                        observe so the fact survives the pod being reaped. Nil unless a container
+                        terminated with a non-empty reason.
+                      properties:
+                        container:
+                          description: Container is the build step/container that
+                            terminated (e.g. "build").
+                          type: string
+                        exitCode:
+                          description: ExitCode is the container's exit code (137
+                            for an OOM kill).
+                          format: int32
+                          type: integer
+                        finishedAt:
+                          description: FinishedAt is when the container terminated.
+                          format: date-time
+                          type: string
+                        memoryLimit:
+                          description: |-
+                            MemoryLimit is the memory limit that container ran with, as the Kubernetes
+                            quantity string it was configured with (e.g. "512Mi"). Read from the pod
+                            spec so it reflects the build that actually ran, not a later spec edit.
+                          type: string
+                        reason:
+                          description: Reason is the container's terminated reason
+                            (e.g. "OOMKilled").
+                          type: string
+                      type: object
                     trigger:
                       description: Trigger records why this build ran.
                       type: string
