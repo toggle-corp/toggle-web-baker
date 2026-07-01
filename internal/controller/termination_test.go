@@ -31,7 +31,6 @@ func initC(name, memLimit string) corev1.Container {
 // detectTermination: an OOMKilled build init container yields a BuildTermination
 // naming the step, its exit code, and the memory limit it ran with (from spec).
 func TestDetectTermination_OOMKilledBuild(t *testing.T) {
-	app := baseApp()
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			InitContainers: []corev1.Container{initC("clone", "256Mi"), initC("build", "256Mi")},
@@ -43,7 +42,7 @@ func TestDetectTermination_OOMKilledBuild(t *testing.T) {
 			},
 		},
 	}
-	got := detectTermination(pod, applicableSteps(app))
+	got := detectTermination(pod, bakerv1alpha1.StepBuild)
 	if got == nil {
 		t.Fatal("detectTermination = nil, want a termination for the OOMKilled build step")
 	}
@@ -66,21 +65,37 @@ func TestDetectTermination_OOMKilledBuild(t *testing.T) {
 
 // detectTermination: a nil pod (already reaped) yields nil — nothing to report.
 func TestDetectTermination_NilPod(t *testing.T) {
-	if got := detectTermination(nil, applicableSteps(baseApp())); got != nil {
+	if got := detectTermination(nil, bakerv1alpha1.StepBuild); got != nil {
 		t.Fatalf("detectTermination(nil) = %+v, want nil", got)
 	}
 }
 
-// detectTermination: an all-succeeded pod yields nil — no abnormal termination.
-func TestDetectTermination_AllSucceeded(t *testing.T) {
+// detectTermination: an empty failed step (build succeeded, or pod gone so
+// failedStep is "") and the synthetic release step both yield nil — there is no
+// container to inspect.
+func TestDetectTermination_NoInspectableStep(t *testing.T) {
 	pod := &corev1.Pod{
 		Status: corev1.PodStatus{
 			InitContainerStatuses: []corev1.ContainerStatus{term("clone", 0), term("build", 0)},
 			ContainerStatuses:     []corev1.ContainerStatus{term("copier", 0)},
 		},
 	}
-	if got := detectTermination(pod, applicableSteps(baseApp())); got != nil {
-		t.Fatalf("detectTermination = %+v, want nil (all exit 0)", got)
+	if got := detectTermination(pod, ""); got != nil {
+		t.Fatalf("empty step: got %+v, want nil", got)
+	}
+	if got := detectTermination(pod, bakerv1alpha1.StepRelease); got != nil {
+		t.Fatalf("release step: got %+v, want nil (synthetic, no container)", got)
+	}
+}
+
+// detectTermination: the named step's container is present but not terminated
+// (e.g. still Running) — nil, never a bogus termination.
+func TestDetectTermination_StepNotTerminated(t *testing.T) {
+	pod := &corev1.Pod{
+		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{running("build")}},
+	}
+	if got := detectTermination(pod, bakerv1alpha1.StepBuild); got != nil {
+		t.Fatalf("got %+v, want nil (build not terminated)", got)
 	}
 }
 
@@ -94,7 +109,7 @@ func TestDetectTermination_NonOOMFailure(t *testing.T) {
 			InitContainerStatuses: []corev1.ContainerStatus{termReason("build", 1, "Error")},
 		},
 	}
-	got := detectTermination(pod, applicableSteps(baseApp()))
+	got := detectTermination(pod, bakerv1alpha1.StepBuild)
 	if got == nil {
 		t.Fatal("detectTermination = nil, want a termination for the failed build step")
 	}
@@ -108,37 +123,15 @@ func TestDetectTermination_NonOOMFailure(t *testing.T) {
 func TestDetectTermination_CopierOOM(t *testing.T) {
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
-			InitContainers: []corev1.Container{initC("clone", "256Mi"), initC("build", "256Mi")},
-			Containers:     []corev1.Container{initC("copier", "128Mi")},
+			Containers: []corev1.Container{initC("copier", "128Mi")},
 		},
 		Status: corev1.PodStatus{
-			InitContainerStatuses: []corev1.ContainerStatus{term("clone", 0), term("build", 0)},
-			ContainerStatuses:     []corev1.ContainerStatus{termReason("copier", 137, "OOMKilled")},
+			ContainerStatuses: []corev1.ContainerStatus{termReason("copier", 137, "OOMKilled")},
 		},
 	}
-	got := detectTermination(pod, applicableSteps(baseApp()))
+	got := detectTermination(pod, bakerv1alpha1.StepCopier)
 	if got == nil || got.Container != bakerv1alpha1.StepCopier || got.Reason != "OOMKilled" || got.MemoryLimit != "128Mi" {
 		t.Fatalf("got %+v, want copier OOMKilled @128Mi", got)
-	}
-}
-
-// detectTermination: with multiple terminated containers, the FIRST failing step
-// in flow order wins (mirrors failedStep), not an arbitrary map order.
-func TestDetectTermination_FirstFailingInOrder(t *testing.T) {
-	app := baseApp()
-	app.Spec.Setup.Command = []string{"true"} // setup precedes build
-	pod := &corev1.Pod{
-		Spec: corev1.PodSpec{InitContainers: []corev1.Container{initC("setup", "64Mi"), initC("build", "256Mi")}},
-		Status: corev1.PodStatus{
-			InitContainerStatuses: []corev1.ContainerStatus{
-				termReason("setup", 137, "OOMKilled"),
-				termReason("build", 137, "OOMKilled"),
-			},
-		},
-	}
-	got := detectTermination(pod, applicableSteps(app))
-	if got == nil || got.Container != bakerv1alpha1.StepSetup {
-		t.Fatalf("got %+v, want the setup step (first failing in flow order)", got)
 	}
 }
 
@@ -151,7 +144,7 @@ func TestDetectTermination_NoMemoryLimit(t *testing.T) {
 			InitContainerStatuses: []corev1.ContainerStatus{termReason("build", 137, "OOMKilled")},
 		},
 	}
-	got := detectTermination(pod, applicableSteps(baseApp()))
+	got := detectTermination(pod, bakerv1alpha1.StepBuild)
 	if got == nil || got.MemoryLimit != "" {
 		t.Fatalf("got %+v, want empty MemoryLimit", got)
 	}

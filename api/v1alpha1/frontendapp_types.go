@@ -86,10 +86,15 @@ const (
 	ReasonInvalidSpec         = "InvalidSpec"
 	ReasonMissingTLSSecret    = "MissingTLSSecret"
 	ReasonConfigError         = "ConfigError"
+	// ReasonBuildFailed is the generic failure reason on the BuildSucceeded /
+	// Degraded conditions when a build fails for a non-OOM reason.
+	ReasonBuildFailed = "BuildFailed"
 	// ReasonOOMKilled is set on the BuildSucceeded/Degraded conditions when a
 	// build container was OOMKilled, so the reason is visible in `kubectl` /
-	// the conditions table — not just status.build.termination.
-	ReasonOOMKilled = "OOMKilled"
+	// the conditions table — not just status.build.termination. It is bound to
+	// TerminationReasonOOMKilled (the container reason detection keys on) so the
+	// two cannot drift.
+	ReasonOOMKilled = TerminationReasonOOMKilled
 )
 
 // TerminationReasonOOMKilled is the container terminated reason Kubernetes sets

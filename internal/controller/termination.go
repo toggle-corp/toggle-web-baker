@@ -8,47 +8,40 @@ import (
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
 
-// detectTermination inspects a failed build pod for the container whose abnormal
-// termination ended the build and, if found, returns a BuildTermination
-// capturing its reason (e.g. "OOMKilled"), exit code, the memory limit it ran
-// with, and finish time. It walks the applicable steps in flow order and returns
-// the FIRST container that terminated with a non-zero exit — the same "first
-// failing step" the timeline's failedStep reports. The memory limit is read from
-// the pod SPEC (not the app spec) so it reflects the build that actually ran,
-// immune to a mid-build spec edit. release is synthetic (no container) and
-// skipped. Returns nil for a nil pod or when nothing terminated abnormally.
+// detectTermination reports how the failed step's container terminated: its
+// reason (e.g. "OOMKilled"), exit code, the memory limit it ran with, and finish
+// time. failedStepName is the step failedStep already selected, so the
+// attribution is single-sourced with status.build.failedStep rather than
+// re-deriving "which step failed" from a second signal. The memory limit is read
+// from the pod SPEC (not the app spec) so it reflects the build that actually
+// ran, immune to a mid-build spec edit. Returns nil for a nil pod, an empty or
+// synthetic (release) step, or a container that is absent / not terminated.
 //
 // It is called once, in observeBuild's terminal failure branch, so the result is
 // persisted on status.build and survives the pod being evicted/reaped later.
-func detectTermination(pod *corev1.Pod, applicable []string) *bakerv1alpha1.BuildTermination {
-	if pod == nil {
+func detectTermination(pod *corev1.Pod, failedStepName string) *bakerv1alpha1.BuildTermination {
+	if pod == nil || failedStepName == "" || failedStepName == bakerv1alpha1.StepRelease {
+		return nil // no pod, no failed step, or the synthetic release step (no container)
+	}
+	statuses := pod.Status.InitContainerStatuses
+	if failedStepName == bakerv1alpha1.StepCopier {
+		statuses = pod.Status.ContainerStatuses // copier is the main container
+	}
+	cs := findContainerStatus(statuses, failedStepName)
+	if cs == nil || cs.State.Terminated == nil {
 		return nil
 	}
-	for _, name := range applicable {
-		if name == bakerv1alpha1.StepRelease {
-			continue // synthetic step: the operator's pointer flip, not a container
-		}
-		statuses := pod.Status.InitContainerStatuses
-		if name == bakerv1alpha1.StepCopier {
-			statuses = pod.Status.ContainerStatuses
-		}
-		cs := findContainerStatus(statuses, name)
-		if cs == nil || cs.State.Terminated == nil || cs.State.Terminated.ExitCode == 0 {
-			continue
-		}
-		t := cs.State.Terminated
-		out := &bakerv1alpha1.BuildTermination{
-			Reason:      t.Reason,
-			Container:   name,
-			ExitCode:    t.ExitCode,
-			MemoryLimit: containerMemoryLimit(pod, name),
-		}
-		if !t.FinishedAt.IsZero() {
-			out.FinishedAt = t.FinishedAt.DeepCopy()
-		}
-		return out
+	t := cs.State.Terminated
+	out := &bakerv1alpha1.BuildTermination{
+		Reason:      t.Reason,
+		Container:   failedStepName,
+		ExitCode:    t.ExitCode,
+		MemoryLimit: containerMemoryLimit(pod, failedStepName),
 	}
-	return nil
+	if !t.FinishedAt.IsZero() {
+		out.FinishedAt = t.FinishedAt.DeepCopy()
+	}
+	return out
 }
 
 // stampStepMessage sets msg on the named step in place (no-op if absent), used

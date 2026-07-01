@@ -536,8 +536,8 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 	// and survives the pod being reaped. An OOM kill promotes the failure
 	// conditions' reason to ReasonOOMKilled and stamps the failed step's message.
 	if app.Status.Build.Result == bakerv1alpha1.BuildResultFailed {
-		reason, message := "BuildFailed", cond.Message
-		if term := detectTermination(pod, applicable); term != nil {
+		reason, message := bakerv1alpha1.ReasonBuildFailed, cond.Message
+		if term := detectTermination(pod, app.Status.Build.FailedStep); term != nil {
 			app.Status.Build.Termination = term
 			if msg := terminationStepMessage(term); msg != "" {
 				stampStepMessage(app.Status.Build.Steps, term.Container, msg)
