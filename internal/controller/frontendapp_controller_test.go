@@ -630,7 +630,7 @@ func TestObserveBuild_SuccessFinalizesStepsAndHistory(t *testing.T) {
 		},
 		[]corev1.ContainerStatus{{Name: "copier", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
 			ExitCode: 0,
-			Message:  `{"dataFreshness":"fresh"}`,
+			Message:  `{}`,
 		}}}},
 	)
 	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-ok2"}

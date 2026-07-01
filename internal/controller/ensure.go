@@ -15,8 +15,7 @@ import (
 // CopierMessage is the JSON blob the copier (and du Jobs) emit via the container
 // termination message. The operator parses it into build-derived status.
 type CopierMessage struct {
-	DataFreshness string `json:"dataFreshness,omitempty"`
-	Release       struct {
+	Release struct {
 		Current string `json:"current,omitempty"`
 	} `json:"release,omitempty"`
 	Sizes map[string]int64 `json:"sizes,omitempty"`

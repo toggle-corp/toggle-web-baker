@@ -557,7 +557,7 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 }
 
 // applyCopierTermination reads the copier container's termination message (a
-// JSON blob with dataFreshness/release/sizes) and writes it to status.
+// JSON blob with release/sizes) and writes it to status.
 func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app *bakerv1alpha1.FrontendApp, job *batchv1.Job) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err != nil {
@@ -597,9 +597,6 @@ func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app 
 	blob, ok := parseCopierMessage(chosenTerm.Message)
 	if !ok {
 		return
-	}
-	if blob.DataFreshness != "" {
-		app.Status.DataFreshness = blob.DataFreshness
 	}
 	if blob.Release.Current != "" {
 		app.Status.Release.Previous = app.Status.Release.Current
