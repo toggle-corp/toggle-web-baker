@@ -15,6 +15,12 @@ FROM node@sha256:8d6421d663b4c28fd3ebc498332f249011d118945588d0a35cb9bc4b8ca09d9
 # EROFS. Pinning COREPACK_HOME to a fixed, image-baked path decouples the cache
 # from HOME: the versions pre-activated below are found offline and read-only.
 ENV COREPACK_HOME=/opt/corepack
+# The checked-out /work/package.json is written by the clone container (a
+# DIFFERENT UID) and is read-only input to this toolchain. corepack's default,
+# when a project has no packageManager field, is to WRITE one into package.json --
+# an uncaught EACCES here that crashes the build. Disable auto-pin: the managed
+# toolchain must never mutate the user's repo.
+ENV COREPACK_ENABLE_AUTO_PIN=0
 
 # bash for the phase entrypoints; git for repo/submodule and lockfile flows;
 # build-base + python3 for node-gyp (native addons some deps compile on install --

@@ -96,6 +96,14 @@ assert_ok "yarn --version runs read-only under HOME=/work"
 runrt pnpm --version
 assert_ok "pnpm --version runs read-only under HOME=/work"
 
+# ---- corepack auto-pin disabled ---------------------------------------------
+# Regression guard: with auto-pin ON, running yarn/pnpm in a repo lacking a
+# packageManager field makes corepack WRITE that field into package.json -- which
+# is the clone-container-owned, read-only /work/package.json at build time, an
+# uncaught EACCES that crashes the build. Must stay disabled.
+run printenv COREPACK_ENABLE_AUTO_PIN
+assert_eq "$out" "0" "corepack auto-pin disabled (COREPACK_ENABLE_AUTO_PIN=0)"
+
 # ---- baked user is UID 1000 -------------------------------------------------
 run id -u
 assert_ok "id -u runs"
