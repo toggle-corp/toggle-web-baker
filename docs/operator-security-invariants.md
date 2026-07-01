@@ -38,7 +38,18 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
 - **Build container NEVER mounts the output PVC** (only the scratch work volume +
   cache). The copier is the sole writer to output.
 - **`backoffLimit: 0`** (a failed build fails once → `Degraded`; last-good keeps
-  serving). **`activeDeadlineSeconds`** bounds wedged builds.
+  serving). **`activeDeadlineSeconds`** bounds wedged builds: it is
+  `spec.activeDeadlineSeconds` when set, otherwise the operator config default
+  (`activeDeadlineSeconds` in the mounted config file). The former hardcoded
+  1800s literal moved into operator config.
+- **Every phase container (setup / fetch / build) carries resource requirements
+  with `memory request == limit`** (memory is incompressible ⇒ Guaranteed QoS,
+  so a heavy build can't OOM the node via a low-request/high-limit gap). The
+  ceiling is the app's per-phase `spec.<phase>.memoryLimit` when set, else the
+  operator per-phase default. **A malformed user `memoryLimit` falls back to the
+  operator per-phase default (never unlimited)** — the defaults are parse-validated
+  at operator startup, so the fallback always yields a concrete limit. CPU
+  request/limit are the global operator defaults (same for every phase).
 
 ## Credential boundary
 

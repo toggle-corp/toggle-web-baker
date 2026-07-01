@@ -4,8 +4,6 @@ package main
 import (
 	"flag"
 	"os"
-	"strings"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -28,53 +26,12 @@ func init() {
 	_ = bakerv1alpha1.AddToScheme(scheme)
 }
 
-// stringSliceFlag collects repeatable / comma-separated string flags.
-type stringSliceFlag []string
-
-func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
-func (s *stringSliceFlag) Set(v string) error {
-	for _, p := range strings.Split(v, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			*s = append(*s, p)
-		}
-	}
-	return nil
-}
-
 func main() {
-	var (
-		metricsAddr          string
-		probeAddr            string
-		enableLeaderElection bool
-		storageClassName     string
-		traefikNamespace     string
-
-		registryAllowlist stringSliceFlag
-		clusterCIDRs      stringSliceFlag
-	)
-	cfg := controller.OperatorConfig{}
-
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "metrics endpoint bind address")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health probe bind address")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election for HA")
-	flag.StringVar(&storageClassName, "storage-class", "", "WaitForFirstConsumer StorageClass backing all PVCs")
-	flag.StringVar(&traefikNamespace, "traefik-namespace", "traefik", "namespace of the Traefik controller (nginx ingress NetworkPolicy)")
-
-	flag.Var(&registryAllowlist, "registry-allowlist", "allowed image prefixes (repeatable / comma-separated)")
-	flag.Var(&clusterCIDRs, "cluster-cidrs", "MANDATORY pod+service CIDRs excluded from build-pod egress")
-	flag.StringVar(&cfg.TraefikGroup, "traefik-group", "traefik.io", "API group of the Traefik Middleware CRD")
-	flag.StringVar(&cfg.ImagePullSecret, "image-pull-secret", "", "imagePullSecret stamped onto all platform pods")
-	flag.DurationVar(&cfg.MeasureInterval, "storage-measure-interval", time.Hour, "debounce floor between post-build du storage measurements")
-
-	flag.StringVar(&cfg.Images.Clone, "image-clone", "", "digest-pinned clone image")
-	flag.StringVar(&cfg.Images.Copier, "image-copier", "", "digest-pinned copier image")
-	flag.StringVar(&cfg.Images.Du, "image-du", "", "digest-pinned du-measurement image")
-	flag.StringVar(&cfg.Images.Cleanup, "image-cleanup", "", "digest-pinned cleanup image")
-	flag.StringVar(&cfg.Images.Clock, "image-clock", "", "digest-pinned clock image for the CronJob tick")
-	flag.StringVar(&cfg.Images.Nginx, "image-nginx", "", "nginx serving image")
-
-	var nodeImagesJSON string
-	flag.StringVar(&nodeImagesJSON, "node-images", "", `JSON map of node MAJOR -> {"image","runAsUser","home"} for spec.nodeVersion (Helm-templated from values.yaml)`)
+	// All operator config now arrives via a single mounted YAML file (the
+	// Helm-rendered ConfigMap), replacing the former ~17 CLI flags. Only the
+	// controller-runtime zap logging flags and the config path remain flags.
+	var configPath string
+	flag.StringVar(&configPath, "config", "/etc/baker/config.yaml", "path to the operator config file (Helm-rendered ConfigMap)")
 
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -82,21 +39,17 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	cfg.RegistryAllowlist = registryAllowlist
-	cfg.ClusterCIDRs = clusterCIDRs
-	nodeImages, err := controller.ParseNodeImages(nodeImagesJSON)
+	cfg, mgrOpts, err := controller.LoadConfig(configPath)
 	if err != nil {
-		setupLog.Error(err, "invalid -node-images flag")
+		setupLog.Error(err, "invalid operator config", "path", configPath)
 		os.Exit(1)
 	}
-	cfg.NodeImages = nodeImages
-	cfg.Defaults()
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
+		Metrics:                metricsserver.Options{BindAddress: mgrOpts.MetricsBindAddress},
+		HealthProbeBindAddress: mgrOpts.HealthProbeBindAddress,
+		LeaderElection:         mgrOpts.LeaderElect,
 		LeaderElectionID:       "frontendapp.baker.toggle-corp.com",
 	})
 	if err != nil {
@@ -108,8 +61,8 @@ func main() {
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		Config:           cfg,
-		StorageClassName: storageClassName,
-		TraefikNamespace: traefikNamespace,
+		StorageClassName: mgrOpts.StorageClass,
+		TraefikNamespace: mgrOpts.TraefikNamespace,
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FrontendApp")

@@ -55,6 +55,13 @@ spec:
             description: 'FrontendAppSpec is the desired state: operational tunables
               for one app.'
             properties:
+              activeDeadlineSeconds:
+                description: |-
+                  ActiveDeadlineSeconds bounds the WHOLE build Job (all phases). When unset
+                  the operator supplies the default from its config (NO kubebuilder default
+                  here — operator config owns it).
+                format: int64
+                type: integer
               auth:
                 description: |-
                   AuthConfig configures optional HTTP basic auth. Exactly one of passwordHash or
@@ -124,6 +131,15 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                   image:
+                    type: string
+                  memoryLimit:
+                    description: |-
+                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                      "2Gi"). When omitted the operator supplies a per-phase default (operator
+                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                      Shared by setup/fetch/build via PhaseSpec.
                     type: string
                   runAsUser:
                     description: |-
@@ -219,6 +235,15 @@ spec:
                     x-kubernetes-list-type: atomic
                   image:
                     type: string
+                  memoryLimit:
+                    description: |-
+                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                      "2Gi"). When omitted the operator supplies a per-phase default (operator
+                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                      Shared by setup/fetch/build via PhaseSpec.
+                    type: string
                   runAsUser:
                     description: |-
                       RunAsUser pins this phase container's numeric UID. The build pod sets
@@ -278,26 +303,6 @@ spec:
                 type: string
               repo:
                 type: string
-              resources:
-                description: ResourcesConfig groups resource and deadline tunables.
-                properties:
-                  activeDeadlineSeconds:
-                    default: 1800
-                    format: int64
-                    type: integer
-                  build:
-                    description: BuildResources configures the build container's resource
-                      constraints.
-                    properties:
-                      cpuRequest:
-                        type: string
-                      memoryLimit:
-                        default: 6Gi
-                        type: string
-                      memoryRequest:
-                        type: string
-                    type: object
-                type: object
               schedule:
                 default: 0 */12 * * *
                 type: string
@@ -381,6 +386,15 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                   image:
+                    type: string
+                  memoryLimit:
+                    description: |-
+                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                      "2Gi"). When omitted the operator supplies a per-phase default (operator
+                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                      Shared by setup/fetch/build via PhaseSpec.
                     type: string
                   runAsUser:
                     description: |-

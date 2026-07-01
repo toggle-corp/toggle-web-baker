@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -15,6 +16,17 @@ import (
 func reconcilerForPod() *FrontendAppReconciler {
 	r := &FrontendAppReconciler{}
 	r.Config.Defaults()
+	// Operator resource defaults are normally validated+parsed by LoadConfig;
+	// tests populate sensible defaults directly (cpu 0.1/4, memory setup/fetch
+	// 512Mi, build 2Gi, deadline 1800).
+	r.Config.PhaseResourceDefaults = PhaseResourceDefaults{
+		CPURequest:  resource.MustParse("100m"),
+		CPULimit:    resource.MustParse("4"),
+		MemorySetup: resource.MustParse("512Mi"),
+		MemoryFetch: resource.MustParse("512Mi"),
+		MemoryBuild: resource.MustParse("2Gi"),
+	}
+	r.Config.ActiveDeadlineSeconds = 1800
 	return r
 }
 
@@ -260,23 +272,106 @@ func TestBuildJob_PhaseImageOverrideOptsOutOfManaged(t *testing.T) {
 	}
 }
 
-// Fix 8: a malformed memoryLimit must fall back to the 6Gi default, never emit a
-// pod with no memory limit.
-func TestBuildJob_MalformedMemoryLimitFallsBackTo6Gi(t *testing.T) {
+// Security invariant: a malformed per-phase user memoryLimit must fall back to
+// the operator per-phase DEFAULT (validated at startup, so always parses), never
+// emit a pod with no memory limit (which could OOM the node).
+func TestBuildJob_MalformedMemoryLimitFallsBackToPhaseDefault(t *testing.T) {
 	app := baseApp()
-	app.Spec.Resources.Build.MemoryLimit = "this-is-not-a-quantity"
+	app.Spec.Build.MemoryLimit = "this-is-not-a-quantity"
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	if build == nil {
 		t.Fatal("no build container")
 	}
-	q, ok := build.Resources.Limits[corev1.ResourceMemory]
+	want := r.Config.PhaseResourceDefaults.MemoryBuild
+	lim, ok := build.Resources.Limits[corev1.ResourceMemory]
 	if !ok {
 		t.Fatalf("build container must have a memory limit even with malformed input")
 	}
-	if q.String() != "6Gi" {
-		t.Fatalf("expected fallback memory limit 6Gi, got %s", q.String())
+	if lim.Cmp(want) != 0 {
+		t.Fatalf("expected fallback memory limit %s (build default), got %s", want.String(), lim.String())
+	}
+	// request must be pinned == limit.
+	req := build.Resources.Requests[corev1.ResourceMemory]
+	if req.Cmp(lim) != 0 {
+		t.Fatalf("memory request %s must equal limit %s", req.String(), lim.String())
+	}
+}
+
+// Every phase container (setup/fetch/build) now carries resource requirements:
+// memory request==limit (node-OOM protection) and cpu request+limit from the
+// operator defaults.
+func TestBuildJob_AllPhasesCarryResourceRequirements(t *testing.T) {
+	app := baseApp()
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	prd := r.Config.PhaseResourceDefaults
+	perPhaseMem := map[string]resource.Quantity{
+		"setup": prd.MemorySetup,
+		"fetch": prd.MemoryFetch,
+		"build": prd.MemoryBuild,
+	}
+	for _, name := range []string{"setup", "fetch", "build"} {
+		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
+		if c == nil {
+			t.Fatalf("no %s container", name)
+		}
+		lim := c.Resources.Limits[corev1.ResourceMemory]
+		req := c.Resources.Requests[corev1.ResourceMemory]
+		wantMem := perPhaseMem[name]
+		if lim.Cmp(wantMem) != 0 {
+			t.Fatalf("%s memory limit = %s, want %s", name, lim.String(), wantMem.String())
+		}
+		if req.Cmp(lim) != 0 {
+			t.Fatalf("%s memory request %s must equal limit %s", name, req.String(), lim.String())
+		}
+		cpuReq := c.Resources.Requests[corev1.ResourceCPU]
+		cpuLim := c.Resources.Limits[corev1.ResourceCPU]
+		if cpuReq.Cmp(prd.CPURequest) != 0 {
+			t.Fatalf("%s cpu request = %s, want %s", name, cpuReq.String(), prd.CPURequest.String())
+		}
+		if cpuLim.Cmp(prd.CPULimit) != 0 {
+			t.Fatalf("%s cpu limit = %s, want %s", name, cpuLim.String(), prd.CPULimit.String())
+		}
+	}
+}
+
+// A valid user build.memoryLimit overrides the operator default and pins
+// request == limit.
+func TestBuildJob_UserMemoryLimitOverridesDefault(t *testing.T) {
+	app := baseApp()
+	app.Spec.Build.MemoryLimit = "8Gi"
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	want := resource.MustParse("8Gi")
+	lim := build.Resources.Limits[corev1.ResourceMemory]
+	req := build.Resources.Requests[corev1.ResourceMemory]
+	if lim.Cmp(want) != 0 {
+		t.Fatalf("build memory limit = %s, want 8Gi", lim.String())
+	}
+	if req.Cmp(want) != 0 {
+		t.Fatalf("build memory request = %s, want 8Gi (pinned == limit)", req.String())
+	}
+}
+
+// The Job deadline comes from spec.activeDeadlineSeconds when set, else from the
+// operator config default.
+func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
+	r := reconcilerForPod()
+
+	def := baseApp()
+	dj := r.BuildJob(def, "tok")
+	if dj.Spec.ActiveDeadlineSeconds == nil || *dj.Spec.ActiveDeadlineSeconds != r.Config.ActiveDeadlineSeconds {
+		t.Fatalf("unset spec deadline must use operator default %d, got %v", r.Config.ActiveDeadlineSeconds, dj.Spec.ActiveDeadlineSeconds)
+	}
+
+	custom := baseApp()
+	custom.Spec.ActiveDeadlineSeconds = 42
+	cj := r.BuildJob(custom, "tok")
+	if cj.Spec.ActiveDeadlineSeconds == nil || *cj.Spec.ActiveDeadlineSeconds != 42 {
+		t.Fatalf("spec deadline 42 must win, got %v", cj.Spec.ActiveDeadlineSeconds)
 	}
 }
 

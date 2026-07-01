@@ -253,6 +253,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		WorkingDir:      workMountPath,
 		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Setup.Env)...)),
 		VolumeMounts:    setupMounts,
+		Resources:       phaseResourceRequirements(r.Config, "setup", app.Spec.Setup.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(setupR),
 	}
 
@@ -268,6 +269,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		WorkingDir:      workMountPath,
 		Env:             withHome(fetchR, fetchEnv),
 		VolumeMounts:    fetchMounts,
+		Resources:       phaseResourceRequirements(r.Config, "fetch", app.Spec.Fetch.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(fetchR),
 	}
 
@@ -286,7 +288,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		WorkingDir:      workMountPath,
 		Env:             withHome(buildR, buildEnv),
 		VolumeMounts:    buildMounts,
-		Resources:       buildResourceRequirements(app),
+		Resources:       phaseResourceRequirements(r.Config, "build", app.Spec.Build.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(buildR),
 	}
 
@@ -332,9 +334,9 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}
 	}
 
-	deadline := app.Spec.Resources.ActiveDeadlineSeconds
+	deadline := app.Spec.ActiveDeadlineSeconds
 	if deadline == 0 {
-		deadline = 1800
+		deadline = r.Config.ActiveDeadlineSeconds
 	}
 
 	return &batchv1.Job{
@@ -362,37 +364,32 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	}
 }
 
-func buildResourceRequirements(app *bakerv1alpha1.FrontendApp) corev1.ResourceRequirements {
-	limits := corev1.ResourceList{}
-	requests := corev1.ResourceList{}
-	const defaultMemLimit = "6Gi"
-	memLimit := app.Spec.Resources.Build.MemoryLimit
-	if memLimit == "" {
-		memLimit = defaultMemLimit
-	}
-	q, err := resource.ParseQuantity(memLimit)
-	if err != nil {
-		// A malformed memoryLimit must NOT yield a pod with no memory limit (that
-		// would let an untrusted build OOM the node). Fall back to the documented
-		// default instead.
-		q = resource.MustParse(defaultMemLimit)
-	}
-	limits[corev1.ResourceMemory] = q
-	if app.Spec.Resources.Build.CPURequest != "" {
-		if q, err := resource.ParseQuantity(app.Spec.Resources.Build.CPURequest); err == nil {
-			requests[corev1.ResourceCPU] = q
+// phaseResourceRequirements computes the resource requirements for one phase
+// container (setup/fetch/build). The memory ceiling is the user's per-phase
+// memoryLimit when it is non-empty AND parses; otherwise it is the operator's
+// per-phase default. SECURITY INVARIANT: a malformed user memoryLimit must NEVER
+// yield a container with no memory limit (an untrusted build could then OOM the
+// node) — it falls back to the per-phase operator default, which is validated at
+// startup and so always parses. Memory request is pinned == limit (memory is
+// incompressible ⇒ Guaranteed QoS; avoids a low-request/high-limit node OOM).
+// CPU request/limit are the global operator defaults (same for all phases).
+func phaseResourceRequirements(cfg OperatorConfig, phaseName, userMemLimit string) corev1.ResourceRequirements {
+	memCeiling := cfg.PhaseResourceDefaults.MemoryForPhase(phaseName)
+	if userMemLimit != "" {
+		if q, err := resource.ParseQuantity(userMemLimit); err == nil {
+			memCeiling = q
 		}
 	}
-	if app.Spec.Resources.Build.MemoryRequest != "" {
-		if q, err := resource.ParseQuantity(app.Spec.Resources.Build.MemoryRequest); err == nil {
-			requests[corev1.ResourceMemory] = q
-		}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: memCeiling,
+			corev1.ResourceCPU:    cfg.PhaseResourceDefaults.CPURequest,
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: memCeiling,
+			corev1.ResourceCPU:    cfg.PhaseResourceDefaults.CPULimit,
+		},
 	}
-	rr := corev1.ResourceRequirements{Limits: limits}
-	if len(requests) > 0 {
-		rr.Requests = requests
-	}
-	return rr
 }
 
 // buildJobName derives a deterministic, token-suffixed Job name so each rebuild

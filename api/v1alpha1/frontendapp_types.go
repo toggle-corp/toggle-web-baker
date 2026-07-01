@@ -158,6 +158,14 @@ type PhaseSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	RunAsUser *int64 `json:"runAsUser,omitempty"`
+	// MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+	// "2Gi"). When omitted the operator supplies a per-phase default (operator
+	// config owns the defaults, NOT the CRD — no kubebuilder default here). The
+	// memory REQUEST is always pinned equal to the limit (incompressible ⇒
+	// Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+	// Shared by setup/fetch/build via PhaseSpec.
+	// +optional
+	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
 
 // PackageManager selects the JS package manager (drives the volume layout).
@@ -201,26 +209,6 @@ type AuthConfig struct {
 	PasswordHash *string `json:"passwordHash,omitempty"`
 	// +optional
 	SecretRef *AuthSecretRef `json:"secretRef,omitempty"`
-}
-
-// BuildResources configures the build container's resource constraints.
-type BuildResources struct {
-	// +kubebuilder:default="6Gi"
-	// +optional
-	MemoryLimit string `json:"memoryLimit,omitempty"`
-	// +optional
-	CPURequest string `json:"cpuRequest,omitempty"`
-	// +optional
-	MemoryRequest string `json:"memoryRequest,omitempty"`
-}
-
-// ResourcesConfig groups resource and deadline tunables.
-type ResourcesConfig struct {
-	// +optional
-	Build BuildResources `json:"build,omitempty"`
-	// +kubebuilder:default=1800
-	// +optional
-	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
 }
 
 // CacheThresholds are absolute-byte thresholds for the regenerable cache volume.
@@ -314,6 +302,12 @@ type FrontendAppSpec struct {
 	// +optional
 	KeepReleases int `json:"keepReleases,omitempty"`
 
+	// ActiveDeadlineSeconds bounds the WHOLE build Job (all phases). When unset
+	// the operator supplies the default from its config (NO kubebuilder default
+	// here — operator config owns it).
+	// +optional
+	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
+
 	// BuildArgs are PUBLIC, ConfigMap-sourced env that may reach the bundle.
 	// +optional
 	// +listType=atomic
@@ -329,8 +323,6 @@ type FrontendAppSpec struct {
 	// +optional
 	Auth *AuthConfig `json:"auth,omitempty"`
 
-	// +optional
-	Resources ResourcesConfig `json:"resources,omitempty"`
 	// +optional
 	Storage StorageConfig `json:"storage,omitempty"`
 }

@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -117,5 +119,109 @@ func TestConfigValidate_RejectsEmptyClusterCIDRs(t *testing.T) {
 	c.ClusterCIDRs = nil
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected error when cluster CIDRs unset, got nil")
+	}
+}
+
+// validConfigYAML is a complete, well-formed operator config file (the new
+// single mounted YAML replacing the ~17 CLI flags).
+const validConfigYAML = `
+metricsBindAddress: ":8080"
+healthProbeBindAddress: ":8081"
+leaderElect: true
+storageClass: fast
+traefikNamespace: traefik
+traefikGroup: traefik.io
+imagePullSecret: regcred
+registryAllowlist:
+  - docker.io/library
+clusterCIDRs:
+  - 10.0.0.0/16
+  - 10.96.0.0/12
+measureInterval: 2h
+images:
+  clone: ghcr.io/x/clone@sha256:aaa
+  copier: ghcr.io/x/copier@sha256:bbb
+  du: ghcr.io/x/du@sha256:ccc
+  cleanup: ghcr.io/x/cleanup@sha256:ddd
+  clock: ghcr.io/x/clock@sha256:eee
+  nginx: ghcr.io/x/nginx:1.27
+nodeImages:
+  "18":
+    image: ghcr.io/x/node18@sha256:fff
+    runAsUser: 1000
+phaseResources:
+  cpu:
+    request: "0.1"
+    limit: "4"
+  memory:
+    setup: 512Mi
+    fetch: 512Mi
+    build: 2Gi
+activeDeadlineSeconds: 1800
+`
+
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return p
+}
+
+func TestLoadConfig_ValidPopulatesOperatorConfig(t *testing.T) {
+	cfg, mgr, err := LoadConfig(writeConfig(t, validConfigYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if mgr.MetricsBindAddress != ":8080" || mgr.HealthProbeBindAddress != ":8081" || !mgr.LeaderElect {
+		t.Fatalf("manager opts not populated: %+v", mgr)
+	}
+	if mgr.StorageClass != "fast" || mgr.TraefikNamespace != "traefik" {
+		t.Fatalf("storageClass/traefikNamespace not populated: %+v", mgr)
+	}
+	if len(cfg.ClusterCIDRs) != 2 || cfg.TraefikGroup != "traefik.io" || cfg.ImagePullSecret != "regcred" {
+		t.Fatalf("domain fields not populated: %+v", cfg)
+	}
+	if cfg.MeasureInterval.String() != "2h0m0s" {
+		t.Fatalf("measureInterval = %v, want 2h", cfg.MeasureInterval)
+	}
+	if cfg.Images.Clone != "ghcr.io/x/clone@sha256:aaa" || cfg.Images.Nginx != "ghcr.io/x/nginx:1.27" {
+		t.Fatalf("images not populated: %+v", cfg.Images)
+	}
+	ni, ok := cfg.NodeImages["18"]
+	if !ok || ni.Image != "ghcr.io/x/node18@sha256:fff" || ni.RunAsUser == nil || *ni.RunAsUser != 1000 {
+		t.Fatalf("nodeImages not populated: %+v", cfg.NodeImages)
+	}
+	if cfg.PhaseResourceDefaults.CPURequest.String() != "100m" || cfg.PhaseResourceDefaults.CPULimit.String() != "4" {
+		t.Fatalf("cpu defaults wrong: %+v", cfg.PhaseResourceDefaults)
+	}
+	if cfg.PhaseResourceDefaults.MemorySetup.String() != "512Mi" || cfg.PhaseResourceDefaults.MemoryBuild.String() != "2Gi" {
+		t.Fatalf("memory defaults wrong: %+v", cfg.PhaseResourceDefaults)
+	}
+	if cfg.ActiveDeadlineSeconds != 1800 {
+		t.Fatalf("activeDeadlineSeconds = %d, want 1800", cfg.ActiveDeadlineSeconds)
+	}
+}
+
+func TestLoadConfig_EmptyClusterCIDRsError(t *testing.T) {
+	body := strings.Replace(validConfigYAML,
+		"clusterCIDRs:\n  - 10.0.0.0/16\n  - 10.96.0.0/12", "clusterCIDRs: []", 1)
+	if _, _, err := LoadConfig(writeConfig(t, body)); err == nil {
+		t.Fatal("expected error for empty clusterCIDRs")
+	}
+}
+
+func TestLoadConfig_MalformedQuantityError(t *testing.T) {
+	body := strings.Replace(validConfigYAML, "build: 2Gi", "build: not-a-quantity", 1)
+	if _, _, err := LoadConfig(writeConfig(t, body)); err == nil {
+		t.Fatal("expected error for malformed resource quantity")
+	}
+}
+
+func TestLoadConfig_NonPositiveDeadlineError(t *testing.T) {
+	body := strings.Replace(validConfigYAML, "activeDeadlineSeconds: 1800", "activeDeadlineSeconds: 0", 1)
+	if _, _, err := LoadConfig(writeConfig(t, body)); err == nil {
+		t.Fatal("expected error for activeDeadlineSeconds <= 0")
 	}
 }

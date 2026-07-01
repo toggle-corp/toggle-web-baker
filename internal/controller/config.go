@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"time"
+
+	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/yaml"
 
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
@@ -53,13 +57,211 @@ type OperatorConfig struct {
 	Images PlatformImages
 
 	// NodeImages maps a node MAJOR (decimal string key) to its managed image +
-	// UID + optional HOME. It is chart-owned (values.yaml), arriving as the single
-	// JSON -node-images flag. An app's spec.nodeVersion is resolved against this
+	// UID + optional HOME. It is chart-owned (values.yaml), arriving in the
+	// operator config file. An app's spec.nodeVersion is resolved against this
 	// map; a version absent here fails the app at reconcile (ReasonUnknownNodeVersion).
 	NodeImages map[string]domain.NodeImage
+
+	// PhaseResourceDefaults are the operator-owned resource defaults applied to
+	// every phase container (setup/fetch/build). CPU request/limit are global
+	// (same for all phases); the memory ceiling is per-phase, used when an app's
+	// spec.<phase>.memoryLimit is unset (or malformed — see phaseResourceRequirements).
+	PhaseResourceDefaults PhaseResourceDefaults
+
+	// ActiveDeadlineSeconds is the operator default deadline bounding the whole
+	// build Job when spec.activeDeadlineSeconds is unset.
+	ActiveDeadlineSeconds int64
 }
 
-// ParseNodeImages decodes the -node-images JSON flag into the node-image map.
+// PhaseResourceDefaults holds the parsed, startup-validated operator resource
+// defaults for phase containers. Quantities are pre-parsed so the reconciler
+// (and the malformed-user-input fallback) can rely on them always being valid.
+type PhaseResourceDefaults struct {
+	// CPURequest / CPULimit are global (identical for every phase container).
+	CPURequest resource.Quantity
+	CPULimit   resource.Quantity
+	// Memory ceilings per phase (request is pinned == limit at apply time).
+	MemorySetup resource.Quantity
+	MemoryFetch resource.Quantity
+	MemoryBuild resource.Quantity
+}
+
+// MemoryForPhase returns the per-phase default memory ceiling for a phase name
+// ("setup"/"fetch"/"build"); it defaults to the build ceiling for any other name.
+func (d PhaseResourceDefaults) MemoryForPhase(phase string) resource.Quantity {
+	switch phase {
+	case "setup":
+		return d.MemorySetup
+	case "fetch":
+		return d.MemoryFetch
+	default:
+		return d.MemoryBuild
+	}
+}
+
+// ManagerOptions are the process-wide controller-runtime manager settings that
+// used to arrive as individual CLI flags. cmd/main.go maps these onto
+// ctrl.Options and the reconciler's StorageClassName / TraefikNamespace.
+type ManagerOptions struct {
+	MetricsBindAddress     string
+	HealthProbeBindAddress string
+	LeaderElect            bool
+	StorageClass           string
+	TraefikNamespace       string
+}
+
+// FileConfig is the on-disk operator config schema (the single mounted YAML that
+// replaces the ~17 CLI flags). It is decoded via sigs.k8s.io/yaml (YAML→JSON),
+// so the json tags below drive the mapping. LoadConfig splits it into the
+// reconciler-facing OperatorConfig + the manager-level ManagerOptions.
+type FileConfig struct {
+	// Manager (controller-runtime) options.
+	MetricsBindAddress     string `json:"metricsBindAddress,omitempty"`
+	HealthProbeBindAddress string `json:"healthProbeBindAddress,omitempty"`
+	LeaderElect            bool   `json:"leaderElect,omitempty"`
+
+	// Domain fields.
+	RegistryAllowlist []string                    `json:"registryAllowlist,omitempty"`
+	ClusterCIDRs      []string                    `json:"clusterCIDRs,omitempty"`
+	TraefikGroup      string                      `json:"traefikGroup,omitempty"`
+	TraefikNamespace  string                      `json:"traefikNamespace,omitempty"`
+	ImagePullSecret   string                      `json:"imagePullSecret,omitempty"`
+	StorageClass      string                      `json:"storageClass,omitempty"`
+	MeasureInterval   string                      `json:"measureInterval,omitempty"`
+	Images            fileImages                  `json:"images,omitempty"`
+	NodeImages        map[string]domain.NodeImage `json:"nodeImages,omitempty"`
+
+	// New knobs (were never flags): per-phase resource defaults + job deadline.
+	PhaseResources        filePhaseResources `json:"phaseResources,omitempty"`
+	ActiveDeadlineSeconds int64              `json:"activeDeadlineSeconds,omitempty"`
+}
+
+type fileImages struct {
+	Clone   string `json:"clone,omitempty"`
+	Copier  string `json:"copier,omitempty"`
+	Du      string `json:"du,omitempty"`
+	Cleanup string `json:"cleanup,omitempty"`
+	Clock   string `json:"clock,omitempty"`
+	Nginx   string `json:"nginx,omitempty"`
+}
+
+type filePhaseResources struct {
+	CPU    filePhaseCPU    `json:"cpu,omitempty"`
+	Memory filePhaseMemory `json:"memory,omitempty"`
+}
+
+type filePhaseCPU struct {
+	Request string `json:"request,omitempty"`
+	Limit   string `json:"limit,omitempty"`
+}
+
+type filePhaseMemory struct {
+	Setup string `json:"setup,omitempty"`
+	Fetch string `json:"fetch,omitempty"`
+	Build string `json:"build,omitempty"`
+}
+
+// LoadConfig reads and validates the operator config file, returning the
+// reconciler-facing OperatorConfig plus the manager-level options. It fails
+// closed: an invalid file (empty clusterCIDRs, unparseable quantity, non-positive
+// deadline, bad measureInterval) is a hard error the caller surfaces before the
+// manager starts.
+func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("read operator config %q: %w", path, err)
+	}
+	var fc FileConfig
+	if err := yaml.Unmarshal(raw, &fc); err != nil {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("parse operator config %q: %w", path, err)
+	}
+
+	// measureInterval: empty defaults to 1h; a non-empty value MUST parse.
+	interval := time.Hour
+	if fc.MeasureInterval != "" {
+		interval, err = time.ParseDuration(fc.MeasureInterval)
+		if err != nil {
+			return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("measureInterval %q is not a valid duration: %w", fc.MeasureInterval, err)
+		}
+	}
+
+	// Every resource quantity MUST parse (they are load-bearing: the per-phase
+	// memory defaults are the fallback for malformed user input, so they can
+	// never be allowed to be absent/invalid).
+	prd := PhaseResourceDefaults{}
+	for _, q := range []struct {
+		name string
+		raw  string
+		dst  *resource.Quantity
+	}{
+		{"phaseResources.cpu.request", fc.PhaseResources.CPU.Request, &prd.CPURequest},
+		{"phaseResources.cpu.limit", fc.PhaseResources.CPU.Limit, &prd.CPULimit},
+		{"phaseResources.memory.setup", fc.PhaseResources.Memory.Setup, &prd.MemorySetup},
+		{"phaseResources.memory.fetch", fc.PhaseResources.Memory.Fetch, &prd.MemoryFetch},
+		{"phaseResources.memory.build", fc.PhaseResources.Memory.Build, &prd.MemoryBuild},
+	} {
+		parsed, perr := resource.ParseQuantity(q.raw)
+		if perr != nil {
+			return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("%s %q is not a valid resource quantity: %w", q.name, q.raw, perr)
+		}
+		*q.dst = parsed
+	}
+
+	if fc.ActiveDeadlineSeconds <= 0 {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("activeDeadlineSeconds must be > 0, got %d", fc.ActiveDeadlineSeconds)
+	}
+
+	cfg := OperatorConfig{
+		RegistryAllowlist: fc.RegistryAllowlist,
+		ClusterCIDRs:      fc.ClusterCIDRs,
+		TraefikGroup:      fc.TraefikGroup,
+		ImagePullSecret:   fc.ImagePullSecret,
+		MeasureInterval:   interval,
+		Images: PlatformImages{
+			Clone:   fc.Images.Clone,
+			Copier:  fc.Images.Copier,
+			Du:      fc.Images.Du,
+			Cleanup: fc.Images.Cleanup,
+			Clock:   fc.Images.Clock,
+			Nginx:   fc.Images.Nginx,
+		},
+		NodeImages:            fc.NodeImages,
+		PhaseResourceDefaults: prd,
+		ActiveDeadlineSeconds: fc.ActiveDeadlineSeconds,
+	}
+	cfg.Defaults()
+	// Validate LAST so Defaults() has filled TraefikGroup etc. This enforces the
+	// mandatory clusterCIDRs invariant (fail-closed) among other checks.
+	if err := cfg.Validate(); err != nil {
+		return OperatorConfig{}, ManagerOptions{}, err
+	}
+	// Reuse the same semantic checks the JSON flag path applied to node images.
+	if _, err := ParseNodeImages(nodeImagesToJSON(cfg.NodeImages)); err != nil {
+		return OperatorConfig{}, ManagerOptions{}, err
+	}
+
+	mgr := ManagerOptions{
+		MetricsBindAddress:     fc.MetricsBindAddress,
+		HealthProbeBindAddress: fc.HealthProbeBindAddress,
+		LeaderElect:            fc.LeaderElect,
+		StorageClass:           fc.StorageClass,
+		TraefikNamespace:       fc.TraefikNamespace,
+	}
+	return cfg, mgr, nil
+}
+
+// nodeImagesToJSON re-marshals the unmarshaled node-image map so LoadConfig can
+// reuse ParseNodeImages' semantic validation (numeric key, non-empty image,
+// non-root UID) without duplicating it here.
+func nodeImagesToJSON(m map[string]domain.NodeImage) string {
+	if len(m) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// ParseNodeImages validates a node-image map supplied as a JSON string.
 // An empty string yields no entries (the feature is simply unused); malformed
 // JSON is a hard error so a bad chart value fails loudly at operator startup.
 func ParseNodeImages(s string) (map[string]domain.NodeImage, error) {

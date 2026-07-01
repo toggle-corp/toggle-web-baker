@@ -12,6 +12,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -83,6 +84,14 @@ func newReconciler(t *testing.T, objs ...client.Object) (*FrontendAppReconciler,
 			ClusterCIDRs:      []string{"10.0.0.0/8"},
 			RegistryAllowlist: []string{"ghcr.io/toggle-corp/"},
 			TraefikGroup:      "traefik.io",
+			PhaseResourceDefaults: PhaseResourceDefaults{
+				CPURequest:  resource.MustParse("100m"),
+				CPULimit:    resource.MustParse("4"),
+				MemorySetup: resource.MustParse("512Mi"),
+				MemoryFetch: resource.MustParse("512Mi"),
+				MemoryBuild: resource.MustParse("2Gi"),
+			},
+			ActiveDeadlineSeconds: 1800,
 		},
 	}
 	r.Config.Defaults()
