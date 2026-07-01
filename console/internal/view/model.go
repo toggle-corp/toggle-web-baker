@@ -215,7 +215,6 @@ type App struct {
 	LastBuildTime          string
 	LastSuccessfulBuild    string
 	NextScheduledBuildTime string
-	DataFreshness          string
 
 	Release       Release
 	Storage       Storage
@@ -369,7 +368,6 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 	a.LastBuiltSpecHash = asString(status["lastBuiltSpecHash"])
 	a.LastBuildTime = asString(status["lastBuildTime"])
 	a.LastSuccessfulBuild = asString(status["lastSuccessfulBuildTime"])
-	a.DataFreshness = asString(status["dataFreshness"])
 
 	a.Conditions = conditionsFrom(status["conditions"])
 	a.Build = buildFrom(status["build"])

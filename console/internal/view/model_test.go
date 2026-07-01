@@ -56,7 +56,6 @@ func fullStatusObj() *unstructured.Unstructured {
 			"lastBuiltSpecHash":       "abc123",
 			"lastBuildTime":           "2026-06-25T09:55:00Z",
 			"lastSuccessfulBuildTime": "2026-06-24T09:55:00Z",
-			"dataFreshness":           "stale-12h",
 			"release": map[string]any{
 				"current":      "rel-2026-06-24",
 				"previous":     "rel-2026-06-23",
