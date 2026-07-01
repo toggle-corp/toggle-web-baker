@@ -135,6 +135,38 @@
 
 {{define "foot"}}
 </main>
+<script>
+// Localize every <time datetime="…Z"> to the viewer's timezone. Runs on load,
+// after each live-region swap (see detail.gohtml), and on a 30s interval so
+// relative deltas and the "Next scheduled" countdown stay fresh. With JS off,
+// the raw UTC instant in the element text is shown as-is.
+window.bakerLocalizeTimes=(function(){
+  function rel(ms){ // ms = target - now
+    var future=ms>=0, s=Math.abs(ms)/1000;
+    if(s<60){return 'just now';}
+    var m=Math.floor(s/60), human;
+    if(m<60){human=m+'m';}
+    else if(m<1440){human=Math.floor(m/60)+'h';}
+    else{human=Math.floor(m/1440)+'d';}
+    return future?('in '+human):(human+' ago');
+  }
+  return function(){
+    var now=Date.now();
+    var nodes=document.querySelectorAll('time[datetime]');
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i], iso=el.getAttribute('datetime');
+      var d=new Date(iso);
+      if(isNaN(d.getTime())){continue;} // leave fallback text
+      var localAbs=d.toLocaleString();
+      var full=el.getAttribute('data-format')==='full';
+      el.textContent=full?(rel(d.getTime()-now)+' · '+localAbs):rel(d.getTime()-now);
+      el.title=d.toLocaleString(undefined,{timeZoneName:'long'})+' · '+iso;
+    }
+  };
+})();
+try{window.bakerLocalizeTimes();}catch(e){}
+setInterval(function(){try{window.bakerLocalizeTimes();}catch(e){}},30000);
+</script>
 </body>
 </html>
 {{end}}

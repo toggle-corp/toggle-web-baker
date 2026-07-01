@@ -26,8 +26,7 @@
       <div class="kv"><span class="k">Result</span><span class="v">{{dash .Build.Result}}</span></div>
       <div class="kv"><span class="k">Trigger</span><span class="v">{{dash .Build.Trigger}}</span></div>
       <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
-      {{$st := reltime .Build.StartTime}}
-      <div class="kv"><span class="k">Started</span><span class="v"><span title="{{$st.Abs}}">{{$st.Rel}}</span></span></div>
+      <div class="kv"><span class="k">Started</span><span class="v">{{timetag .Build.StartTime}}</span></div>
       {{if .Build.FailedStep}}<div class="kv"><span class="k">Failed step</span><span class="v b-false">{{.Build.FailedStep}}</span></div>{{end}}
       {{if .Build.Message}}<div class="small muted" style="padding-top:6px">{{.Build.Message}}</div>{{end}}
       {{with .BuildMetrics}}
@@ -64,8 +63,7 @@
           <div class="build-row-head">
             <span class="badge b-{{if eq .Result "Succeeded"}}ready{{else if eq .Result "Failed"}}degraded{{else}}pending{{end}}">{{dash .Result}}</span>
             <span class="small muted">{{dash .Trigger}}</span>
-            {{$bt := reltime .CompletionTime}}
-            <span class="small muted" title="{{$bt.Abs}}">{{$bt.Rel}}</span>
+            <span class="small muted">{{timetag .CompletionTime}}</span>
           </div>
           {{template "flowstrip" .}}
           {{if .JobName}}
@@ -86,8 +84,7 @@
     <div class="body">
       <div class="kv"><span class="k">Threshold state</span>
         <span class="v"><span class="badge b-{{if eq .Storage.ThresholdState "OK"}}ready{{else if .Storage.ThresholdState}}b-stale{{else}}pending{{end}}">{{dash .Storage.ThresholdState}}</span></span></div>
-      {{$mt := reltime .Storage.MeasuredAt}}
-      <div class="kv"><span class="k">Measured</span><span class="v"><span title="{{$mt.Abs}}">{{$mt.Rel}}</span></span></div>
+      <div class="kv"><span class="k">Measured</span><span class="v">{{timetag .Storage.MeasuredAt}}</span></div>
       {{range .Storage.Volumes}}
         <div class="vol">
           <div class="vol-head">
@@ -129,7 +126,7 @@
       {{if .Action.Phase}}<span class="badge b-{{if eq .Action.Phase "Succeeded"}}ready{{else if eq .Action.Phase "Failed"}}degraded{{else}}pending{{end}}">{{.Action.Phase}}</span>{{else}}<span class="small muted">—</span>{{end}}
     </span>
   </div>
-  {{if .Action.LastCompleted}}{{$ct := reltime .Action.LastCompleted}}<div class="small muted">last completed <span title="{{$ct.Abs}}">{{$ct.Rel}}</span> · reclaimed {{.Action.ReclaimedHuman}}</div>{{end}}
+  {{if .Action.LastCompleted}}<div class="small muted">last completed {{timetag .Action.LastCompleted}} · reclaimed {{.Action.ReclaimedHuman}}</div>{{end}}
   {{if .Action.Message}}<div class="small muted">{{.Action.Message}}</div>{{end}}
   <form method="POST" action="/ns/{{.App.Namespace}}/app/{{.App.Name}}/cleanup-{{.Kind}}" style="margin-top:6px"
         {{if eq .Kind "cache"}}onsubmit="return confirm('Prune the build cache for {{.App.Name}}? Regenerable; safe.');"{{else}}onsubmit="return confirm('Delete OLD releases of {{.App.Name}}? Keeps the current and previous release. This cannot be undone.');"{{end}}>

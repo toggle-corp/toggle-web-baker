@@ -54,10 +54,10 @@
   <div class="card">
     <h2>Schedule</h2>
     <div class="body">
-      <div class="kv"><span class="k">Last build</span><span class="v">{{dash .LastBuildTime}}</span></div>
-      <div class="kv"><span class="k">Last successful</span><span class="v">{{dash .LastSuccessfulBuild}}</span></div>
-      <div class="kv"><span class="k">Next scheduled</span><span class="v">{{dash .NextScheduledBuildTime}}</span></div>
-      <div class="kv"><span class="k">Last processed rebuild</span><span class="v">{{dash .LastProcessedRebuild}}</span></div>
+      <div class="kv"><span class="k">Last build</span><span class="v">{{timetag .LastBuildTime}}</span></div>
+      <div class="kv"><span class="k">Last successful</span><span class="v">{{timetag .LastSuccessfulBuild}}</span></div>
+      <div class="kv"><span class="k">Next scheduled</span><span class="v">{{timetagFull .NextScheduledBuildTime}}</span></div>
+      <div class="kv"><span class="k">Last processed rebuild</span><span class="v">{{timetag .LastProcessedRebuild}}</span></div>
     </div>
   </div>
 
@@ -66,7 +66,7 @@
     <div class="body">
       <div class="kv"><span class="k">Current</span><span class="v">{{dash .Release.Current}}</span></div>
       <div class="kv"><span class="k">Previous</span><span class="v">{{dash .Release.Previous}}</span></div>
-      <div class="kv"><span class="k">Serving since</span><span class="v">{{dash .Release.ServingSince}}</span></div>
+      <div class="kv"><span class="k">Serving since</span><span class="v">{{timetag .Release.ServingSince}}</span></div>
     </div>
   </div>
 
@@ -131,6 +131,7 @@
         region.innerHTML=html;
         var flag=region.querySelector('[data-build-active]');
         if(flag){region.setAttribute('data-active', flag.getAttribute('data-build-active'));}
+        if(window.bakerLocalizeTimes){window.bakerLocalizeTimes();}
       })
       .catch(function(){})
       .finally(function(){setTimeout(pollRegion, active()?3000:20000);});

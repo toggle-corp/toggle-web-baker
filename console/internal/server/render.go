@@ -2,6 +2,7 @@ package server
 
 import (
 	"embed"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -30,12 +31,14 @@ var funcMap = template.FuncMap{
 	// mkhead builds a head value for templates (like the error page) that do
 	// not carry their own head struct.
 	"mkhead": func(title string) head { return head{Title: title} },
-	// reltime renders a timestamp as a relative phrase plus an absolute tooltip,
-	// so templates can do <span title="{{.Abs}}">{{.Rel}}</span>.
-	"reltime": func(ts string) relTime {
-		rel, abs := view.RelativeTime(ts)
-		return relTime{Rel: rel, Abs: abs}
-	},
+	// timetag / timetagFull emit a <time datetime="UTC"> element carrying the
+	// raw RFC3339-UTC instant. The browser (bakerLocalizeTimes in layout.gohtml)
+	// rewrites the text to the viewer's local timezone; with JS off the UTC
+	// string shows as-is. timetagFull marks the element data-format="full" so the
+	// client renders an inline absolute time alongside the relative delta (used
+	// for "Next scheduled"). Empty input renders an em-dash.
+	"timetag":     func(ts string) template.HTML { return timeTag(ts, false) },
+	"timetagFull": func(ts string) template.HTML { return timeTag(ts, true) },
 	// cleanupCtx bundles the App, the action kind, and the action status into one
 	// value so the cleanupaction sub-template can render a prune row + button.
 	"cleanupCtx": func(app view.App, kind string, action view.CleanupAction) cleanupView {
@@ -50,10 +53,19 @@ type cleanupView struct {
 	Action view.CleanupAction
 }
 
-// relTime pairs a relative phrase with the absolute timestamp for a tooltip.
-type relTime struct {
-	Rel string
-	Abs string
+// timeTag renders a <time> element carrying an RFC3339-UTC instant as both the
+// datetime attribute and the fallback text; bakerLocalizeTimes() localizes it
+// in the browser. full=true adds data-format="full" (inline absolute time).
+func timeTag(ts string, full bool) template.HTML {
+	if ts == "" {
+		return template.HTML("—")
+	}
+	esc := template.HTMLEscapeString(ts)
+	attr := ""
+	if full {
+		attr = ` data-format="full"`
+	}
+	return template.HTML(fmt.Sprintf(`<time datetime="%s"%s>%s</time>`, esc, attr, esc))
 }
 
 // head is the data the shared layout head/header needs.
