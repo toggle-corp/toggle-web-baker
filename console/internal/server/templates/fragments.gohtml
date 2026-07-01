@@ -59,7 +59,7 @@
     <h2>Recent builds</h2>
     <div class="body">
       {{range .BuildHistory}}
-        <div class="build-row">
+        <div class="build-row"{{if .JobName}} data-build-row="{{.JobName}}"{{end}}>
           <div class="build-row-head">
             <span class="badge b-{{if eq .Result "Succeeded"}}ready{{else if eq .Result "Failed"}}degraded{{else}}pending{{end}}">{{dash .Result}}</span>
             <span class="small muted">{{.TriggerLabel}}</span>
@@ -67,10 +67,10 @@
           </div>
           {{template "flowstrip" .}}
           {{if .JobName}}
-            <details data-logs-build="{{.JobName}}">
-              <summary class="small">logs · <code>{{.JobName}}</code></summary>
-              <div class="logs-body small muted">open to load…</div>
-            </details>
+            <div class="build-row-foot">
+              <button type="button" class="viewlogs" data-view-logs="{{.JobName}}">View logs</button>
+              <code class="small muted">{{.JobName}}</code>
+            </div>
           {{end}}
         </div>
       {{else}}

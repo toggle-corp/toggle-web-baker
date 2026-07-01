@@ -118,9 +118,20 @@
 
   function active(){return region.getAttribute('data-active')==='1';}
 
-  // follow mode (default on): chase the current build + active step. When off,
-  // the pane is pinned to the displayed build + selected container.
-  var follow=true;
+  // follow mode: chase the current build + active step. Default on only while a
+  // build is active — with nothing running there is no live step to follow, so
+  // we start pinned to the most-recent build. When off, the pane is pinned to
+  // the displayed build + selected container.
+  var follow=active();
+  // selectedJob is the history build pinned into the pane; kept so its row
+  // highlight can be re-applied after each live-region innerHTML swap.
+  var selectedJob='';
+  function markSelectedRow(){
+    var rows=document.querySelectorAll('[data-build-row]');
+    for(var i=0;i<rows.length;i++){
+      rows[i].classList.toggle('selected', rows[i].getAttribute('data-build-row')===selectedJob);
+    }
+  }
 
   // Poll the live region (flow/history/storage) and swap its innards. After the
   // swap, re-read the freshly rendered data-build-active so the cadence and
@@ -131,6 +142,7 @@
         region.innerHTML=html;
         var flag=region.querySelector('[data-build-active]');
         if(flag){region.setAttribute('data-active', flag.getAttribute('data-build-active'));}
+        markSelectedRow();
         if(window.bakerLocalizeTimes){window.bakerLocalizeTimes();}
       })
       .catch(function(){})
@@ -179,28 +191,34 @@
         follow=e.target.checked;
         // Turning follow OFF must pin the build currently shown, else manual
         // loadLogs falls back to the stale page-load build and shows old logs.
-        if(!follow){pinDisplayedBuild();}
+        // Turning it ON snaps back to the live build, so drop the history pin.
+        if(!follow){pinDisplayedBuild();}else{selectedJob='';markSelectedRow();}
         loadLogs();
       }
     });
   }
 
-  // Lazy-load a history build's logs when its <details> opens.
-  document.addEventListener('toggle',function(e){
-    var d=e.target;
-    if(!(d&&d.tagName==='DETAILS'&&d.hasAttribute('data-logs-build')&&d.open)){return;}
-    var body=d.querySelector('.logs-body');
-    if(!body||body.getAttribute('data-loaded')==='1'){return;}
-    var job=d.getAttribute('data-logs-build');
-    fetch(logsBase+'?build='+encodeURIComponent(job),{headers:{'X-Requested-With':'fetch'}})
-      .then(function(r){return r.text();})
-      .then(function(html){body.innerHTML=html;body.setAttribute('data-loaded','1');body.classList.remove('muted');})
-      .catch(function(){});
-  },true);
+  // "View logs" on a recent build loads it into the single pane (pinning it,
+  // off follow), highlights its row, and scrolls the pane into view. Delegated
+  // on #live-region because its innerHTML is swapped every poll.
+  if(region){
+    region.addEventListener('click',function(e){
+      var btn=e.target&&e.target.closest?e.target.closest('[data-view-logs]'):null;
+      if(!btn){return;}
+      follow=false;
+      selectedJob=btn.getAttribute('data-view-logs')||'';
+      logpane.setAttribute('data-current-build', selectedJob);
+      markSelectedRow();
+      loadLogs();
+      if(logpane.scrollIntoView){logpane.scrollIntoView({behavior:'smooth',block:'start'});}
+    });
+  }
 
-  // Refresh the current-build log pane every 3s only while in-progress.
+  // Refresh the pane every 3s, but only while it shows the live/active build —
+  // a pinned history build is static, so polling it would just refetch identical
+  // lines.
   function pollLogs(){
-    if(active()){loadLogs();}
+    if(active()&&follow){loadLogs();}
     setTimeout(pollLogs, active()?3000:60000);
   }
 

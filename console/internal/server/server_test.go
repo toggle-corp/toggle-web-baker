@@ -758,6 +758,30 @@ func TestLogs_HistoricalBuildShowsViewingIndicator(t *testing.T) {
 	}
 }
 
+func TestRecentBuilds_RendersViewLogsButtonNotDetails(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// Recent builds load into the single pane via a button, not an inline expand.
+	if !strings.Contains(body, `data-view-logs="mapswipe-uat-build-8"`) {
+		t.Errorf("recent build should render a View logs button; body=%s", body)
+	}
+	if strings.Contains(body, "data-logs-build") {
+		t.Errorf("inline <details> logs loader must be gone; body=%s", body)
+	}
+	// The row must be addressable for selection highlighting.
+	if !strings.Contains(body, `data-build-row="mapswipe-uat-build-8"`) {
+		t.Errorf("recent build row should carry data-build-row; body=%s", body)
+	}
+}
+
 // podWithLimits builds a pod whose named container carries cpu+mem limits, so
 // the metrics bars can be computed against a known cap.
 func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {
