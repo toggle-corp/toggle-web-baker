@@ -1,4 +1,4 @@
 .claude/
 
-# Local, untracked test manifests (real-app FrontendApp samples used for kind e2e)
-tests-sample/
+# Machine-local agent context (see AGENTS.md).
+AGENTS.local.md

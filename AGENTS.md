@@ -3,6 +3,10 @@
 Guidance for agents (Claude included) working in this repo. Keep changes
 focused and validated by the matching test layer below.
 
+Machine-local agent context (paths, local tooling, and other things that don't
+belong in the committed repo) lives in `AGENTS.local.md` — gitignored, so it is
+absent in fresh clones. Read it if present.
+
 ## Layout (where things live)
 
 - `api/v1alpha1/` — the `FrontendApp` CRD types + CEL validation markers.
