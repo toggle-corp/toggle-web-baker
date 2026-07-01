@@ -33,6 +33,23 @@ operator:
   # fails closed at reconcile time.
   registryAllowlist: []
 
+  # Managed node toolchain images selectable via spec.nodeVersion (keyed by node
+  # MAJOR). Each resolves to an image (repository:tag, tag defaulting to the chart
+  # appVersion) plus the numeric UID it runs as, so apps need not set image/
+  # runAsUser. These are operator-chosen (allowlist-exempt). Add a major here — and
+  # publish its image — to make it selectable; a spec.nodeVersion absent from this
+  # map fails the app at reconcile. Override an entry's repository/tag to point at
+  # your own build; set `home` to override the default writable HOME (/work).
+  nodeImages:
+    "18":
+      repository: ghcr.io/toggle-corp/toggle-web-baker-node18
+      tag: ""
+      runAsUser: 1000
+    "24":
+      repository: ghcr.io/toggle-corp/toggle-web-baker-node24
+      tag: ""
+      runAsUser: 1000
+
   leaderElect: true
   metricsBindAddress: ":8080"
   healthProbeBindAddress: ":8081"

@@ -61,3 +61,22 @@ Usage: include "toggle-web-baker.image" (dict "image" .Values.x.image "root" $)
 {{- $tag := .image.tag | default .root.Chart.AppVersion -}}
 {{- printf "%s:%s" .image.repository $tag -}}
 {{- end -}}
+
+{{/*
+Render operator.nodeImages as the compact JSON the -node-images flag expects:
+{"<major>":{"image":"repo:tag","runAsUser":N,"home":"..."}}. Each entry's image
+is resolved through toggle-web-baker.image (tag defaults to appVersion). runAsUser
+and home are emitted only when set. Empty map renders "{}".
+Usage: include "toggle-web-baker.nodeImagesJSON" $
+*/}}
+{{- define "toggle-web-baker.nodeImagesJSON" -}}
+{{- $root := . -}}
+{{- $out := dict -}}
+{{- range $major, $cfg := .Values.operator.nodeImages -}}
+{{- $entry := dict "image" (include "toggle-web-baker.image" (dict "image" $cfg "root" $root)) -}}
+{{- if $cfg.runAsUser }}{{- $entry = set $entry "runAsUser" $cfg.runAsUser -}}{{- end -}}
+{{- if $cfg.home }}{{- $entry = set $entry "home" $cfg.home -}}{{- end -}}
+{{- $out = set $out (printf "%v" $major) $entry -}}
+{{- end -}}
+{{- $out | toJson -}}
+{{- end -}}

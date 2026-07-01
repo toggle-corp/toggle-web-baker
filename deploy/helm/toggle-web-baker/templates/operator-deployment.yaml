@@ -51,6 +51,7 @@ spec:
             - --image-cleanup={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.cleanup "root" $) }}
             - --image-clock={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clock "root" $) }}
             - --image-nginx={{ .Values.platformImages.nginx }}
+            - '--node-images={{ include "toggle-web-baker.nodeImagesJSON" $ }}'
           ports:
             - name: metrics
               containerPort: 8080
