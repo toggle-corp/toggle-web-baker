@@ -102,7 +102,8 @@ e2e-local:
     # from build-pod egress; it refuses to reconcile if clusterCIDRs is empty).
     POD_CIDR="${POD_CIDR:-10.244.0.0/16}"
     SVC_CIDR="${SVC_CIDR:-10.96.0.0/12}"
-    # Allowlist prefix for the sample's build image (docker.io/cimg/node:18.20).
+    # The sample uses nodeVersion (a managed, allowlist-exempt image), so no
+    # allowlist entry is strictly required; kept as an example prefix for BYO images.
     REGISTRY_ALLOW="${REGISTRY_ALLOW:-docker.io/cimg/}"
     # kind ships a default "standard" StorageClass (rancher local-path) that is
     # WaitForFirstConsumer. The operator REQUIRES a StorageClass be configured;
@@ -145,6 +146,8 @@ e2e-local:
         "ghcr.io/toggle-corp/toggle-web-baker-copier:${TAG}"
         "ghcr.io/toggle-corp/toggle-web-baker-du:${TAG}"
         "ghcr.io/toggle-corp/toggle-web-baker-cleanup:${TAG}"
+        # node18 is the managed toolchain the sample's nodeVersion: 18 selects.
+        "ghcr.io/toggle-corp/toggle-web-baker-node18:${TAG}"
     )
     log "Loading ${#IMAGES[@]} images into kind"
     for img in "${IMAGES[@]}"; do
@@ -161,6 +164,8 @@ e2e-local:
         --set "platformImages.copier.tag=${TAG}" \
         --set "platformImages.du.tag=${TAG}" \
         --set "platformImages.cleanup.tag=${TAG}" \
+        --set "operator.nodeImages.18.tag=${TAG}" \
+        --set "operator.nodeImages.24.tag=${TAG}" \
         --set "console.enabled=false" \
         --set "operator.clusterCIDRs={${POD_CIDR},${SVC_CIDR}}" \
         --set "operator.registryAllowlist={${REGISTRY_ALLOW}}" \

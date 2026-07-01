@@ -8,14 +8,13 @@
 #   * the build just writes a static index.html, so there is no package install.
 #   * no `secrets:` block -> satisfies the CEL rule that secrets require a
 #     fetch.command, and keeps the smoke run credential-free.
-#   * build.image is docker.io/cimg/node:18.20, which ships a shell for the
-#     `sh -c` build command. Its USER is the NON-NUMERIC name `circleci`, so the
-#     build pod's runAsNonRoot constraint cannot be verified by the kubelet
-#     without a numeric UID — we pin build.runAsUser: 3434 (circleci's UID).
-#     The operator's --registry-allowlist must permit `docker.io/cimg/` (the e2e
-#     recipe sets this).
+#   * nodeVersion: 18 selects the operator-managed node18 image — the operator
+#     supplies the digest-pinned image, its numeric UID (1000) and HOME, so the
+#     app sets no build.image/runAsUser and no registry allowlist is needed
+#     (managed images are allowlist-exempt). This is the DEFAULT path; the BYO
+#     image+runAsUser path is covered by controller unit tests instead.
 #
-# Passes the new CRD CEL validation: build.command is present; no secrets.
+# Passes the CRD CEL validation: build.command present, image via nodeVersion.
 apiVersion: baker.toggle-corp.com/v1alpha1
 kind: FrontendApp
 metadata:
@@ -26,10 +25,9 @@ spec:
   ref: master
   packageManager: yarn
   schedule: "0 6 * * *"
+  nodeVersion: 18   # operator-managed toolchain (image + UID + HOME); no build.image needed
   # setup + fetch omitted on purpose -> operator no-ops them (["true"]).
   build:
-    image: docker.io/cimg/node:18.20      # USER is the name `circleci`; pin its numeric UID below
-    runAsUser: 3434                        # circleci's UID — lets the kubelet verify runAsNonRoot
     command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
   outputDir: out
   keepReleases: 2
