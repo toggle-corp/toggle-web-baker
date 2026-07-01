@@ -29,7 +29,7 @@ spec:
   # setup + fetch omitted on purpose -> operator no-ops them (["true"]).
   build:
     command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
-  outputDir: out
+    outputDir: out
   keepReleases: 2
   ingress:
     host: smoke.local.test

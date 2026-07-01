@@ -54,8 +54,10 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
 ## Credential boundary
 
 - Two env classes, enforced at **injection** by the operator:
-  - **`buildArgs`** — public, **ConfigMap**-sourced, may reach the bundle
-    (`VITE_*`, `NEXT_PUBLIC_*`). Allowed in setup/build. **No `secretKeyRef`.**
+  - **`spec.<phase>.env`** (setup / fetch / build) — public, literal or
+    **ConfigMap**-sourced, may reach the bundle (`VITE_*`, `NEXT_PUBLIC_*`). This
+    is the single public build-env channel (the former top-level `buildArgs` is
+    gone). **No `secretKeyRef`** — the `EnvVarSource` type has no such field.
   - **`secrets`** — **Secret**-sourced, injected into the **fetch container
     ONLY**. The operator rejects `secretKeyRef` in setup/build (CEL + reconcile
     enforcement).
