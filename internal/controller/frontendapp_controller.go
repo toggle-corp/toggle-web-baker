@@ -543,6 +543,11 @@ func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app 
 		for k, v := range blob.Sizes {
 			app.Status.Storage.Sizes[k] = v
 		}
+		// "source" (transient work-volume scratch) is no longer a tracked
+		// persistent volume: the copier stopped emitting it in the sizes map. The
+		// additive merge above never removes keys, so drop any leftover here to
+		// self-heal CRs whose status still carries it from an older copier.
+		delete(app.Status.Storage.Sizes, "source")
 		app.Status.Storage.MeasuredAt = ptr.To(metav1.NewTime(r.now()))
 	}
 }

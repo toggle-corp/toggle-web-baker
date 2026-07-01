@@ -131,6 +131,55 @@ func TestObserveBuild_SuccessSpawnsMeasurement(t *testing.T) {
 	}
 }
 
+// applyCopierTermination writes the copier's sizes payload into
+// status.storage.sizes. The generic map carries whatever keys the copier emits,
+// so output + outputTotal both flow through with no parser change.
+func TestApplyCopierTermination_MergesOutputAndOutputTotal(t *testing.T) {
+	app := baseApp()
+	r, cl := newReconciler(t, app, wffc())
+	job := completeJob(t, cl, app, "demo-build-sizes", "hash")
+	buildPodForJob(t, cl, app, job, "demo-build-sizes-pod",
+		[]corev1.ContainerStatus{{Name: "build", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}},
+		[]corev1.ContainerStatus{{Name: "copier", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Message: `{"sizes":{"output":10,"outputTotal":30}}`}}}},
+	)
+
+	r.applyCopierTermination(context.Background(), app, job)
+
+	if app.Status.Storage.Sizes["output"] != 10 {
+		t.Fatalf("output = %d, want 10", app.Status.Storage.Sizes["output"])
+	}
+	if app.Status.Storage.Sizes["outputTotal"] != 30 {
+		t.Fatalf("outputTotal = %d, want 30", app.Status.Storage.Sizes["outputTotal"])
+	}
+}
+
+// applyCopierTermination prunes any stale "source" key on merge so CRs carrying
+// a leftover status.storage.sizes.source (from an older copier) self-heal, while
+// the copier's own keys and the du-measured cache/dataCache keys survive untouched.
+func TestApplyCopierTermination_PrunesStaleSourceKey(t *testing.T) {
+	app := baseApp()
+	r, cl := newReconciler(t, app, wffc())
+	// Seed a stale status: a leftover "source" plus a du-measured "cache".
+	app.Status.Storage.Sizes = map[string]int64{"source": 2000, "cache": 500}
+	job := completeJob(t, cl, app, "demo-build-prune", "hash")
+	buildPodForJob(t, cl, app, job, "demo-build-prune-pod",
+		[]corev1.ContainerStatus{{Name: "build", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}},
+		[]corev1.ContainerStatus{{Name: "copier", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Message: `{"sizes":{"output":10,"outputTotal":30}}`}}}},
+	)
+
+	r.applyCopierTermination(context.Background(), app, job)
+
+	if _, ok := app.Status.Storage.Sizes["source"]; ok {
+		t.Fatalf("stale source key must be pruned, got %+v", app.Status.Storage.Sizes)
+	}
+	if app.Status.Storage.Sizes["output"] != 10 || app.Status.Storage.Sizes["outputTotal"] != 30 {
+		t.Fatalf("copier keys must be present, got %+v", app.Status.Storage.Sizes)
+	}
+	if app.Status.Storage.Sizes["cache"] != 500 {
+		t.Fatalf("du-measured cache key must be preserved, got %+v", app.Status.Storage.Sizes)
+	}
+}
+
 // Reconcile recomputes status.storage.thresholdState from the merged sizes vs
 // spec.storage thresholds, so the console badge means something.
 func TestReconcile_ComputesThresholdState(t *testing.T) {
