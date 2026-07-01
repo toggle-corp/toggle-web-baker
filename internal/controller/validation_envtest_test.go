@@ -68,8 +68,10 @@ func validApp(name string) *bakerv1alpha1.FrontendApp {
 			Repo:        "https://example.com/repo.git",
 			Ref:         "main",
 			NodeVersion: 18, // satisfies the build-needs-an-image rule
-			Build: bakerv1alpha1.PhaseSpec{
-				Command: []string{"yarn", "build"},
+			Build: bakerv1alpha1.BuildPhaseSpec{
+				PhaseSpec: bakerv1alpha1.PhaseSpec{
+					Command: []string{"yarn", "build"},
+				},
 			},
 			Ingress: bakerv1alpha1.IngressConfig{
 				Host: "app.example.com",
@@ -181,6 +183,56 @@ func TestValidation_AcceptsSecretsWithFetchCommand(t *testing.T) {
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected Create to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsOutputDirWithParentSegment(t *testing.T) {
+	// "a/../b" has a ".." segment: the CEL rule rejects it (RE2 pattern alone
+	// can't catch an interior "..").
+	app := validApp("reject-outputdir-parent")
+	app.Spec.Build.OutputDir = "a/../b"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for outputDir with a '..' segment")
+	}
+}
+
+func TestValidation_RejectsOutputDirLeadingParent(t *testing.T) {
+	app := validApp("reject-outputdir-leading-parent")
+	app.Spec.Build.OutputDir = "../x"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for outputDir starting with '..'")
+	}
+}
+
+func TestValidation_RejectsAbsoluteOutputDir(t *testing.T) {
+	// A leading "/" fails the RE2 pattern (first char must be alnum/_/.).
+	app := validApp("reject-outputdir-absolute")
+	app.Spec.Build.OutputDir = "/abs"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for an absolute outputDir")
+	}
+}
+
+func TestValidation_AcceptsSimpleOutputDir(t *testing.T) {
+	app := validApp("accept-outputdir-simple")
+	app.Spec.Build.OutputDir = "out"
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected 'out' outputDir to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsNestedOutputDir(t *testing.T) {
+	app := validApp("accept-outputdir-nested")
+	app.Spec.Build.OutputDir = "build/static"
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected 'build/static' outputDir to be accepted, got: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }

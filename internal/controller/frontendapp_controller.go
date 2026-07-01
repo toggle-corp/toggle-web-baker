@@ -243,11 +243,21 @@ func storageConfigFrom(app *bakerv1alpha1.FrontendApp) domain.StorageConfig {
 	}
 }
 
-func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
-	buildArgs := map[string]string{}
-	for _, e := range app.Spec.BuildArgs {
-		buildArgs[e.Name] = e.Value
+// envMap collapses a phase's public []EnvVar into a Name→Value map for hashing.
+// ValueFrom entries collapse to "" (only literal values are captured), matching
+// the prior buildArgs hashing behavior.
+func envMap(in []bakerv1alpha1.EnvVar) map[string]string {
+	if len(in) == 0 {
+		return nil
 	}
+	out := make(map[string]string, len(in))
+	for _, e := range in {
+		out[e.Name] = e.Value
+	}
+	return out
+}
+
+func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
 	var secretRefs []string
 	for _, s := range app.Spec.Secrets {
 		secretRefs = append(secretRefs, s.ValueFrom.SecretKeyRef.Name+"/"+s.ValueFrom.SecretKeyRef.Key)
@@ -257,10 +267,10 @@ func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
 		Ref:            app.Spec.Ref,
 		PackageManager: string(app.Spec.PackageManager),
 		NodeVersion:    app.Spec.NodeVersion,
-		Setup:          domain.PhaseSpec{Image: app.Spec.Setup.Image, Command: app.Spec.Setup.Command, RunAsUser: app.Spec.Setup.RunAsUser},
-		Fetch:          domain.PhaseSpec{Image: app.Spec.Fetch.Image, Command: app.Spec.Fetch.Command, RunAsUser: app.Spec.Fetch.RunAsUser},
-		Build:          domain.PhaseSpec{Image: app.Spec.Build.Image, Command: app.Spec.Build.Command, RunAsUser: app.Spec.Build.RunAsUser},
-		BuildArgs:      buildArgs,
+		Setup:          domain.PhaseSpec{Image: app.Spec.Setup.Image, Command: app.Spec.Setup.Command, RunAsUser: app.Spec.Setup.RunAsUser, Env: envMap(app.Spec.Setup.Env)},
+		Fetch:          domain.PhaseSpec{Image: app.Spec.Fetch.Image, Command: app.Spec.Fetch.Command, RunAsUser: app.Spec.Fetch.RunAsUser, Env: envMap(app.Spec.Fetch.Env)},
+		Build:          domain.PhaseSpec{Image: app.Spec.Build.Image, Command: app.Spec.Build.Command, RunAsUser: app.Spec.Build.RunAsUser, Env: envMap(app.Spec.Build.Env)},
+		OutputDir:      app.Spec.Build.OutputDir,
 		SecretRefs:     secretRefs,
 	}
 }

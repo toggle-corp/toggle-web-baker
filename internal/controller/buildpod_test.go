@@ -458,7 +458,7 @@ func TestBuildJob_CopierUsesEnvNotArgs(t *testing.T) {
 	if len(copier.Args) != 0 {
 		t.Fatalf("copier must not use Args, got %v", copier.Args)
 	}
-	outputDir := app.Spec.OutputDir
+	outputDir := app.Spec.Build.OutputDir
 	if outputDir == "" {
 		outputDir = "dist"
 	}
@@ -467,6 +467,33 @@ func TestBuildJob_CopierUsesEnvNotArgs(t *testing.T) {
 	assertEnvVar(t, copier, "OUTPUT_DIR", outputDir)
 	assertEnvVar(t, copier, "KEEP_RELEASES", "5")
 	assertEnvVar(t, copier, "BUILD_TOKEN", "tok")
+}
+
+// build.env is the single public build-env channel (buildArgs is gone): a var
+// set there must reach the build container.
+func TestBuildJob_BuildEnvReachesBuildContainer(t *testing.T) {
+	app := baseApp()
+	app.Spec.Build.Env = []bakerv1alpha1.EnvVar{{Name: "NEXT_PUBLIC_API", Value: "https://api"}}
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	if build == nil {
+		t.Fatal("no build container")
+	}
+	assertEnvVar(t, build, "NEXT_PUBLIC_API", "https://api")
+}
+
+// build.outputDir flows to the copier's OUTPUT_DIR (moved out of top-level spec).
+func TestBuildJob_BuildOutputDirFlowsToCopier(t *testing.T) {
+	app := baseApp()
+	app.Spec.Build.OutputDir = "out"
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
+	if copier == nil {
+		t.Fatal("no copier container")
+	}
+	assertEnvVar(t, copier, "OUTPUT_DIR", "out")
 }
 
 // Bug fix: optional phases (setup/fetch) with no command no-op via ["true"]

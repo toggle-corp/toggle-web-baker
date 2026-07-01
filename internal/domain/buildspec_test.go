@@ -18,8 +18,12 @@ func sampleBuildSpec() BuildSpec {
 		Ref:            "deploy-prod",
 		PackageManager: "yarn",
 		Setup:          PhaseSpec{Image: "node:20", Command: []string{"yarn", "install"}},
-		Build:          PhaseSpec{Image: "node:20", Command: []string{"yarn", "build"}},
-		BuildArgs:      map[string]string{"NEXT_PUBLIC_API": "https://api", "NEXT_PUBLIC_ENV": "uat"},
+		Build: PhaseSpec{
+			Image:   "node:20",
+			Command: []string{"yarn", "build"},
+			Env:     map[string]string{"NEXT_PUBLIC_API": "https://api", "NEXT_PUBLIC_ENV": "uat"},
+		},
+		OutputDir: "dist",
 	}
 }
 
@@ -69,15 +73,51 @@ func TestBuildSpecHash_NilAndEmptyCollectionsHashEqual(t *testing.T) {
 	// CRD round-tripping normalizes omitted vs empty collections; nil and empty
 	// must hash identically or staleness flip-flops forever.
 	a := sampleBuildSpec()
-	a.BuildArgs = nil
+	a.Build.Env = nil
 	a.SecretRefs = nil
 	a.Build.Command = nil
 	b := sampleBuildSpec()
-	b.BuildArgs = map[string]string{}
+	b.Build.Env = map[string]string{}
 	b.SecretRefs = []string{}
 	b.Build.Command = []string{}
 	if a.Hash() != b.Hash() {
 		t.Fatalf("nil and empty collections must hash equally (got %s vs %s)", a.Hash(), b.Hash())
+	}
+}
+
+func TestBuildSpecHash_ChangesWhenSetupEnvChanges(t *testing.T) {
+	a := sampleBuildSpec()
+	b := sampleBuildSpec()
+	b.Setup.Env = map[string]string{"CI": "1"}
+	if a.Hash() == b.Hash() {
+		t.Fatalf("changing setup.env must change the hash")
+	}
+}
+
+func TestBuildSpecHash_ChangesWhenFetchEnvChanges(t *testing.T) {
+	a := sampleBuildSpec()
+	b := sampleBuildSpec()
+	b.Fetch.Env = map[string]string{"REGION": "eu"}
+	if a.Hash() == b.Hash() {
+		t.Fatalf("changing fetch.env must change the hash")
+	}
+}
+
+func TestBuildSpecHash_ChangesWhenBuildEnvChanges(t *testing.T) {
+	a := sampleBuildSpec()
+	b := sampleBuildSpec()
+	b.Build.Env = map[string]string{"NEXT_PUBLIC_API": "https://other"}
+	if a.Hash() == b.Hash() {
+		t.Fatalf("changing build.env must change the hash")
+	}
+}
+
+func TestBuildSpecHash_ChangesWhenOutputDirChanges(t *testing.T) {
+	a := sampleBuildSpec()
+	b := sampleBuildSpec()
+	b.OutputDir = "out"
+	if a.Hash() == b.Hash() {
+		t.Fatalf("changing outputDir must change the hash")
 	}
 }
 

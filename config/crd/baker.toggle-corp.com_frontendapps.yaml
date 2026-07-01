@@ -88,9 +88,9 @@ spec:
                     1 : 0) == 1'
               build:
                 description: |-
-                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
-                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
-                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                  BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
+                  copier publishes. build carries more than setup/fetch, so it has its own type
+                  (setup/fetch stay plain PhaseSpec).
                 properties:
                   command:
                     items:
@@ -141,6 +141,16 @@ spec:
                       Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
                       Shared by setup/fetch/build via PhaseSpec.
                     type: string
+                  outputDir:
+                    description: |-
+                      OutputDir is the subdir of the workspace holding the built bundle (the
+                      copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a relative
+                      path: no leading "/" and no ".." segment. The RE2 pattern pins the first
+                      character to an alnum/_/. and restricts the rest to a safe set (which
+                      rejects a leading "/"); the ".." rejection is a CEL rule on the spec (RE2
+                      has no lookaround).
+                    pattern: ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$
+                    type: string
                   runAsUser:
                     description: |-
                       RunAsUser pins this phase container's numeric UID. The build pod sets
@@ -153,42 +163,6 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
-              buildArgs:
-                description: BuildArgs are PUBLIC, ConfigMap-sourced env that may
-                  reach the bundle.
-                items:
-                  description: |-
-                    EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
-                    reach the built bundle, so it must never carry secrets.
-                  properties:
-                    name:
-                      type: string
-                    value:
-                      type: string
-                    valueFrom:
-                      description: |-
-                        EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
-                        ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
-                        secrets can never leak into setup/build env via this type.
-                      properties:
-                        configMapKeyRef:
-                          description: ConfigMapKeySelector selects a key from a ConfigMap
-                            in the app namespace.
-                          properties:
-                            key:
-                              type: string
-                            name:
-                              type: string
-                          required:
-                          - key
-                          - name
-                          type: object
-                      type: object
-                  required:
-                  - name
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
               fetch:
                 description: |-
                   PhaseSpec describes one pipeline phase container (setup / fetch / build). The
@@ -288,8 +262,6 @@ spec:
                   to supply build.image yourself.
                 minimum: 1
                 type: integer
-              outputDir:
-                type: string
               packageManager:
                 default: yarn
                 description: PackageManager selects the JS package manager (drives
@@ -482,6 +454,8 @@ spec:
                 && has(self.fetch.command) && size(self.fetch.command) > 0)'
             - message: 'build needs an image: set spec.nodeVersion or build.image'
               rule: has(self.nodeVersion) || (has(self.build) && has(self.build.image))
+            - message: build.outputDir must not contain a '..' segment
+              rule: '!has(self.build) || !has(self.build.outputDir) || !self.build.outputDir.contains(''..'')'
           status:
             description: FrontendAppStatus is the operator-owned observed state.
             properties:

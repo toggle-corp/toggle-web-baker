@@ -13,6 +13,12 @@ type PhaseSpec struct {
 	// RunAsUser changes the container's runtime UID, so a change to it changes
 	// the build environment and must mark the app stale.
 	RunAsUser *int64 `json:"runAsUser,omitempty"`
+	// Env is the phase's public env (Name→Value). It replaces the old top-level
+	// buildArgs as the single per-phase build-env channel; a change to it can
+	// alter the artifact, so it is hashed. Sorted-key JSON marshaling makes the
+	// hash deterministic. ValueFrom identity is intentionally NOT captured here
+	// (only literal values), preserving the prior buildArgs hashing behavior.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // BuildSpec is the build-relevant subset of a FrontendApp spec. Changing any
@@ -31,12 +37,16 @@ type BuildSpec struct {
 	// hash, so apps predating this field (and all BYO-image apps) keep their
 	// existing hash across an operator upgrade instead of spuriously flipping
 	// SpecStale.
-	NodeVersion int               `json:"nodeVersion,omitempty"`
-	Setup       PhaseSpec         `json:"setup"`
-	Fetch       PhaseSpec         `json:"fetch"`
-	Build       PhaseSpec         `json:"build"`
-	BuildArgs   map[string]string `json:"buildArgs"`
-	SecretRefs  []string          `json:"secretRefs"`
+	NodeVersion int       `json:"nodeVersion,omitempty"`
+	Setup       PhaseSpec `json:"setup"`
+	Fetch       PhaseSpec `json:"fetch"`
+	Build       PhaseSpec `json:"build"`
+	// OutputDir is the subdir of the workspace the copier publishes. It moved
+	// out of the top-level spec under spec.build; changing it changes what gets
+	// served, so it is hashed. omitempty keeps an empty value out of the payload
+	// (the "dist" fallback is a runtime concern, not normalized here).
+	OutputDir  string   `json:"outputDir,omitempty"`
+	SecretRefs []string `json:"secretRefs"`
 }
 
 // IsStale reports whether the current build-relevant spec differs from the
@@ -49,8 +59,8 @@ func IsStale(current BuildSpec, lastBuiltHash string) bool {
 }
 
 // Hash returns a deterministic content hash of the build-relevant spec.
-// encoding/json marshals map keys in sorted order, so buildArgs ordering does
-// not affect the result. Empty collections are normalized to nil first so that
+// encoding/json marshals map keys in sorted order, so per-phase env ordering
+// does not affect the result. Empty collections are normalized to nil first so that
 // a CR omitting a field and the API server materializing it as an empty
 // map/slice hash identically (otherwise staleness would flip-flop forever).
 func (b BuildSpec) Hash() string {
@@ -60,9 +70,6 @@ func (b BuildSpec) Hash() string {
 }
 
 func (b BuildSpec) normalized() BuildSpec {
-	if len(b.BuildArgs) == 0 {
-		b.BuildArgs = nil
-	}
 	if len(b.SecretRefs) == 0 {
 		b.SecretRefs = nil
 	}
@@ -75,6 +82,9 @@ func (b BuildSpec) normalized() BuildSpec {
 func (p PhaseSpec) normalized() PhaseSpec {
 	if len(p.Command) == 0 {
 		p.Command = nil
+	}
+	if len(p.Env) == 0 {
+		p.Env = nil
 	}
 	return p
 }

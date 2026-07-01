@@ -94,11 +94,14 @@ func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alp
 		}
 	}
 
-	// Build-args ConfigMap (public values materialized for the build phase).
+	// Build-env ConfigMap (public literal values materialized for the build
+	// phase). buildArgs is gone; the public build-env channel is now
+	// spec.build.env. ValueFrom (ConfigMap-sourced) entries are skipped — only
+	// literal values are materialized here.
 	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: buildArgsConfigName(app), Namespace: app.Namespace, Labels: labelsFor(app)}}
 	if err := r.upsert(ctx, app, cm, func() {
 		data := map[string]string{}
-		for _, e := range app.Spec.BuildArgs {
+		for _, e := range app.Spec.Build.Env {
 			if e.ValueFrom == nil {
 				data[e.Name] = e.Value
 			}

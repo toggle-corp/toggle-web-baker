@@ -217,8 +217,6 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	base := commonMounts()
 	pmEnv := pkgManagerEnv(app)
 
-	publicEnv := toEnvVars(app.Spec.BuildArgs)
-
 	// clone: platform image, no caches needed beyond work. SUBMODULES is set
 	// ONLY when the app opts in; the entrypoint defaults to no submodule
 	// recursion when the env is absent.
@@ -242,7 +240,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	// overrides). HOME is injected only for managed node phases.
 	setupR := r.resolvePhase(app, app.Spec.Setup)
 	fetchR := r.resolvePhase(app, app.Spec.Fetch)
-	buildR := r.resolvePhase(app, app.Spec.Build)
+	buildR := r.resolvePhase(app, app.Spec.Build.PhaseSpec)
 
 	// setup: install deps. Mounts cache (RW for pnpm store / yarn cache).
 	setupMounts := append(append([]corev1.VolumeMount{}, base...), cacheMount)
@@ -273,10 +271,9 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		SecurityContext: resolvedSecurityContext(fetchR),
 	}
 
-	// build: public buildArgs + NODE_OPTIONS etc. Mounts cache RW (both PMs) and
+	// build: public build.env + NODE_OPTIONS etc. Mounts cache RW (both PMs) and
 	// data RO. NEVER mounts the output PVC.
 	buildEnv := append([]corev1.EnvVar{}, pmEnv...)
-	buildEnv = append(buildEnv, publicEnv...)
 	buildEnv = append(buildEnv, toEnvVars(app.Spec.Build.Env)...)
 	buildMounts := append(append([]corev1.VolumeMount{}, base...),
 		cacheMount,
@@ -294,7 +291,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 
 	// copier (MAIN): the only container mounting the output PVC. Publishes the
 	// built bundle and emits build-derived status as a termination message.
-	outputDir := app.Spec.OutputDir
+	outputDir := app.Spec.Build.OutputDir
 	if outputDir == "" {
 		outputDir = "dist"
 	}

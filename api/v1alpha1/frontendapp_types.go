@@ -168,6 +168,22 @@ type PhaseSpec struct {
 	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
 
+// BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
+// copier publishes. build carries more than setup/fetch, so it has its own type
+// (setup/fetch stay plain PhaseSpec).
+type BuildPhaseSpec struct {
+	PhaseSpec `json:",inline"`
+	// OutputDir is the subdir of the workspace holding the built bundle (the
+	// copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a relative
+	// path: no leading "/" and no ".." segment. The RE2 pattern pins the first
+	// character to an alnum/_/. and restricts the rest to a safe set (which
+	// rejects a leading "/"); the ".." rejection is a CEL rule on the spec (RE2
+	// has no lookaround).
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$`
+	// +optional
+	OutputDir string `json:"outputDir,omitempty"`
+}
+
 // PackageManager selects the JS package manager (drives the volume layout).
 // +kubebuilder:validation:Enum=yarn;pnpm
 type PackageManager string
@@ -263,6 +279,7 @@ type StorageConfig struct {
 // +kubebuilder:validation:XValidation:rule="has(self.build) && has(self.build.command) && size(self.build.command) > 0",message="build.command is required"
 // +kubebuilder:validation:XValidation:rule="!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch) && has(self.fetch.command) && size(self.fetch.command) > 0)",message="secrets require a fetch.command to consume them"
 // +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || (has(self.build) && has(self.build.image))",message="build needs an image: set spec.nodeVersion or build.image"
+// +kubebuilder:validation:XValidation:rule="!has(self.build) || !has(self.build.outputDir) || !self.build.outputDir.contains('..')",message="build.outputDir must not contain a '..' segment"
 type FrontendAppSpec struct {
 	// +kubebuilder:validation:Required
 	Repo string `json:"repo"`
@@ -294,10 +311,8 @@ type FrontendAppSpec struct {
 	// +optional
 	Fetch PhaseSpec `json:"fetch,omitempty"`
 	// +optional
-	Build PhaseSpec `json:"build,omitempty"`
+	Build BuildPhaseSpec `json:"build,omitempty"`
 
-	// +optional
-	OutputDir string `json:"outputDir,omitempty"`
 	// +kubebuilder:default=0
 	// +optional
 	KeepReleases int `json:"keepReleases,omitempty"`
@@ -307,11 +322,6 @@ type FrontendAppSpec struct {
 	// here — operator config owns it).
 	// +optional
 	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
-
-	// BuildArgs are PUBLIC, ConfigMap-sourced env that may reach the bundle.
-	// +optional
-	// +listType=atomic
-	BuildArgs []EnvVar `json:"buildArgs,omitempty"`
 
 	// Secrets are Secret-sourced env injected into the FETCH phase ONLY.
 	// +optional
