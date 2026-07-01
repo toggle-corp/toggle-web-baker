@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
 // PlatformImages are the platform-locked image refs the operator stamps onto
@@ -47,6 +50,26 @@ type OperatorConfig struct {
 	MeasureInterval time.Duration
 
 	Images PlatformImages
+
+	// NodeImages maps a node MAJOR (decimal string key) to its managed image +
+	// UID + optional HOME. It is chart-owned (values.yaml), arriving as the single
+	// JSON -node-images flag. An app's spec.nodeVersion is resolved against this
+	// map; a version absent here fails the app at reconcile (ReasonUnknownNodeVersion).
+	NodeImages map[string]domain.NodeImage
+}
+
+// ParseNodeImages decodes the -node-images JSON flag into the node-image map.
+// An empty string yields no entries (the feature is simply unused); malformed
+// JSON is a hard error so a bad chart value fails loudly at operator startup.
+func ParseNodeImages(s string) (map[string]domain.NodeImage, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var m map[string]domain.NodeImage
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, fmt.Errorf("parse -node-images: %w", err)
+	}
+	return m, nil
 }
 
 // MetadataIP is the link-local cloud metadata endpoint, always denied to build

@@ -25,6 +25,38 @@ func TestConfigDefaults_HelperImageRepos(t *testing.T) {
 	}
 }
 
+// The node-image map arrives as a single JSON flag (Helm-templated from
+// values.yaml). Empty is valid (feature simply unused); malformed JSON is a
+// hard error so a bad chart value fails loudly at startup.
+func TestParseNodeImages_ParsesJSONMap(t *testing.T) {
+	m, err := ParseNodeImages(`{"18":{"image":"ghcr.io/x-node18@sha256:aaa","runAsUser":1000},"24":{"image":"ghcr.io/x-node24@sha256:bbb","runAsUser":1000,"home":"/home/node"}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m["18"].Image != "ghcr.io/x-node18@sha256:aaa" || m["18"].RunAsUser == nil || *m["18"].RunAsUser != 1000 {
+		t.Fatalf("node18 entry parsed wrong: %+v", m["18"])
+	}
+	if m["24"].Home != "/home/node" {
+		t.Fatalf("node24 home parsed wrong: %+v", m["24"])
+	}
+}
+
+func TestParseNodeImages_EmptyIsNilNoError(t *testing.T) {
+	m, err := ParseNodeImages("")
+	if err != nil {
+		t.Fatalf("empty must not error, got %v", err)
+	}
+	if len(m) != 0 {
+		t.Fatalf("empty must yield no entries, got %+v", m)
+	}
+}
+
+func TestParseNodeImages_MalformedErrors(t *testing.T) {
+	if _, err := ParseNodeImages(`{"18": not-json}`); err == nil {
+		t.Fatal("expected error for malformed JSON, got nil")
+	}
+}
+
 func validConfig() OperatorConfig {
 	c := OperatorConfig{
 		ClusterCIDRs: []string{"10.0.0.0/8", "172.20.0.0/16"},

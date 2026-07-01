@@ -73,6 +73,9 @@ func main() {
 	flag.StringVar(&cfg.Images.Clock, "image-clock", "", "digest-pinned clock image for the CronJob tick")
 	flag.StringVar(&cfg.Images.Nginx, "image-nginx", "", "nginx serving image")
 
+	var nodeImagesJSON string
+	flag.StringVar(&nodeImagesJSON, "node-images", "", `JSON map of node MAJOR -> {"image","runAsUser","home"} for spec.nodeVersion (Helm-templated from values.yaml)`)
+
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -81,6 +84,12 @@ func main() {
 
 	cfg.RegistryAllowlist = registryAllowlist
 	cfg.ClusterCIDRs = clusterCIDRs
+	nodeImages, err := controller.ParseNodeImages(nodeImagesJSON)
+	if err != nil {
+		setupLog.Error(err, "invalid -node-images flag")
+		os.Exit(1)
+	}
+	cfg.NodeImages = nodeImages
 	cfg.Defaults()
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
