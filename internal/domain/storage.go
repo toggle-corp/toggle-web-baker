@@ -91,12 +91,18 @@ func EvaluateThresholdState(sizes map[string]int64, cfg StorageConfig) string {
 }
 
 // thresholdsForKey maps a status.storage.sizes key to its configured thresholds
-// by substring, mirroring the console's capForKey resolution: "output" →
-// Output, "data" → DataCache (checked before "cache" so "dataCache" resolves
-// correctly), else "cache" → Cache.
+// by substring, mirroring the console's capForKey resolution: "total" → none
+// (checked before "output"), "output" → Output, "data" → DataCache (checked
+// before "cache" so "dataCache" resolves correctly), else "cache" → Cache.
 func thresholdsForKey(key string, cfg StorageConfig) (VolumeThresholds, bool) {
 	k := strings.ToLower(key)
 	switch {
+	case strings.Contains(k, "total"):
+		// "outputTotal" is the whole output PVC across all retained releases; the
+		// per-release output thresholds don't bound it and there is no total
+		// threshold, so it has no threshold state. Match "total" BEFORE "output"
+		// so it isn't evaluated against output.alertBytes/capBytes.
+		return VolumeThresholds{}, false
 	case strings.Contains(k, "output"):
 		return cfg.Output, true
 	case strings.Contains(k, "data"):

@@ -136,9 +136,16 @@ emit_status() {
 	fi
 
 	# du of the WHOLE releases dir, measured here (post retention sweep + flip) so
-	# it reflects the on-PVC total across all retained releases.
+	# it reflects the on-PVC total across all retained releases. du_bytes pipes
+	# du into awk, so its exit status is awk's (always 0) — a `|| total_bytes=0`
+	# would never fire. Guard on the value instead: a non-integer/empty capture
+	# (du failed) falls back to 0 so we never emit malformed JSON that would make
+	# the operator discard the entire termination status (release flip + sizes).
 	local total_bytes
-	total_bytes="$(du_bytes "$RELEASES_DIR")" || total_bytes=0
+	total_bytes="$(du_bytes "$RELEASES_DIR")"
+	case "$total_bytes" in
+	'' | *[!0-9]*) total_bytes=0 ;;
+	esac
 
 	# Field names match the operator's CopierMessage parser (internal/controller
 	# /ensure.go): release.current flips the served-release pointer; sizes is the

@@ -370,10 +370,13 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 			// res.After is a fresh du of the pruned target, so feed it back into
 			// status.storage.sizes via recordSize — refreshing sizes + MeasuredAt
 			// without a separate measurement Job (the negative LastRunDeltas
-			// legitimately shows the reclaimed space). Guard against a skip or an
-			// early-exit ("releases dir not found") which report after=0 and must
-			// not clobber a real prior measurement with 0.
-			if res.Action != "skip" && res.After > 0 {
+			// legitimately shows the reclaimed space). A fully-emptied cache
+			// reports after=0 legitimately (du -sb of an empty dir is 0), so we
+			// gate on before>0, not after>0 — that still rejects the release
+			// "dir not found" early-exit (before=0) without dropping a real
+			// prune-to-empty. The skip check excludes an under-threshold cache
+			// skip, which reports before>0 but no meaningful after.
+			if res.Action != "skip" && res.Before > 0 {
 				r.recordSize(app, sizeKeyForCleanupMode(mode), res.After)
 			}
 		} else {

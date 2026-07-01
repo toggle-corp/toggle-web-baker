@@ -90,6 +90,18 @@ func TestEvaluateThresholdState_CriticalWhenOutputOverCap(t *testing.T) {
 	}
 }
 
+func TestEvaluateThresholdState_OutputTotalIgnoresPerReleaseThresholds(t *testing.T) {
+	// "outputTotal" (whole PVC across all retained releases) contains "output"
+	// but must NOT be evaluated against the per-release output cap/alert — the
+	// total legitimately exceeds a single-release cap once keepReleases > 1.
+	cfg := StorageConfig{Output: VolumeThresholds{AlertBytes: 8 << 30, CapBytes: 10 << 30}}
+	// outputTotal way over the per-release cap; output (current release) under it.
+	sizes := map[string]int64{"output": 2 << 30, "outputTotal": 50 << 30}
+	if got := EvaluateThresholdState(sizes, cfg); got != ThresholdStateOK {
+		t.Fatalf("outputTotal must not trip the per-release cap; want OK, got %q", got)
+	}
+}
+
 func TestEvaluateThresholdState_DataCacheKeyResolvesToDataThresholds(t *testing.T) {
 	// "dataCache" contains both "data" and "cache"; it must resolve to the
 	// dataCache thresholds (data checked first), mirroring the console.

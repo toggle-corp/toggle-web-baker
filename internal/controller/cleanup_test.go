@@ -399,6 +399,67 @@ func TestReconcile_CacheCleanupWritesBackSize(t *testing.T) {
 	}
 }
 
+// A prune that empties the cache reports after=0 legitimately (du -sb of an
+// empty dir is 0). The writeback must record 0, not skip it as "no measurement"
+// — otherwise the console keeps showing the stale pre-prune size. The guard is
+// before>0, so a real prune-to-empty (before>0, after=0) still records.
+func TestReconcile_CacheCleanupToEmptyRecordsZero(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.CleanupCacheRequestedAtAnnotation: "c-1",
+	}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{
+		Cache: &bakerv1alpha1.CleanupActionStatus{RequestedAt: "c-1", Phase: "Running"},
+	}
+	app.Status.Storage.Sizes = map[string]int64{"cache": 1000}
+	r, cl := newReconciler(t, app, wffc())
+	if err := cl.Status().Update(context.Background(), app); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	completeCleanupJob(t, cl, app, cleanupModeCache,
+		`{"action":"yarn cache trim","before":1000,"after":0,"reclaimed":1000,"threshold":0}`)
+
+	reconcile(t, r, app)
+	reconcile(t, r, app)
+
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Storage.Sizes["cache"] != 0 {
+		t.Fatalf(`sizes["cache"] = %d, want 0 (emptied cache recorded)`, got.Status.Storage.Sizes["cache"])
+	}
+}
+
+// The release-prune "dir not found" early-exit reports before=0/after=0. That
+// must NOT clobber a real prior outputTotal with 0 — the before>0 guard rejects
+// it (distinct from a genuine prune-to-empty, which has before>0).
+func TestReconcile_ReleaseCleanupDirNotFoundDoesNotClobber(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.CleanupReleasesRequestedAtAnnotation: "r-1",
+	}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{
+		Releases: &bakerv1alpha1.CleanupActionStatus{RequestedAt: "r-1", Phase: "Running"},
+	}
+	app.Status.Storage.Sizes = map[string]int64{"outputTotal": 7000}
+	r, cl := newReconciler(t, app, wffc())
+	if err := cl.Status().Update(context.Background(), app); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	completeCleanupJob(t, cl, app, cleanupModeReleases,
+		`{"action":"release-prune","kept":0,"deleted":0,"before":0,"after":0,"reclaimed":0}`)
+
+	reconcile(t, r, app)
+	reconcile(t, r, app)
+
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Storage.Sizes["outputTotal"] != 7000 {
+		t.Fatalf(`sizes["outputTotal"] = %d, want 7000 (unchanged)`, got.Status.Storage.Sizes["outputTotal"])
+	}
+}
+
 // A completed release prune shrinks the whole releases dir, which the copier
 // reports under sizes["outputTotal"] (the current release under "output" is
 // protected). The JSON "after" is written back to that key.

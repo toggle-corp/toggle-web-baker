@@ -160,12 +160,10 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// 9b. Observe finished du measurement Jobs and merge cache/dataCache sizes
-	// into status.storage.sizes (alongside the copier's output/source entries).
+	// into status.storage.sizes (alongside the copier's output/outputTotal entries).
 	if err := r.observeMeasurement(ctx, app); err != nil {
 		return ctrl.Result{}, err
 	}
-	// Recompute the storage threshold badge from the merged sizes vs spec.storage.
-	app.Status.Storage.ThresholdState = domain.EvaluateThresholdState(app.Status.Storage.Sizes, storageConfigFrom(app))
 
 	// 9c. On-demand cleanup (cache prune / release prune). Observe finished
 	// cleanup Jobs, then start any fresh request — serialized against the build
@@ -173,6 +171,11 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.reconcileCleanup(ctx, app, active); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// Recompute the storage threshold badge from the merged sizes vs spec.storage.
+	// AFTER reconcileCleanup so a prune's size writeback (observeCleanup) is
+	// reflected in the same reconcile rather than lagging one requeue behind.
+	app.Status.Storage.ThresholdState = domain.EvaluateThresholdState(app.Status.Storage.Sizes, storageConfigFrom(app))
 
 	// 10. nginx + Service + Ingress, ONLY after a successful deploy.
 	if r.hasSucceededOnce(app) {
