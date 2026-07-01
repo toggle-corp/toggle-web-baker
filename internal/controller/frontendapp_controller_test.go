@@ -707,6 +707,88 @@ func TestObserveBuild_FailureSetsFailedStepAndHistory(t *testing.T) {
 	}
 }
 
+// Behavior 7 (terminal-failure, OOM): on a JobFailed whose build container was
+// OOMKilled, observeBuild persists status.build.termination (surviving the pod),
+// stamps the failed step's message, promotes the failure conditions' reason to
+// OOMKilled, and carries the termination into history.
+func TestObserveBuild_OOMKilledSetsTerminationAndCondition(t *testing.T) {
+	app := baseApp()
+	r, cl := newReconciler(t, app, wffc())
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "demo-build-oom", Namespace: app.Namespace, UID: "oom-uid",
+			Labels:      buildLabelsFor(app),
+			Annotations: map[string]string{bakerv1alpha1.SpecHashAnnotation: buildSpecFrom(app).Hash()},
+		},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Message: "boom"}}},
+	}
+	if err := cl.Create(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	// Build pod with a memory limit on the build container and an OOMKilled
+	// terminated state, so the limit is read end-to-end from the pod spec.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "demo-build-oom-pod", Namespace: app.Namespace, Labels: buildLabelsFor(app),
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true),
+			}},
+		},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{Name: "clone"},
+				{Name: "build", Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("256Mi")},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{
+			{Name: "clone", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+			{Name: "build", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "OOMKilled"}}},
+		}},
+	}
+	if err := cl.Create(context.Background(), pod); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+	app.Status.Build = bakerv1alpha1.BuildStatus{Phase: bakerv1alpha1.BuildPhaseRunning, JobName: "demo-build-oom"}
+
+	if err := r.observeBuild(context.Background(), app); err != nil {
+		t.Fatalf("observeBuild: %v", err)
+	}
+
+	term := app.Status.Build.Termination
+	if term == nil {
+		t.Fatal("Termination = nil, want the OOMKilled build container")
+	}
+	if term.Reason != "OOMKilled" || term.Container != bakerv1alpha1.StepBuild || term.ExitCode != 137 || term.MemoryLimit != "256Mi" {
+		t.Fatalf("Termination = %+v, want {OOMKilled build 137 256Mi}", term)
+	}
+	// Failed step message annotated with the OOM + limit.
+	var buildMsg string
+	for _, s := range app.Status.Build.Steps {
+		if s.Name == bakerv1alpha1.StepBuild {
+			buildMsg = s.Message
+		}
+	}
+	if buildMsg != "OOMKilled (limit 256Mi)" {
+		t.Fatalf("build step message = %q, want %q", buildMsg, "OOMKilled (limit 256Mi)")
+	}
+	// Conditions promoted to the OOMKilled reason (not the generic BuildFailed).
+	bs := findCondition(app, bakerv1alpha1.ConditionBuildSucceeded)
+	if bs == nil || bs.Status != metav1.ConditionFalse || bs.Reason != bakerv1alpha1.ReasonOOMKilled {
+		t.Fatalf("BuildSucceeded = %+v, want False/OOMKilled", bs)
+	}
+	deg := findCondition(app, bakerv1alpha1.ConditionDegraded)
+	if deg == nil || deg.Status != metav1.ConditionTrue || deg.Reason != bakerv1alpha1.ReasonOOMKilled {
+		t.Fatalf("Degraded = %+v, want True/OOMKilled", deg)
+	}
+	// The termination is carried into the history copy.
+	if len(app.Status.BuildHistory) != 1 || app.Status.BuildHistory[0].Termination == nil ||
+		app.Status.BuildHistory[0].Termination.Reason != "OOMKilled" {
+		t.Fatalf("history entry missing OOM termination: %+v", app.Status.BuildHistory)
+	}
+}
+
 // completeJob builds a finished (Complete) build Job with the given spec-hash
 // annotation, registered in the fake client.
 func completeJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, name, specHash string) *batchv1.Job {

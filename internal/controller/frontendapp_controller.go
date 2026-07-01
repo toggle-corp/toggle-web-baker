@@ -506,8 +506,9 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		app.Status.Build.Result = bakerv1alpha1.BuildResultFailed
 		app.Status.Build.Message = cond.Message
 		app.Status.Build.LogsRef = job.Name // FAILED job retained (no TTL) for logs
-		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionFalse, "BuildFailed", cond.Message)
-		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, "BuildFailed", cond.Message)
+		// The failure conditions are set below, AFTER the build pod is read, so an
+		// OOM kill can surface its own reason (ReasonOOMKilled) rather than the
+		// generic BuildFailed.
 	}
 
 	// Finalize the per-step timeline from the build pod's terminal container
@@ -529,6 +530,25 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		app.Status.Build.Steps = deriveBuildSteps(applicable, pod, releaseDone)
 	}
 	app.Status.Build.FailedStep = failedStep(app.Status.Build.Steps)
+
+	// On failure, capture how the build container terminated (OOMKilled etc.)
+	// from the pod that just finished, so the fact is persisted on status.build
+	// and survives the pod being reaped. An OOM kill promotes the failure
+	// conditions' reason to ReasonOOMKilled and stamps the failed step's message.
+	if app.Status.Build.Result == bakerv1alpha1.BuildResultFailed {
+		reason, message := "BuildFailed", cond.Message
+		if term := detectTermination(pod, applicable); term != nil {
+			app.Status.Build.Termination = term
+			if msg := terminationStepMessage(term); msg != "" {
+				stampStepMessage(app.Status.Build.Steps, term.Container, msg)
+			}
+			if term.Reason == bakerv1alpha1.TerminationReasonOOMKilled {
+				reason, message = bakerv1alpha1.ReasonOOMKilled, oomConditionMessage(term)
+			}
+		}
+		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionFalse, reason, message)
+		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, message)
+	}
 
 	// Append a COPY of the finalized record to the newest-first history ring
 	// (deduped by JobName as a safety net against a re-observe).
