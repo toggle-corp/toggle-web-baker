@@ -36,6 +36,7 @@ func fullStatusObj() *unstructured.Unstructured {
 				"jobName":        "mapswipe-uat-build-7",
 				"podName":        "mapswipe-uat-build-7-abcde",
 				"trigger":        "Manual",
+				"triggeredBy":    "octocat",
 				"failedStep":     "build",
 				"startTime":      "2026-06-25T09:50:00Z",
 				"completionTime": "2026-06-25T09:55:00Z",
@@ -100,6 +101,9 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	if a.Build.PodName != "mapswipe-uat-build-7-abcde" || a.Build.Trigger != "Manual" || a.Build.FailedStep != "build" {
 		t.Errorf("build new fields wrong: %+v", a.Build)
 	}
+	if a.Build.TriggeredBy != "octocat" {
+		t.Errorf("build triggeredBy wrong: %q", a.Build.TriggeredBy)
+	}
 	if len(a.Build.Steps) != 2 {
 		t.Fatalf("want 2 steps, got %d", len(a.Build.Steps))
 	}
@@ -126,6 +130,27 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	}
 	if a.LastSuccessfulBuild != "2026-06-24T09:55:00Z" {
 		t.Errorf("lastSuccessfulBuildTime wrong: %q", a.LastSuccessfulBuild)
+	}
+}
+
+func TestBuild_TriggerLabel(t *testing.T) {
+	cases := []struct {
+		name  string
+		build Build
+		want  string
+	}{
+		{"manual attributed", Build{Trigger: "Manual", TriggeredBy: "octocat"}, "Manual · octocat"},
+		{"scheduled unattributed", Build{Trigger: "Scheduled"}, "Scheduled"},
+		{"manual without user", Build{Trigger: "Manual"}, "Manual"},
+		{"empty trigger", Build{}, "—"},
+		{"empty trigger with user", Build{TriggeredBy: "octocat"}, "—"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.build.TriggerLabel(); got != tc.want {
+				t.Errorf("TriggerLabel() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

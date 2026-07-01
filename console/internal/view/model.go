@@ -55,6 +55,7 @@ type Build struct {
 	JobName        string
 	PodName        string
 	Trigger        string // "Scheduled" | "Manual" | "SpecChange"
+	TriggeredBy    string // github username for an attributed manual build; empty otherwise
 	StartTime      string
 	CompletionTime string
 	Attempts       int64
@@ -62,6 +63,22 @@ type Build struct {
 	Message        string
 	LogsRef        string
 	Steps          []Step
+}
+
+// TriggerLabel renders the build trigger with its author when known:
+// "Manual · octocat" for an attributed manual build, else just the trigger
+// ("Scheduled"), or the em-dash (matching the `dash` template func) when the
+// trigger is unknown. Kept here — not in the template — so it stays logic-free
+// and unit-testable. TriggeredBy is only meaningful alongside a trigger, so an
+// author with no trigger still renders the em-dash.
+func (b Build) TriggerLabel() string {
+	if b.Trigger == "" {
+		return "—"
+	}
+	if b.TriggeredBy != "" {
+		return b.Trigger + " · " + b.TriggeredBy
+	}
+	return b.Trigger
 }
 
 // Release mirrors status.release.
@@ -361,6 +378,7 @@ func buildFrom(v any) Build {
 		JobName:        asString(m["jobName"]),
 		PodName:        asString(m["podName"]),
 		Trigger:        asString(m["trigger"]),
+		TriggeredBy:    asString(m["triggeredBy"]),
 		StartTime:      asString(m["startTime"]),
 		CompletionTime: asString(m["completionTime"]),
 		Attempts:       asInt(m["attempts"]),

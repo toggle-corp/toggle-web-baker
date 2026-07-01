@@ -24,7 +24,7 @@
       {{template "flowstrip" .Build}}
       <div class="kv" style="margin-top:8px"><span class="k">Phase</span><span class="v">{{dash .Build.Phase}}</span></div>
       <div class="kv"><span class="k">Result</span><span class="v">{{dash .Build.Result}}</span></div>
-      <div class="kv"><span class="k">Trigger</span><span class="v">{{dash .Build.Trigger}}</span></div>
+      <div class="kv"><span class="k">Trigger</span><span class="v">{{.Build.TriggerLabel}}</span></div>
       <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
       <div class="kv"><span class="k">Started</span><span class="v">{{timetag .Build.StartTime}}</span></div>
       {{if .Build.FailedStep}}<div class="kv"><span class="k">Failed step</span><span class="v b-false">{{.Build.FailedStep}}</span></div>{{end}}
@@ -62,7 +62,7 @@
         <div class="build-row">
           <div class="build-row-head">
             <span class="badge b-{{if eq .Result "Succeeded"}}ready{{else if eq .Result "Failed"}}degraded{{else}}pending{{end}}">{{dash .Result}}</span>
-            <span class="small muted">{{dash .Trigger}}</span>
+            <span class="small muted">{{.TriggerLabel}}</span>
             <span class="small muted">{{timetag .CompletionTime}}</span>
           </div>
           {{template "flowstrip" .}}

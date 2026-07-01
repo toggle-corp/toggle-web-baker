@@ -430,6 +430,40 @@ func TestDetail_RendersStatus(t *testing.T) {
 	}
 }
 
+func TestDetail_RendersManualTriggerAuthor(t *testing.T) {
+	// A current manual build attributed to octocat, plus a manual history row,
+	// must surface the author on both the current-build and recent-builds cards.
+	status := map[string]any{
+		"phase": "Ready",
+		"build": map[string]any{
+			"phase":       "Complete",
+			"result":      "Succeeded",
+			"jobName":     "mapswipe-uat-build-7",
+			"trigger":     "Manual",
+			"triggeredBy": "octocat",
+		},
+		"buildHistory": []any{
+			map[string]any{"jobName": "mapswipe-uat-build-7", "result": "Succeeded", "trigger": "Manual", "triggeredBy": "octocat"},
+		},
+	}
+	srv := New(k8s.NewWithDynamic(seededDyn(t, status)), &fakePodReader{}, &fakeLokiTailer{}, nil)
+	req := httptest.NewRequest(http.MethodGet, "/ns/mapswipe/app/mapswipe-uat", nil)
+	req.SetPathValue("namespace", "mapswipe")
+	req.SetPathValue("name", "mapswipe-uat")
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Manual · octocat") {
+		t.Errorf("detail page should surface the manual trigger author; body=%s", body)
+	}
+	if strings.Count(body, "· octocat") < 2 {
+		t.Errorf("author should appear on both current-build and recent-builds cards; body=%s", body)
+	}
+}
+
 // runningBuildStatus is a current build mid-flight (no completionTime → live pod).
 func runningBuildStatus() map[string]any {
 	return map[string]any{
