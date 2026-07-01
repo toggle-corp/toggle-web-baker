@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
@@ -68,6 +69,24 @@ func ParseNodeImages(s string) (map[string]domain.NodeImage, error) {
 	var m map[string]domain.NodeImage
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
 		return nil, fmt.Errorf("parse -node-images: %w", err)
+	}
+	// Fail loud at startup on a semantically broken entry rather than emitting a
+	// build pod that can't schedule (empty image) or fails runAsNonRoot admission
+	// (missing / root UID). These images are operator-run, so a bad entry is an
+	// admin error to surface immediately, not per-app at build time.
+	for major, ni := range m {
+		if _, err := strconv.Atoi(major); err != nil {
+			return nil, fmt.Errorf("node-images: key %q is not a numeric node major", major)
+		}
+		if ni.Image == "" {
+			return nil, fmt.Errorf("node-images: entry %q has an empty image", major)
+		}
+		if ni.RunAsUser == nil {
+			return nil, fmt.Errorf("node-images: entry %q must set runAsUser (the image's numeric non-root UID)", major)
+		}
+		if *ni.RunAsUser < 1 {
+			return nil, fmt.Errorf("node-images: entry %q runAsUser must be >= 1 (non-root), got %d", major, *ni.RunAsUser)
+		}
 	}
 	return m, nil
 }

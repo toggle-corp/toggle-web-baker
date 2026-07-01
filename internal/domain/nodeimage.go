@@ -7,7 +7,8 @@ import "strconv"
 // of the FrontendApp spec: whoever sets it is a cluster admin, so these images
 // are allowlist-exempt exactly like the other platform images.
 type NodeImage struct {
-	// Image is the digest-pinned managed node image for this major.
+	// Image is the managed node image for this major (a full ref; digest-pinned
+	// or tag-pinned per the chart's platform-image convention).
 	Image string `json:"image"`
 	// RunAsUser is the image's numeric non-root UID. The operator pins it so the
 	// build pod's runAsNonRoot constraint is satisfied without the app author

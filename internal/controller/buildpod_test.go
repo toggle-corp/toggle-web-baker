@@ -183,6 +183,15 @@ func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
 	}
 }
 
+// DefaultNodeHome must equal the work emptyDir mount: HOME has to land on a
+// writable volume under readOnlyRootFilesystem. Guards the cross-package
+// coupling (domain.DefaultNodeHome vs controller workMountPath) against drift.
+func TestDefaultNodeHomeIsWritableWorkMount(t *testing.T) {
+	if domain.DefaultNodeHome != workMountPath {
+		t.Fatalf("DefaultNodeHome %q must equal workMountPath %q (HOME must be a writable mount)", domain.DefaultNodeHome, workMountPath)
+	}
+}
+
 func envValue(c *corev1.Container, name string) (string, bool) {
 	for _, e := range c.Env {
 		if e.Name == name {

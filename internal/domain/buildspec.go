@@ -20,20 +20,23 @@ type PhaseSpec struct {
 // marks the app stale. Fields NOT included here (storage thresholds, ingress
 // host, keepReleases) deliberately cannot affect staleness.
 type BuildSpec struct {
-	Repo           string            `json:"repo"`
-	Ref            string            `json:"ref"`
-	PackageManager string            `json:"packageManager"`
+	Repo           string `json:"repo"`
+	Ref            string `json:"ref"`
+	PackageManager string `json:"packageManager"`
 	// NodeVersion is the user-selected major (0 when unset). It is the SPEC field,
 	// not the operator-resolved image digest: a patch bump (same major, new
 	// digest) must NOT change the hash — it rolls out on the next scheduled build,
 	// not as an immediate SpecChange. Only a major change (or a manual image
-	// override) alters the hash.
-	NodeVersion int `json:"nodeVersion"`
-	Setup          PhaseSpec         `json:"setup"`
-	Fetch          PhaseSpec         `json:"fetch"`
-	Build          PhaseSpec         `json:"build"`
-	BuildArgs      map[string]string `json:"buildArgs"`
-	SecretRefs     []string          `json:"secretRefs"`
+	// override) alters the hash. omitempty keeps a 0 (unset) OUT of the marshaled
+	// hash, so apps predating this field (and all BYO-image apps) keep their
+	// existing hash across an operator upgrade instead of spuriously flipping
+	// SpecStale.
+	NodeVersion int               `json:"nodeVersion,omitempty"`
+	Setup       PhaseSpec         `json:"setup"`
+	Fetch       PhaseSpec         `json:"fetch"`
+	Build       PhaseSpec         `json:"build"`
+	BuildArgs   map[string]string `json:"buildArgs"`
+	SecretRefs  []string          `json:"secretRefs"`
 }
 
 // IsStale reports whether the current build-relevant spec differs from the

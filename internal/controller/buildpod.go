@@ -53,14 +53,17 @@ func resolvedSecurityContext(rp domain.ResolvedPhase) *corev1.SecurityContext {
 	return sc
 }
 
-// withHome prepends HOME when the resolution injects one (managed node phases,
-// where HOME must point at a writable path under readOnlyRootFilesystem). BYO
-// and clone-fallback phases inject nothing — the app owns its own env.
+// withHome injects HOME when the resolution supplies one (managed node phases,
+// where HOME must point at a writable path under readOnlyRootFilesystem). It is
+// appended LAST so the operator-managed HOME is authoritative over any HOME a
+// managed phase's own env might set (the kubelet applies env in order; the last
+// assignment wins). BYO and clone-fallback phases inject nothing (Home == "") —
+// the app owns its own env there.
 func withHome(rp domain.ResolvedPhase, env []corev1.EnvVar) []corev1.EnvVar {
 	if rp.Home == "" {
 		return env
 	}
-	return append([]corev1.EnvVar{{Name: "HOME", Value: rp.Home}}, env...)
+	return append(env, corev1.EnvVar{Name: "HOME", Value: rp.Home})
 }
 
 // nginxUID is the UID/GID baked into docker.io/nginxinc/nginx-unprivileged.

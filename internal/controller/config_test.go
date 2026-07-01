@@ -57,6 +57,22 @@ func TestParseNodeImages_MalformedErrors(t *testing.T) {
 	}
 }
 
+// A semantically broken entry must fail at parse (startup) time, not deep in the
+// build pipeline. Empty image / missing UID / root UID / non-numeric key.
+func TestParseNodeImages_RejectsBrokenEntries(t *testing.T) {
+	cases := map[string]string{
+		"empty image":     `{"18":{"runAsUser":1000}}`,
+		"missing UID":     `{"18":{"image":"repo@sha256:aaa"}}`,
+		"root UID":        `{"18":{"image":"repo@sha256:aaa","runAsUser":0}}`,
+		"non-numeric key": `{"lts":{"image":"repo@sha256:aaa","runAsUser":1000}}`,
+	}
+	for name, in := range cases {
+		if _, err := ParseNodeImages(in); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}
+
 func validConfig() OperatorConfig {
 	c := OperatorConfig{
 		ClusterCIDRs: []string{"10.0.0.0/8", "172.20.0.0/16"},

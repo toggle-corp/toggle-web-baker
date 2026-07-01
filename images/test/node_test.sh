@@ -59,6 +59,17 @@ run() {
 	out="$(docker run --rm "$IMG" "$@" 2>/dev/null)" || rc=$?
 }
 
+# runrt <cmd...> -- run under the OPERATOR's runtime contract: readOnlyRootFilesystem
+# with only the writable emptyDir mounts (work, tmp) and HOME=/work. This is what
+# actually breaks corepack if a package manager isn't pre-activated into the baked
+# COREPACK_HOME (it would try to download into the read-only root). A plain `run`
+# (default HOME=/home/node, writable) hides that failure, so the PM checks below
+# MUST use runrt.
+runrt() {
+	rc=0
+	out="$(docker run --rm --read-only --tmpfs /work --tmpfs /tmp -e HOME=/work "$IMG" "$@" 2>/dev/null)" || rc=$?
+}
+
 # ---- node is v18 ------------------------------------------------------------
 run node --version
 assert_ok "node --version runs"
@@ -76,13 +87,14 @@ assert_ok "git --version runs"
 run corepack --version
 assert_ok "corepack --version runs"
 
-# ---- yarn shim works --------------------------------------------------------
-run yarn --version
-assert_ok "yarn --version runs"
-
-# ---- pnpm shim works --------------------------------------------------------
-run pnpm --version
-assert_ok "pnpm --version runs"
+# ---- yarn + pnpm resolve OFFLINE under the operator's runtime contract ------
+# (read-only rootfs + HOME=/work). Regression guard: without pre-activating both
+# managers into the baked COREPACK_HOME, corepack tries to download at runtime
+# and fails (EROFS, or fetches a node-incompatible "latest" that crashes).
+runrt yarn --version
+assert_ok "yarn --version runs read-only under HOME=/work"
+runrt pnpm --version
+assert_ok "pnpm --version runs read-only under HOME=/work"
 
 # ---- baked user is UID 1000 -------------------------------------------------
 run id -u

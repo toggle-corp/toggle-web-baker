@@ -74,7 +74,7 @@ Usage: include "toggle-web-baker.nodeImagesJSON" $
 {{- $out := dict -}}
 {{- range $major, $cfg := .Values.operator.nodeImages -}}
 {{- $entry := dict "image" (include "toggle-web-baker.image" (dict "image" $cfg "root" $root)) -}}
-{{- if $cfg.runAsUser }}{{- $entry = set $entry "runAsUser" $cfg.runAsUser -}}{{- end -}}
+{{- if hasKey $cfg "runAsUser" }}{{- $entry = set $entry "runAsUser" $cfg.runAsUser -}}{{- end -}}
 {{- if $cfg.home }}{{- $entry = set $entry "home" $cfg.home -}}{{- end -}}
 {{- $out = set $out (printf "%v" $major) $entry -}}
 {{- end -}}

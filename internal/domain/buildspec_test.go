@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // The operator hashes the build-relevant subset of the spec and stores it in
 // status.lastBuiltSpecHash (on copier success). status.specStale is true when
@@ -47,6 +51,17 @@ func TestBuildSpecHash_ChangesWhenNodeVersionChanges(t *testing.T) {
 	b.NodeVersion = 24
 	if a.Hash() == b.Hash() {
 		t.Fatalf("changing nodeVersion must change the hash")
+	}
+}
+
+func TestBuildSpecHash_ZeroNodeVersionOmittedFromPayload(t *testing.T) {
+	// Backward compat: an unset nodeVersion (0) must NOT appear in the hashed
+	// payload, so apps deployed before the field keep their stored hash across an
+	// operator upgrade (no spurious SpecStale). Same package => normalized() is
+	// reachable.
+	data, _ := json.Marshal(sampleBuildSpec().normalized())
+	if strings.Contains(string(data), "nodeVersion") {
+		t.Fatalf("unset nodeVersion must be omitted from the hashed payload, got: %s", data)
 	}
 }
 
