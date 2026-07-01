@@ -147,13 +147,15 @@
         {{range .Steps}}<option value="{{.Name}}" {{if eq .Name $.Container}}selected{{end}}>{{.Name}}</option>{{else}}<option value="{{$.Container}}" selected>{{$.Container}}</option>{{end}}
       </select>
     </label>
-    <label class="small muted"><input type="checkbox" data-follow-toggle {{if .Follow}}checked{{end}}> follow active step</label>
+    {{if .AppActive}}<label class="small muted"><input type="checkbox" data-follow-toggle {{if .Follow}}checked{{end}}> follow active step</label>{{end}}
+    {{if not .IsCurrent}}<span class="small muted" data-viewing>viewing <code>{{dash .Build.JobName}}</code>
+      <span class="badge b-{{if eq .Build.Result "Succeeded"}}ready{{else if eq .Build.Result "Failed"}}degraded{{else}}pending{{end}}">{{dash .Build.Result}}</span></span>{{end}}
     {{if .SourceNote}}<span class="small muted">source: {{.SourceNote}}</span>{{end}}
   </div>
   {{if .Unavailable}}
-    <p class="small muted">{{.Unavailable}}</p>
+    <p class="small muted logpane-empty">{{.Unavailable}}</p>
   {{else}}
-    <pre>{{range .Lines}}{{.}}
+    <pre>{{range .Lines}}{{loghl .}}
 {{end}}</pre>
   {{end}}
 </div>

@@ -695,6 +695,69 @@ func TestLogs_ManualBuildParamLeavesFollowOff(t *testing.T) {
 	}
 }
 
+func TestLogs_RendersColoredLines(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{logLines: []string{"ERROR: boom", "cloning repo"}}
+	loki := &fakeLokiTailer{configured: true}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "log-err") {
+		t.Errorf("error line should render with the log-err class; body=%s", body)
+	}
+	if !strings.Contains(body, "log-ln") {
+		t.Errorf("every line should be wrapped in a log-ln span; body=%s", body)
+	}
+}
+
+func TestLogs_FollowToggleHiddenWhenIdle(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus()) // no build in flight
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true, lines: []string{"archived"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "data-follow-toggle") {
+		t.Errorf("follow toggle must be hidden when no build is active; body=%s", rec.Body.String())
+	}
+}
+
+func TestLogs_FollowToggleShownWhenActive(t *testing.T) {
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{logLines: []string{"yarn build"}}
+	loki := &fakeLokiTailer{configured: true}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?follow=1", "mapswipe", "mapswipe-uat")
+	if !strings.Contains(rec.Body.String(), "data-follow-toggle") {
+		t.Errorf("follow toggle must be shown while a build is active; body=%s", rec.Body.String())
+	}
+}
+
+func TestLogs_HistoricalBuildShowsViewingIndicator(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true, lines: []string{"old build log"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?build=mapswipe-uat-build-8&container=build",
+		"mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "data-viewing") {
+		t.Errorf("historical build should render a 'viewing' indicator; body=%s", body)
+	}
+}
+
 // podWithLimits builds a pod whose named container carries cpu+mem limits, so
 // the metrics bars can be computed against a known cap.
 func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {

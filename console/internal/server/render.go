@@ -39,6 +39,9 @@ var funcMap = template.FuncMap{
 	// for "Next scheduled"). Empty input renders an em-dash.
 	"timetag":     func(ts string) template.HTML { return timeTag(ts, false) },
 	"timetagFull": func(ts string) template.HTML { return timeTag(ts, true) },
+	// loghl wraps one log line in a severity-classed span (escaping its content),
+	// so the log pane can colorize plain-text output. See loghl.go.
+	"loghl": highlightLogLine,
 	// cleanupCtx bundles the App, the action kind, and the action status into one
 	// value so the cleanupaction sub-template can render a prune row + button.
 	"cleanupCtx": func(app view.App, kind string, action view.CleanupAction) cleanupView {
@@ -114,6 +117,12 @@ type logpaneData struct {
 	Unavailable string // non-empty → render this instead of lines
 	FetchErr    error  // internal; folded into Unavailable
 	Follow      bool   // follow mode: container tracks the active step, always current build
+	// AppActive reports whether a build is currently in flight, gating the
+	// "follow active step" toggle — following is meaningless when nothing runs.
+	AppActive bool
+	// IsCurrent reports whether the displayed build is the app's current build
+	// (vs a finished history entry); false drives the "viewing <job>" indicator.
+	IsCurrent bool
 }
 
 type errorData struct {

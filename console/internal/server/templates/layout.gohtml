@@ -112,8 +112,16 @@
   .build-row details{margin-top:6px}
   /* Log pane. */
   .logpane-head{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-  .logpane pre{max-height:340px;overflow:auto;background:var(--panel2);padding:10px;
-    border-radius:6px;white-space:pre-wrap;margin:0}
+  .logpane pre{height:min(60vh,640px);min-height:340px;overflow:auto;background:var(--panel2);
+    padding:10px;border-radius:6px;white-space:pre-wrap;margin:0}
+  /* Semantic log colouring (heuristic, line-level; see loghl.go). */
+  .log-err{color:var(--degraded)}
+  .log-warn{color:var(--warn)}
+  .log-ok{color:var(--ready)}
+  .log-ts{color:var(--muted)}
+  /* Empty/loading/unavailable state fills the fixed box with a centred note. */
+  .logpane-empty{height:min(60vh,640px);min-height:340px;display:flex;align-items:center;
+    justify-content:center;background:var(--panel2);border-radius:6px;margin:0;text-align:center}
 </style>
 </head>
 <body>

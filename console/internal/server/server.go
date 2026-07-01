@@ -249,6 +249,8 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	data := s.resolveLogs(r.Context(), ns, rec, isCurrent, container, steps)
 	data.Follow = follow
+	data.AppActive = app.BuildActive()
+	data.IsCurrent = isCurrent
 	render(w, "logpane", data)
 }
 
