@@ -59,7 +59,12 @@ Success (`< 4KB`):
 {
   "releaseTs": "20260625T101500Z-42",
   "dataFreshness": "<value of DATA_LAST_MODIFIED from /workspace/phase-env, or empty>",
+  "sizes": {
+    "output": 12345678,
+    "outputTotal": 45678901
+  },
   "outputSize": 12345678,
+  "sourceSize": 13000000,
   "deltas": {
     "prevFileCount": 120,
     "fileCount": 131,
@@ -68,6 +73,12 @@ Success (`< 4KB`):
   }
 }
 ```
+
+`sizes.output` is the just-assembled **current** release; `sizes.outputTotal`
+is the `du` of **every retained release** on the output PVC (`/output/releases`,
+measured after the retention sweep + atomic flip). `outputSize` and `sourceSize`
+are flat top-level aliases for humans reading the raw termination log
+(`output` = current release; `source` = build output on the work volume).
 
 Failure:
 

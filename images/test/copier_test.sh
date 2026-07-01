@@ -182,11 +182,17 @@ assert_eq "$val" "" "phase-env: missing file -> empty"
 # block runs at source time, so OUTPUT_DIR is required and TERMINATION_LOG /
 # PHASE_ENV must be pointed at the tmpdir BEFORE sourcing. Exported so the
 # sourced emit_status sees them (and so shellcheck counts them as used).
-mkdir -p "$TMP/emit/releases/r-new"
+# Two release dirs so outputTotal (du of the WHOLE releases dir) sums both and
+# is distinguishable from the current release's own size.
+mkdir -p "$TMP/emit/releases/r-new" "$TMP/emit/releases/r-old"
 : >"$TMP/emit/releases/r-new/index.html"
+: >"$TMP/emit/releases/r-old/index.html"
 export OUTPUT_DIR=out
 export TERMINATION_LOG="$TMP/emit/term.json"
 export PHASE_ENV="$TMP/nope-phase-env" # missing -> empty freshness
+# Point OUTPUT_ROOT at the tmp tree so RELEASES_DIR (derived at source time)
+# is the releases dir we just populated, and outputTotal measures it.
+export OUTPUT_ROOT="$TMP/emit"
 # shellcheck source=test/../copier/entrypoint.sh
 COPIER_LIB_ONLY=1 . "$HERE/../copier/entrypoint.sh"
 export RELEASE_ABS="$TMP/emit/releases/r-new"
@@ -197,9 +203,27 @@ case "$blob" in
 	*'"release":{"current":"20260630T120000Z-1"}'*) ok "emit_status: emits release.current for the pointer flip" ;;
 	*) no "emit_status: missing release.current ([$blob])" ;;
 esac
+# sizes.outputTotal = du of the WHOLE releases dir (both r-new + r-old).
+emit_total="$(du_bytes "$TMP/emit/releases")"
 case "$blob" in
-	*'"sizes":{"output":4096,"source":8192}'*) ok "emit_status: emits sizes map (output+source) for storage bars" ;;
-	*) no "emit_status: missing/wrong sizes map ([$blob])" ;;
+	*"\"outputTotal\":$emit_total"*) ok "emit_status: sizes.outputTotal = du of the releases dir" ;;
+	*) no "emit_status: missing/wrong sizes.outputTotal (want $emit_total, [$blob])" ;;
+esac
+case "$blob" in
+	*'"sizes":{"output":4096,"outputTotal":'*) ok "emit_status: sizes map is {output,outputTotal}" ;;
+	*) no "emit_status: wrong sizes map shape ([$blob])" ;;
+esac
+case "$blob" in
+	*'"source":'*) no "emit_status: sizes must not contain a source key ([$blob])" ;;
+	*) ok "emit_status: sizes no longer carries source" ;;
+esac
+case "$blob" in
+	*'"sourceSize":8192'*) ok "emit_status: sourceSize flat alias present" ;;
+	*) no "emit_status: missing sourceSize flat alias ([$blob])" ;;
+esac
+case "$blob" in
+	*'"outputSize":4096'*) ok "emit_status: outputSize flat alias present" ;;
+	*) no "emit_status: missing outputSize flat alias ([$blob])" ;;
 esac
 
 # ---- summary ----------------------------------------------------------------

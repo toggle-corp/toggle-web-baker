@@ -135,13 +135,20 @@ emit_status() {
 		delta_removed=$((prev_count - cur_count))
 	fi
 
+	# du of the WHOLE releases dir, measured here (post retention sweep + flip) so
+	# it reflects the on-PVC total across all retained releases.
+	local total_bytes
+	total_bytes="$(du_bytes "$RELEASES_DIR")" || total_bytes=0
+
 	# Field names match the operator's CopierMessage parser (internal/controller
 	# /ensure.go): release.current flips the served-release pointer; sizes is the
-	# per-volume du map the console renders (output = assembled release on the
-	# output PVC, source = build output on the work volume). outputSize is kept as
-	# a flat alias for humans reading the raw termination log.
-	printf '{"releaseTs":"%s","dataFreshness":"%s","release":{"current":"%s"},"sizes":{"output":%s,"source":%s},"outputSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
-		"$RELEASE_TS" "$freshness" "$RELEASE_TS" "$out_bytes" "$src_bytes" "$out_bytes" \
+	# per-volume du map the console renders -- sizes.output = the just-assembled
+	# current release, sizes.outputTotal = every retained release on the output
+	# PVC (releases dir, post-retention). sourceSize/outputSize are flat top-level
+	# aliases for humans reading the raw termination log (source = build output on
+	# the work volume; output = current release).
+	printf '{"releaseTs":"%s","dataFreshness":"%s","release":{"current":"%s"},"sizes":{"output":%s,"outputTotal":%s},"outputSize":%s,"sourceSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
+		"$RELEASE_TS" "$freshness" "$RELEASE_TS" "$out_bytes" "$total_bytes" "$out_bytes" "$src_bytes" \
 		"$prev_count" "$cur_count" "$delta_added" "$delta_removed" | head -c 4000 >"$TERM_LOG" 2>/dev/null ||
 		printf 'copier: warning: could not write termination log\n' >&2
 
