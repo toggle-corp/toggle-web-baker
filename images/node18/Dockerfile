@@ -16,13 +16,15 @@ FROM node@sha256:8d6421d663b4c28fd3ebc498332f249011d118945588d0a35cb9bc4b8ca09d9
 # from HOME: the versions pre-activated below are found offline and read-only.
 ENV COREPACK_HOME=/opt/corepack
 
-# bash for the phase entrypoints; git for repo/submodule and lockfile flows.
+# bash for the phase entrypoints; git for repo/submodule and lockfile flows;
+# build-base + python3 for node-gyp (native addons some deps compile on install --
+# this is the "anything else from cimg/node" part: cimg bundles build tools).
 # corepack enable installs the yarn/pnpm shims into /usr/local/bin, REPLACING the
 # bundled yarn binary with a shim -- so yarn too must be pre-activated or it will
 # try to download at runtime. Pre-activate node18-compatible pnpm + classic yarn
 # into COREPACK_HOME (as root, world-readable) so both resolve offline at runtime
 # regardless of the injected HOME.
-RUN apk add --no-cache bash git \
+RUN apk add --no-cache bash git build-base python3 \
     && corepack enable \
     && corepack prepare yarn@1.22.22 --activate \
     && corepack prepare pnpm@9.15.9 --activate
