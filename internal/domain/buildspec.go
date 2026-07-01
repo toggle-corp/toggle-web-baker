@@ -23,6 +23,12 @@ type BuildSpec struct {
 	Repo           string            `json:"repo"`
 	Ref            string            `json:"ref"`
 	PackageManager string            `json:"packageManager"`
+	// NodeVersion is the user-selected major (0 when unset). It is the SPEC field,
+	// not the operator-resolved image digest: a patch bump (same major, new
+	// digest) must NOT change the hash — it rolls out on the next scheduled build,
+	// not as an immediate SpecChange. Only a major change (or a manual image
+	// override) alters the hash.
+	NodeVersion int `json:"nodeVersion"`
 	Setup          PhaseSpec         `json:"setup"`
 	Fetch          PhaseSpec         `json:"fetch"`
 	Build          PhaseSpec         `json:"build"`

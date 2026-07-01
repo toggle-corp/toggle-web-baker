@@ -38,6 +38,18 @@ func TestBuildSpecHash_ChangesWhenRefChanges(t *testing.T) {
 	}
 }
 
+func TestBuildSpecHash_ChangesWhenNodeVersionChanges(t *testing.T) {
+	// nodeVersion is a user-provided spec field, so changing the MAJOR (18 -> 24)
+	// changes the toolchain and must change the hash (immediate SpecChange rebuild).
+	a := sampleBuildSpec()
+	a.NodeVersion = 18
+	b := sampleBuildSpec()
+	b.NodeVersion = 24
+	if a.Hash() == b.Hash() {
+		t.Fatalf("changing nodeVersion must change the hash")
+	}
+}
+
 func TestBuildSpecHash_NilAndEmptyCollectionsHashEqual(t *testing.T) {
 	// CRD round-tripping normalizes omitted vs empty collections; nil and empty
 	// must hash identically or staleness flip-flops forever.
