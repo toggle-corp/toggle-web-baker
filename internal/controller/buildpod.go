@@ -68,6 +68,22 @@ func nginxSecurityContext() *corev1.SecurityContext {
 	return sc
 }
 
+// clockUID is the non-root UID pinned on the clock CronJob container. The stock
+// registry.k8s.io/kubectl image runs as root, so runAsNonRoot alone fails
+// admission (the kubelet can't prove a root image is non-root) exactly as it
+// does for nginx above; pinning a numeric non-root UID satisfies the gate. 65532
+// is the conventional distroless "nonroot" UID. No RunAsGroup: the clock writes
+// nothing (readOnlyRootFilesystem) and only READS the world-readable SA token.
+const clockUID int64 = 65532
+
+// clockSecurityContext is the hardened context for the clock CronJob container,
+// pinning runAsUser to clockUID so the root kubectl image passes runAsNonRoot.
+func clockSecurityContext() *corev1.SecurityContext {
+	sc := hardenedSecurityContext()
+	sc.RunAsUser = ptr.To(clockUID)
+	return sc
+}
+
 // commandOrNoop returns cmd, or a no-op ["true"] when cmd is empty so an
 // unspecified optional phase (setup/fetch) doesn't fall through to the
 // base image's entrypoint.

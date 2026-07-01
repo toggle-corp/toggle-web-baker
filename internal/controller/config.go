@@ -18,7 +18,7 @@ type PlatformImages struct {
 	Copier  string // main container that publishes the bundle to the output PVC
 	Du      string // measurement Jobs (du over a mounted PVC)
 	Cleanup string // (reserved) cache cleanup helper
-	Kubectl string // CronJob clock that patches the rebuild annotation
+	Clock   string // CronJob clock that patches the rebuild annotation
 	Nginx   string // serving Deployment
 }
 
@@ -94,8 +94,8 @@ func (c *OperatorConfig) Defaults() {
 	if c.Images.Cleanup == "" {
 		c.Images.Cleanup = "ghcr.io/toggle-corp/toggle-web-baker-cleanup@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
-	if c.Images.Kubectl == "" {
-		c.Images.Kubectl = "registry.k8s.io/kubectl:v1.32.1"
+	if c.Images.Clock == "" {
+		c.Images.Clock = "ghcr.io/toggle-corp/toggle-web-baker-clock@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	if c.Images.Nginx == "" {
 		// nginx-unprivileged listens on 8080 and runs as UID/GID 101, so the pod's

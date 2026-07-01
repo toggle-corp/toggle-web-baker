@@ -70,7 +70,7 @@ func main() {
 	flag.StringVar(&cfg.Images.Copier, "image-copier", "", "digest-pinned copier image")
 	flag.StringVar(&cfg.Images.Du, "image-du", "", "digest-pinned du-measurement image")
 	flag.StringVar(&cfg.Images.Cleanup, "image-cleanup", "", "digest-pinned cleanup image")
-	flag.StringVar(&cfg.Images.Kubectl, "image-kubectl", "", "kubectl image for the CronJob clock")
+	flag.StringVar(&cfg.Images.Clock, "image-clock", "", "digest-pinned clock image for the CronJob tick")
 	flag.StringVar(&cfg.Images.Nginx, "image-nginx", "", "nginx serving image")
 
 	opts := zap.Options{Development: true}

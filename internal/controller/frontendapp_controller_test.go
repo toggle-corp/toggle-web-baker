@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -388,22 +387,47 @@ func TestMapBuildPodToApp(t *testing.T) {
 	}
 }
 
-// Behavior 8: each clock tick sets requested-at AND clears the "by" annotation,
-// so a stale manual "by" can't mislabel a later scheduled build as Manual.
-func TestClockCronJob_ClearsByAnnotation(t *testing.T) {
+// Behavior 8: the clock passes the app name + annotation KEYS to the owned clock
+// image via env (the image's entrypoint owns the tick: it sets requested-at AND
+// clears the "by" annotation so a stale manual "by" can't mislabel a later
+// scheduled build as Manual). No shell command is embedded in the operator.
+func TestClockCronJob_PassesAnnotationEnvContract(t *testing.T) {
 	app := baseApp()
 	r, _ := newReconciler(t, app, wffc())
 	cron := r.clockCronJob(app)
-	cmd := cron.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command
-	if len(cmd) != 3 {
-		t.Fatalf("clock command shape changed: %v", cmd)
+	c := cron.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	if len(c.Command) != 0 {
+		t.Fatalf("clock must NOT embed a shell command (tick logic lives in the image), got %v", c.Command)
 	}
-	patch := cmd[2]
-	if !strings.Contains(patch, bakerv1alpha1.RebuildAnnotation+`=`) {
-		t.Fatalf("clock must set requested-at, got %q", patch)
+	env := map[string]string{}
+	for _, e := range c.Env {
+		env[e.Name] = e.Value
 	}
-	if !strings.Contains(patch, bakerv1alpha1.RebuildByAnnotation+"-") {
-		t.Fatalf("clock must CLEAR the by annotation (%s-), got %q", bakerv1alpha1.RebuildByAnnotation, patch)
+	if env["APP"] != app.Name {
+		t.Fatalf("clock APP env = %q, want %q", env["APP"], app.Name)
+	}
+	if env["REQUESTED_AT_ANNOTATION"] != bakerv1alpha1.RebuildAnnotation {
+		t.Fatalf("clock REQUESTED_AT_ANNOTATION = %q, want %q", env["REQUESTED_AT_ANNOTATION"], bakerv1alpha1.RebuildAnnotation)
+	}
+	if env["BY_ANNOTATION"] != bakerv1alpha1.RebuildByAnnotation {
+		t.Fatalf("clock BY_ANNOTATION = %q, want %q", env["BY_ANNOTATION"], bakerv1alpha1.RebuildByAnnotation)
+	}
+}
+
+// The stock kubectl image runs as root, so the clock container must pin a
+// non-root RunAsUser or runAsNonRoot admission fails at pod start
+// (CreateContainerConfigError) — the same gate nginx and the phase containers
+// satisfy. Guards against dropping the pin back to a bare hardened context.
+func TestClockCronJob_PinsNonRootRunAsUser(t *testing.T) {
+	app := baseApp()
+	r, _ := newReconciler(t, app, wffc())
+	cron := r.clockCronJob(app)
+	sc := cron.Spec.JobTemplate.Spec.Template.Spec.Containers[0].SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != clockUID {
+		t.Fatalf("clock must runAsUser=%d, got %+v", clockUID, sc)
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Fatalf("clock must keep runAsNonRoot, got %+v", sc)
 	}
 }
 

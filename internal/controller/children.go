@@ -70,17 +70,16 @@ func (r *FrontendAppReconciler) clockRoleBinding(app *bakerv1alpha1.FrontendApp)
 // clockCronJob is the CLOCK: on each tick it patches the rebuild annotation with
 // the current timestamp via kubectl. It never creates build Jobs.
 func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *batchv1.CronJob {
-	// Set requested-at AND clear any stale manual "by" in the SAME annotate call,
-	// so a scheduled tick can't be mislabeled Manual by a leftover "by" from an
-	// earlier manual rebuild (the operator classifies trigger by "by" presence).
-	patch := fmt.Sprintf(
-		`kubectl annotate frontendapp %s %s="$(date +%%s)" %s- --overwrite`,
-		app.Name, bakerv1alpha1.RebuildAnnotation, bakerv1alpha1.RebuildByAnnotation,
-	)
 	schedule := app.Spec.Schedule
 	if schedule == "" {
 		schedule = bakerv1alpha1.DefaultSchedule
 	}
+	// The tick logic lives in the platform-owned clock image's entrypoint: it
+	// sets requested-at AND clears any stale manual "by" in the SAME annotate
+	// call, so a scheduled tick can't be mislabeled Manual by a leftover "by"
+	// (the operator classifies trigger by "by" presence). The operator passes the
+	// app name and annotation keys via env so api/v1alpha1 stays the single
+	// source of truth for the keys.
 	podSpec := corev1.PodSpec{
 		RestartPolicy:      corev1.RestartPolicyNever,
 		ServiceAccountName: clockSAName(app),
@@ -89,11 +88,22 @@ func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *ba
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 		Containers: []corev1.Container{{
-			Name:            "clock",
-			Image:           r.Config.Images.Kubectl,
-			Command:         []string{"sh", "-c", patch},
-			SecurityContext: hardenedSecurityContext(),
+			Name:  "clock",
+			Image: r.Config.Images.Clock,
+			Env: []corev1.EnvVar{
+				{Name: "APP", Value: app.Name},
+				{Name: "REQUESTED_AT_ANNOTATION", Value: bakerv1alpha1.RebuildAnnotation},
+				{Name: "BY_ANNOTATION", Value: bakerv1alpha1.RebuildByAnnotation},
+				// kubectl's discovery cache needs a writable HOME under the pod's
+				// readOnlyRootFilesystem; point it at the tmp emptyDir below.
+				{Name: "HOME", Value: "/tmp"},
+			},
+			VolumeMounts:    []corev1.VolumeMount{{Name: volTmp, MountPath: "/tmp"}},
+			SecurityContext: clockSecurityContext(),
 		}},
+		Volumes: []corev1.Volume{
+			{Name: volTmp, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		},
 	}
 	if r.Config.ImagePullSecret != "" {
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}

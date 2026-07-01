@@ -49,7 +49,7 @@ spec:
             - --image-copier={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.copier "root" $) }}
             - --image-du={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.du "root" $) }}
             - --image-cleanup={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.cleanup "root" $) }}
-            - --image-kubectl={{ .Values.platformImages.kubectl }}
+            - --image-clock={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clock "root" $) }}
             - --image-nginx={{ .Values.platformImages.nginx }}
           ports:
             - name: metrics

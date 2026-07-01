@@ -56,7 +56,7 @@ operator:
 # deliberately relaxes the "digest-pinned, no user override" platform-image
 # invariant (docs/operator-security-invariants.md) in exchange for a simpler
 # lockstep release. Harden later by resolving tag->digest in CI.
-# clone/copier/du/cleanup tags default to .Chart.AppVersion when empty.
+# clone/copier/du/cleanup/clock tags default to .Chart.AppVersion when empty.
 platformImages:
   clone:
     repository: ghcr.io/toggle-corp/toggle-web-baker-clone
@@ -70,8 +70,10 @@ platformImages:
   cleanup:
     repository: ghcr.io/toggle-corp/toggle-web-baker-cleanup
     tag: ""
+  clock:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-clock
+    tag: ""
   # External images — pinned independently of the chart version.
-  kubectl: registry.k8s.io/kubectl:v1.32.1
   nginx: docker.io/nginxinc/nginx-unprivileged:1.27-alpine
 
 # Read-only admin console + its oauth2-proxy + Traefik ingress. Opt-in.
