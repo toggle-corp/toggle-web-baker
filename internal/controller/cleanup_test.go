@@ -108,34 +108,70 @@ func TestCleanupJob_ReleasesProtectedOmitsEmpties(t *testing.T) {
 
 // Cleanup Job is hardened like the build/du Jobs: no SA token, bounded deadline,
 // no infinite retry, single non-root container.
-// The prune must be able to unlink cache/release files the build wrote under a
-// different uid (e.g. cimg/node 3434, dirs mode 0755 group root). fsGroup is
-// unreliable (ignored by hostPath/local-path storage), so the cleanup container
-// runs as root with DAC_OVERRIDE + FOWNER and all other caps dropped.
-func TestCleanupJob_CanDeleteForeignOwnedFiles(t *testing.T) {
+func hasCap(caps []corev1.Capability, want corev1.Capability) bool {
+	for _, c := range caps {
+		if c == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Releases are copier-written as the platform uid (65532), so release cleanup
+// runs UNPRIVILEGED as that uid — non-root, no added capabilities.
+func TestCleanupSC_ReleasesUnprivileged(t *testing.T) {
 	app := baseApp()
 	r, _ := newReconciler(t, app, wffc())
-	for _, mode := range []string{cleanupModeCache, cleanupModeReleases} {
-		sc := r.CleanupJob(app, mode).Spec.Template.Spec.Containers[0].SecurityContext
+	sc := r.CleanupJob(app, cleanupModeReleases).Spec.Template.Spec.Containers[0].SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != platformUID {
+		t.Fatalf("release cleanup must run as platformUID %d, got %v", platformUID, sc.RunAsUser)
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Fatalf("release cleanup must run non-root")
+	}
+	if sc.Capabilities == nil || len(sc.Capabilities.Add) != 0 {
+		t.Fatalf("release cleanup must add NO capabilities, got %v", sc.Capabilities)
+	}
+}
+
+// When setup+build pin the same uid, cache cleanup owns the files and runs
+// UNPRIVILEGED as that uid.
+func TestCleanupSC_CacheKnownUIDUnprivileged(t *testing.T) {
+	app := baseApp()
+	app.Spec.Setup.RunAsUser = ptr.To(int64(3434))
+	app.Spec.Build.RunAsUser = ptr.To(int64(3434))
+	r, _ := newReconciler(t, app, wffc())
+	sc := r.CleanupJob(app, cleanupModeCache).Spec.Template.Spec.Containers[0].SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != 3434 {
+		t.Fatalf("cache cleanup must run as the pinned build uid 3434, got %v", sc.RunAsUser)
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Fatalf("cache cleanup must run non-root when the uid is known")
+	}
+	if sc.Capabilities == nil || len(sc.Capabilities.Add) != 0 {
+		t.Fatalf("known-uid cache cleanup must add NO capabilities, got %v", sc.Capabilities)
+	}
+}
+
+// When the cache uid is unknown (image default) or setup/build disagree, cache
+// cleanup falls back to root with ONLY DAC_OVERRIDE+FOWNER to override foreign
+// ownership.
+func TestCleanupSC_CacheUnknownUIDFallsBackToRoot(t *testing.T) {
+	base := baseApp()
+	mismatch := baseApp()
+	mismatch.Spec.Setup.RunAsUser = ptr.To(int64(3434))
+	mismatch.Spec.Build.RunAsUser = ptr.To(int64(1000))
+	for name, app := range map[string]*bakerv1alpha1.FrontendApp{"image-default": base, "phase-mismatch": mismatch} {
+		r, _ := newReconciler(t, app, wffc())
+		sc := r.CleanupJob(app, cleanupModeCache).Spec.Template.Spec.Containers[0].SecurityContext
 		if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != 0 {
-			t.Fatalf("mode %s: cleanup must run as root (uid 0) to unlink build-owned files, got %v", mode, sc.RunAsUser)
+			t.Fatalf("%s: cache cleanup must fall back to root, got uid %v", name, sc.RunAsUser)
 		}
-		if sc.Capabilities == nil {
-			t.Fatalf("mode %s: cleanup must set capabilities", mode)
-		}
-		has := func(want corev1.Capability) bool {
-			for _, c := range sc.Capabilities.Add {
-				if c == want {
-					return true
-				}
-			}
-			return false
-		}
-		if !has("DAC_OVERRIDE") || !has("FOWNER") {
-			t.Fatalf("mode %s: cleanup must add DAC_OVERRIDE + FOWNER, got %v", mode, sc.Capabilities.Add)
+		if !hasCap(sc.Capabilities.Add, "DAC_OVERRIDE") || !hasCap(sc.Capabilities.Add, "FOWNER") {
+			t.Fatalf("%s: root fallback must add DAC_OVERRIDE + FOWNER, got %v", name, sc.Capabilities.Add)
 		}
 		if len(sc.Capabilities.Drop) == 0 || sc.Capabilities.Drop[0] != "ALL" {
-			t.Fatalf("mode %s: cleanup must drop ALL other caps, got %v", mode, sc.Capabilities.Drop)
+			t.Fatalf("%s: must drop ALL other caps, got %v", name, sc.Capabilities.Drop)
 		}
 	}
 }

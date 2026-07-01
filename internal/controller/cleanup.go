@@ -33,25 +33,65 @@ const (
 	cleanupModeReleases = "releases"
 )
 
-// cleanupSecurityContext runs the prune as root with ONLY DAC_OVERRIDE +
-// FOWNER. The cache/output PVCs are written by the BUILD image's user (e.g.
-// cimg/node's uid 3434, dirs mode 0755 group root), so the prune must unlink
-// files it does not own. fsGroup can't help: kind's local-path (and any
-// hostPath-backed storage) ignores it, and a non-root uid can't hold an added
-// capability effectively (no ambient caps in k8s). DAC_OVERRIDE+FOWNER as root
-// is storage- and build-uid-agnostic; everything else stays dropped, the pod
-// has no service-account token, and it mounts only the one PVC it prunes.
-func cleanupSecurityContext() *corev1.SecurityContext {
+// platformUID is the uid baked into every platform helper image
+// (clone/du/copier/cleanup all run as 65532). The copier writes releases as this
+// uid, so release cleanup owns those files and prunes them unprivileged.
+const platformUID int64 = 65532
+
+// cleanupSecurityContext returns the LEAST-privileged context that can still
+// unlink the target PVC's files:
+//   - releases: the copier writes them as platformUID, so run as that uid,
+//     non-root, no added capabilities.
+//   - cache: written by the build image's setup+build phases. When both pin the
+//     same non-zero RunAsUser we own the files and run as that uid, unprivileged.
+//     When the uid is unknown (image default) or the phases disagree, fall back
+//     to root with ONLY DAC_OVERRIDE+FOWNER so rm can override foreign ownership
+//     (fsGroup can't help: hostPath/local-path storage ignores it, and an added
+//     capability is not effective for a non-root uid without ambient caps).
+//
+// Either way all other caps are dropped, privilege escalation is off, the pod
+// carries no service-account token, and it mounts only the one PVC it prunes.
+func cleanupSecurityContext(app *bakerv1alpha1.FrontendApp, mode string) *corev1.SecurityContext {
+	if mode == cleanupModeReleases {
+		return unprivilegedCleanupSC(platformUID)
+	}
+	if uid, ok := cacheWriterUID(app); ok {
+		return unprivilegedCleanupSC(uid)
+	}
+	return rootCleanupSC()
+}
+
+func unprivilegedCleanupSC(uid int64) *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		RunAsUser:                ptr.To(uid),
+		RunAsNonRoot:             ptr.To(true),
+		AllowPrivilegeEscalation: ptr.To(false),
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+func rootCleanupSC() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
 		RunAsUser:                ptr.To(int64(0)),
 		RunAsNonRoot:             ptr.To(false),
 		AllowPrivilegeEscalation: ptr.To(false),
 		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-		Capabilities: &corev1.Capabilities{
-			Drop: []corev1.Capability{"ALL"},
-			Add:  []corev1.Capability{"DAC_OVERRIDE", "FOWNER"},
-		},
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"DAC_OVERRIDE", "FOWNER"}},
 	}
+}
+
+// cacheWriterUID returns the uid that owns cache-PVC files, or ok=false when it
+// cannot be determined. The cache is written RW by the setup and build phases;
+// only when BOTH pin the same non-zero RunAsUser is ownership known and uniform
+// (uid 0 is impossible — the build pod enforces runAsNonRoot).
+func cacheWriterUID(app *bakerv1alpha1.FrontendApp) (int64, bool) {
+	su := app.Spec.Setup.RunAsUser
+	bu := app.Spec.Build.RunAsUser
+	if su == nil || bu == nil || *su != *bu || *su == 0 {
+		return 0, false
+	}
+	return *su, true
 }
 
 func cleanupJobName(app *bakerv1alpha1.FrontendApp, mode string) string {
@@ -135,7 +175,7 @@ func (r *FrontendAppReconciler) CleanupJob(app *bakerv1alpha1.FrontendApp, mode 
 			Env:                      env,
 			VolumeMounts:             mounts,
 			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-			SecurityContext:          cleanupSecurityContext(),
+			SecurityContext:          cleanupSecurityContext(app, mode),
 		}},
 		Volumes: volumes,
 	}
