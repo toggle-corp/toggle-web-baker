@@ -32,7 +32,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="${WORKSPACE:-/workspace}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/output}"
 RELEASES_DIR="$OUTPUT_ROOT/releases"
-PHASE_ENV="${PHASE_ENV:-$WORKSPACE/phase-env}"
 TERM_LOG="${TERMINATION_LOG:-/dev/termination-log}"
 
 OUTPUT_DIR="${OUTPUT_DIR:?OUTPUT_DIR is required}"
