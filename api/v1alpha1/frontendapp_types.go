@@ -594,8 +594,6 @@ type FrontendAppStatus struct {
 	NextScheduledBuildTime *metav1.Time `json:"nextScheduledBuildTime,omitempty"`
 
 	// +optional
-	DataFreshness string `json:"dataFreshness,omitempty"`
-	// +optional
 	Release ReleaseStatus `json:"release,omitempty"`
 	// +optional
 	Storage StorageStatus `json:"storage,omitempty"`
