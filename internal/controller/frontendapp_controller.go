@@ -374,6 +374,7 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 	// Record the processed token + build status (single-active-build invariant).
 	app.Status.LastProcessedRebuild = token
 	by := app.Annotations[bakerv1alpha1.RebuildByAnnotation]
+	trigger := classifyTrigger(app)
 	app.Status.Build = bakerv1alpha1.BuildStatus{
 		Phase:     bakerv1alpha1.BuildPhasePending,
 		JobName:   job.Name,
@@ -381,13 +382,13 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 		Attempts:  app.Status.Build.Attempts + 1,
 		// Record why this build ran and seed the ordered step timeline as all
 		// Pending; observeBuild fills in PodName + per-step statuses as the pod runs.
-		Trigger:     classifyTrigger(app),
+		Trigger:     trigger,
 		TriggeredBy: by,
 		Steps:       deriveBuildSteps(applicableSteps(app), nil, false),
 	}
 	// Stamp lastManualTrigger only on a MANUAL build so it survives intervening
 	// scheduled builds ("last human who rebuilt").
-	if classifyTrigger(app) == bakerv1alpha1.BuildTriggerManual {
+	if trigger == bakerv1alpha1.BuildTriggerManual {
 		app.Status.LastManualTrigger = bakerv1alpha1.ManualTrigger{
 			TriggeredBy: by,
 			Time:        ptr.To(metav1.NewTime(r.now())),
