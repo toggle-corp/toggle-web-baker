@@ -63,6 +63,46 @@ type Build struct {
 	Message        string
 	LogsRef        string
 	Steps          []Step
+	// Termination carries a container's terminated reason (e.g. OOMKilled) when
+	// the operator recorded one; nil when absent or mistyped in status.
+	Termination *Termination
+}
+
+// Termination is a view-local mirror of status.build.termination (and each
+// buildHistory[].termination — same shape). It is deliberately NOT the
+// operator's type: the console only ever walks the generic object tree.
+type Termination struct {
+	Reason      string
+	Container   string
+	MemoryLimit string // quantity string, e.g. "256Mi" — rendered as-is
+	FinishedAt  string
+	ExitCode    int64
+}
+
+// IsOOM reports whether this build was terminated by the OOM killer, driving the
+// loud memory-limit callout in the template.
+func (b Build) IsOOM() bool {
+	return b.Termination != nil && b.Termination.Reason == "OOMKilled"
+}
+
+// TerminationSummary renders a one-line human summary of the build's
+// termination, kept here (not in the template) so it stays logic-free and
+// unit-testable. It returns the empty string when there is no termination.
+// For OOM it reads "OOM Killed — the <container> step exceeded its <limit>
+// memory limit." (the "its <limit>" clause is dropped when the limit is
+// unknown). For any other non-empty reason it reads
+// "Terminated: <reason> (exit <exitCode>)".
+func (b Build) TerminationSummary() string {
+	if b.Termination == nil || b.Termination.Reason == "" {
+		return ""
+	}
+	if b.IsOOM() {
+		if b.Termination.MemoryLimit != "" {
+			return fmt.Sprintf("OOM Killed — the %s step exceeded its %s memory limit.", b.Termination.Container, b.Termination.MemoryLimit)
+		}
+		return fmt.Sprintf("OOM Killed — the %s step exceeded its memory limit.", b.Termination.Container)
+	}
+	return fmt.Sprintf("Terminated: %s (exit %d)", b.Termination.Reason, b.Termination.ExitCode)
 }
 
 // TriggerLabel renders the build trigger with its author when known:
@@ -386,6 +426,25 @@ func buildFrom(v any) Build {
 		Message:        asString(m["message"]),
 		LogsRef:        asString(m["logsRef"]),
 		Steps:          stepsFrom(m["steps"]),
+		Termination:    terminationFrom(m["termination"]),
+	}
+}
+
+// terminationFrom maps status.build.termination (and each
+// buildHistory[].termination) defensively. It returns nil when the value is
+// absent or not a map, so a status from an older operator simply carries no
+// termination rather than panicking, mirroring the other *From helpers.
+func terminationFrom(v any) *Termination {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &Termination{
+		Reason:      asString(m["reason"]),
+		Container:   asString(m["container"]),
+		MemoryLimit: asString(m["memoryLimit"]),
+		FinishedAt:  asString(m["finishedAt"]),
+		ExitCode:    asInt(m["exitCode"]),
 	}
 }
 

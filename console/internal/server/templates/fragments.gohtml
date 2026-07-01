@@ -28,6 +28,11 @@
       <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
       <div class="kv"><span class="k">Started</span><span class="v">{{timetag .Build.StartTime}}</span></div>
       {{if .Build.FailedStep}}<div class="kv"><span class="k">Failed step</span><span class="v b-false">{{.Build.FailedStep}}</span></div>{{end}}
+      {{if .Build.IsOOM}}
+        <div class="banner banner-degraded" style="margin-top:8px" role="alert">{{.Build.TerminationSummary}} Increase <code>spec.build.memoryLimit</code>.</div>
+      {{else if .Build.Termination}}
+        <div class="small muted" style="padding-top:6px">{{.Build.TerminationSummary}}</div>
+      {{end}}
       {{if .Build.Message}}<div class="small muted" style="padding-top:6px">{{.Build.Message}}</div>{{end}}
       {{with .BuildMetrics}}
         <div class="live-usage" style="margin-top:8px">
@@ -62,6 +67,7 @@
         <div class="build-row"{{if .JobName}} data-build-row="{{.JobName}}"{{end}}>
           <div class="build-row-head">
             <span class="badge b-{{if eq .Result "Succeeded"}}ready{{else if eq .Result "Failed"}}degraded{{else}}pending{{end}}">{{dash .Result}}</span>
+            {{if .IsOOM}}<span class="badge b-false" title="{{.TerminationSummary}}">OOM</span>{{end}}
             <span class="small muted">{{.TriggerLabel}}</span>
             <span class="small muted">{{timetag .CompletionTime}}</span>
           </div>

@@ -133,6 +133,107 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	}
 }
 
+func TestBuildFrom_Termination(t *testing.T) {
+	// Present: the termination map maps into the view-local Termination struct,
+	// coercing exitCode (a number) to int64.
+	b := buildFrom(map[string]any{
+		"termination": map[string]any{
+			"reason":      "OOMKilled",
+			"container":   "build",
+			"exitCode":    int64(137),
+			"memoryLimit": "256Mi",
+			"finishedAt":  "2026-06-25T09:55:00Z",
+		},
+	})
+	if b.Termination == nil {
+		t.Fatal("Termination should be populated when present")
+	}
+	if b.Termination.Reason != "OOMKilled" || b.Termination.Container != "build" {
+		t.Errorf("termination reason/container wrong: %+v", b.Termination)
+	}
+	if b.Termination.ExitCode != 137 || b.Termination.MemoryLimit != "256Mi" {
+		t.Errorf("termination exitCode/memoryLimit wrong: %+v", b.Termination)
+	}
+	if b.Termination.FinishedAt != "2026-06-25T09:55:00Z" {
+		t.Errorf("termination finishedAt wrong: %+v", b.Termination)
+	}
+
+	// Absent: no termination key → nil.
+	if got := buildFrom(map[string]any{}).Termination; got != nil {
+		t.Errorf("absent termination should be nil, got %+v", got)
+	}
+	// Mistyped: a non-map termination → nil.
+	if got := buildFrom(map[string]any{"termination": "boom"}).Termination; got != nil {
+		t.Errorf("mistyped termination should be nil, got %+v", got)
+	}
+}
+
+func TestTerminationFrom(t *testing.T) {
+	if got := terminationFrom(nil); got != nil {
+		t.Errorf("nil should map to nil, got %+v", got)
+	}
+	if got := terminationFrom("not-a-map"); got != nil {
+		t.Errorf("non-map should map to nil, got %+v", got)
+	}
+	// exitCode carried as a string still coerces (defensive).
+	got := terminationFrom(map[string]any{"reason": "OOMKilled", "exitCode": "137"})
+	if got == nil || got.Reason != "OOMKilled" || got.ExitCode != 137 {
+		t.Errorf("string exitCode should coerce; got %+v", got)
+	}
+}
+
+func TestBuild_IsOOM(t *testing.T) {
+	cases := []struct {
+		name  string
+		build Build
+		want  bool
+	}{
+		{"oom", Build{Termination: &Termination{Reason: "OOMKilled"}}, true},
+		{"non-oom termination", Build{Termination: &Termination{Reason: "Error"}}, false},
+		{"nil termination", Build{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.build.IsOOM(); got != tc.want {
+				t.Errorf("IsOOM() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuild_TerminationSummary(t *testing.T) {
+	cases := []struct {
+		name  string
+		build Build
+		want  string
+	}{
+		{
+			"oom with limit",
+			Build{Termination: &Termination{Reason: "OOMKilled", Container: "build", MemoryLimit: "256Mi"}},
+			"OOM Killed — the build step exceeded its 256Mi memory limit.",
+		},
+		{
+			"oom without limit",
+			Build{Termination: &Termination{Reason: "OOMKilled", Container: "build"}},
+			"OOM Killed — the build step exceeded its memory limit.",
+		},
+		{
+			"non-oom termination",
+			Build{Termination: &Termination{Reason: "Error", ExitCode: 1}},
+			"Terminated: Error (exit 1)",
+		},
+		{"nil termination", Build{}, ""},
+		{"empty reason", Build{Termination: &Termination{}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.build.TerminationSummary(); got != tc.want {
+				t.Errorf("TerminationSummary() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuild_TriggerLabel(t *testing.T) {
 	cases := []struct {
 		name  string

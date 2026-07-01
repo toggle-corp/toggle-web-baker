@@ -510,6 +510,74 @@ func completedBuildStatus() map[string]any {
 	}
 }
 
+// oomBuildStatus is a failed build the operator terminated via the OOM killer,
+// with a matching history row, so the OOM callout + history badge can be tested.
+func oomBuildStatus() map[string]any {
+	return map[string]any{
+		"phase": "Degraded",
+		"build": map[string]any{
+			"phase":          "Failed",
+			"result":         "Error",
+			"jobName":        "mapswipe-uat-build-9",
+			"failedStep":     "build",
+			"completionTime": "2026-06-25T09:05:00Z",
+			"termination": map[string]any{
+				"reason":      "OOMKilled",
+				"container":   "build",
+				"exitCode":    int64(137),
+				"memoryLimit": "256Mi",
+				"finishedAt":  "2026-06-25T09:05:00Z",
+			},
+		},
+		"buildHistory": []any{
+			map[string]any{
+				"jobName": "mapswipe-uat-build-9", "result": "Failed", "trigger": "Scheduled",
+				"completionTime": "2026-06-25T09:05:00Z",
+				"termination":    map[string]any{"reason": "OOMKilled", "container": "build"},
+			},
+		},
+	}
+}
+
+func TestBuildCard_RendersOOMCalloutAndHistoryBadge(t *testing.T) {
+	dyn := seededDyn(t, oomBuildStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// The loud callout carries the summary + the remediation hint.
+	if !strings.Contains(body, "OOM Killed — the build step exceeded its 256Mi memory limit.") {
+		t.Errorf("should render the OOM callout summary; body=%s", body)
+	}
+	if !strings.Contains(body, "spec.build.memoryLimit") {
+		t.Errorf("should render the memoryLimit remediation hint; body=%s", body)
+	}
+	if !strings.Contains(body, "banner-degraded") {
+		t.Errorf("OOM callout should reuse the banner-degraded styling; body=%s", body)
+	}
+	// The compact OOM badge appears on the OOM history row.
+	if !strings.Contains(body, ">OOM<") {
+		t.Errorf("history row should carry a compact OOM badge; body=%s", body)
+	}
+}
+
+func TestBuildCard_NonOOMFailureHasNoOOMCallout(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus()) // history has a plain Failed row, no termination
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if strings.Contains(body, "OOM Killed") {
+		t.Errorf("non-OOM build must not render the OOM callout; body=%s", body)
+	}
+	if strings.Contains(body, ">OOM<") {
+		t.Errorf("non-OOM history rows must not carry an OOM badge; body=%s", body)
+	}
+}
+
 func doGet(srv *Server, path, ns, name string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.SetPathValue("namespace", ns)
