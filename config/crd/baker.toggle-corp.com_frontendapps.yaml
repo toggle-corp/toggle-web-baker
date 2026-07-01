@@ -523,6 +523,10 @@ spec:
                   trigger:
                     description: Trigger records why this build ran.
                     type: string
+                  triggeredBy:
+                    description: TriggeredBy is the user who requested a manual build
+                      (empty for scheduled).
+                    type: string
                 type: object
               buildHistory:
                 description: |-
@@ -592,6 +596,10 @@ spec:
                       x-kubernetes-list-type: atomic
                     trigger:
                       description: Trigger records why this build ran.
+                      type: string
+                    triggeredBy:
+                      description: TriggeredBy is the user who requested a manual
+                        build (empty for scheduled).
                       type: string
                   type: object
                 maxItems: 5

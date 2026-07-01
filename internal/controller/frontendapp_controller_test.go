@@ -424,6 +424,15 @@ func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerManual {
 		t.Fatalf("trigger = %s, want Manual", app.Status.Build.Trigger)
 	}
+	if app.Status.Build.TriggeredBy != "octocat" {
+		t.Fatalf("Build.TriggeredBy = %q, want octocat", app.Status.Build.TriggeredBy)
+	}
+	if app.Status.LastManualTrigger.TriggeredBy != "octocat" {
+		t.Fatalf("LastManualTrigger.TriggeredBy = %q, want octocat", app.Status.LastManualTrigger.TriggeredBy)
+	}
+	if app.Status.LastManualTrigger.Time == nil {
+		t.Fatal("LastManualTrigger.Time must be set on a manual build")
+	}
 	if app.Status.Build.PodName != "" {
 		t.Fatalf("PodName must stay empty until pod observed, got %q", app.Status.Build.PodName)
 	}
@@ -438,6 +447,32 @@ func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 		if s.Status != bakerv1alpha1.StepStatusPending {
 			t.Fatalf("seeded step %s = %s, want Pending", s.Name, s.Status)
 		}
+	}
+}
+
+// Behavior 6b: a SCHEDULED startBuild (no "by" annotation) leaves Build.TriggeredBy
+// empty and MUST NOT clobber a prior LastManualTrigger — it means "last human who
+// rebuilt" and has to survive intervening scheduled builds.
+func TestStartBuild_ScheduledPreservesLastManualTrigger(t *testing.T) {
+	app := baseApp()
+	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch"}
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildAnnotation: "tok-2",
+	}
+	app.Status.LastManualTrigger = bakerv1alpha1.ManualTrigger{TriggeredBy: "earlier-user"}
+	r, _ := newReconciler(t, app, wffc())
+
+	if err := r.startBuild(context.Background(), app, "tok-2"); err != nil {
+		t.Fatalf("startBuild: %v", err)
+	}
+	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerScheduled {
+		t.Fatalf("trigger = %s, want Scheduled", app.Status.Build.Trigger)
+	}
+	if app.Status.Build.TriggeredBy != "" {
+		t.Fatalf("Build.TriggeredBy = %q, want empty for scheduled", app.Status.Build.TriggeredBy)
+	}
+	if app.Status.LastManualTrigger.TriggeredBy != "earlier-user" {
+		t.Fatalf("LastManualTrigger.TriggeredBy = %q, want earlier-user (untouched by scheduled build)", app.Status.LastManualTrigger.TriggeredBy)
 	}
 }
 

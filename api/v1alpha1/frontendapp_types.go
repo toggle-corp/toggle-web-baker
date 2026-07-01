@@ -411,6 +411,9 @@ type BuildStatus struct {
 	// Trigger records why this build ran.
 	// +optional
 	Trigger BuildTrigger `json:"trigger,omitempty"`
+	// TriggeredBy is the user who requested a manual build (empty for scheduled).
+	// +optional
+	TriggeredBy string `json:"triggeredBy,omitempty"`
 	// Steps is the ordered per-step timeline (only applicable steps).
 	// +optional
 	// +listType=atomic
