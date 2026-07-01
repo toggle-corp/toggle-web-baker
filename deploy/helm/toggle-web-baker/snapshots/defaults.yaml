@@ -12,6 +12,53 @@ metadata:
     app.kubernetes.io/version: "0.0.0"
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: toggle-web-baker-helm/templates/operator-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-toggle-web-baker-operator-config
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator
+data:
+  config.yaml: |
+    metricsBindAddress: ":8080"
+    healthProbeBindAddress: ":8081"
+    leaderElect: true
+    registryAllowlist:
+      - "ghcr.io/toggle-corp/"
+    clusterCIDRs:
+      - "10.0.0.0/8"
+      - "172.20.0.0/16"
+    traefikGroup: "traefik.io"
+    traefikNamespace: "traefik"
+    imagePullSecret: ""
+    storageClass: ""
+    measureInterval: "1h"
+    images:
+      clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0"
+      copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0"
+      du: "ghcr.io/toggle-corp/toggle-web-baker-du:0.0.0"
+      cleanup: "ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.0.0"
+      clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.0.0"
+      nginx: "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
+    nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:0.0.0","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:0.0.0","runAsUser":1000}}
+    phaseResources:
+      cpu:
+        request: "0.1"
+        limit: "4"
+      memory:
+        setup: "512Mi"
+        fetch: "512Mi"
+        build: "2Gi"
+    activeDeadlineSeconds: 1800
+
+---
 # Source: toggle-web-baker-helm/templates/crd.yaml
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -72,6 +119,13 @@ spec:
             description: 'FrontendAppSpec is the desired state: operational tunables
               for one app.'
             properties:
+              activeDeadlineSeconds:
+                description: |-
+                  ActiveDeadlineSeconds bounds the WHOLE build Job (all phases). When unset
+                  the operator supplies the default from its config (NO kubebuilder default
+                  here — operator config owns it).
+                format: int64
+                type: integer
               auth:
                 description: |-
                   AuthConfig configures optional HTTP basic auth. Exactly one of passwordHash or
@@ -141,6 +195,15 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                   image:
+                    type: string
+                  memoryLimit:
+                    description: |-
+                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                      "2Gi"). When omitted the operator supplies a per-phase default (operator
+                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                      Shared by setup/fetch/build via PhaseSpec.
                     type: string
                   runAsUser:
                     description: |-
@@ -236,6 +299,15 @@ spec:
                     x-kubernetes-list-type: atomic
                   image:
                     type: string
+                  memoryLimit:
+                    description: |-
+                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                      "2Gi"). When omitted the operator supplies a per-phase default (operator
+                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                      Shared by setup/fetch/build via PhaseSpec.
+                    type: string
                   runAsUser:
                     description: |-
                       RunAsUser pins this phase container's numeric UID. The build pod sets
@@ -295,26 +367,6 @@ spec:
                 type: string
               repo:
                 type: string
-              resources:
-                description: ResourcesConfig groups resource and deadline tunables.
-                properties:
-                  activeDeadlineSeconds:
-                    default: 1800
-                    format: int64
-                    type: integer
-                  build:
-                    description: BuildResources configures the build container's resource
-                      constraints.
-                    properties:
-                      cpuRequest:
-                        type: string
-                      memoryLimit:
-                        default: 6Gi
-                        type: string
-                      memoryRequest:
-                        type: string
-                    type: object
-                type: object
               schedule:
                 default: 0 */12 * * *
                 type: string
@@ -398,6 +450,15 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                   image:
+                    type: string
+                  memoryLimit:
+                    description: |-
+                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                      "2Gi"). When omitted the operator supplies a per-phase default (operator
+                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                      Shared by setup/fetch/build via PhaseSpec.
                     type: string
                   runAsUser:
                     description: |-
@@ -1078,6 +1139,9 @@ spec:
       app.kubernetes.io/component: operator
   template:
     metadata:
+      annotations:
+        # Roll the operator pod whenever the config ConfigMap content changes.
+        checksum/config: 019d0832aa7995d9fc2ea4962b2930641a8275f6b005467da116a680537fdf75
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name
@@ -1093,21 +1157,9 @@ spec:
           image: ghcr.io/toggle-corp/toggle-web-baker-operator:0.0.0
           imagePullPolicy: IfNotPresent
           args:
-            - --leader-elect=true
-            - --metrics-bind-address=:8080
-            - --health-probe-bind-address=:8081
-            - --cluster-cidrs=10.0.0.0/8
-            - --cluster-cidrs=172.20.0.0/16
-            - --registry-allowlist=ghcr.io/toggle-corp/
-            - --traefik-namespace=traefik
-            - --traefik-group=traefik.io
-            - --image-clone=ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0
-            - --image-copier=ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0
-            - --image-du=ghcr.io/toggle-corp/toggle-web-baker-du:0.0.0
-            - --image-cleanup=ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.0.0
-            - --image-clock=ghcr.io/toggle-corp/toggle-web-baker-clock:0.0.0
-            - --image-nginx=docker.io/nginxinc/nginx-unprivileged:1.27-alpine
-            - '--node-images={"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:0.0.0","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:0.0.0","runAsUser":1000}}'
+            - --config=/etc/baker/config.yaml
+          volumeMounts:
+            - { name: config, mountPath: /etc/baker, readOnly: true }
           ports:
             - name: metrics
               containerPort: 8080
@@ -1137,3 +1189,5 @@ spec:
             requests:
               cpu: 10m
               memory: 64Mi
+      volumes:
+        - { name: config, configMap: { name: release-name-toggle-web-baker-operator-config } }

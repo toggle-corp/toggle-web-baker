@@ -50,9 +50,24 @@ operator:
       tag: ""
       runAsUser: 1000
 
+  # The values below are rendered into the operator config ConfigMap
+  # (templates/operator-configmap.yaml), mounted at /etc/baker/config.yaml.
   leaderElect: true
   metricsBindAddress: ":8080"
   healthProbeBindAddress: ":8081"
+
+  # Debounce floor between post-build du storage measurements.
+  measureInterval: "1h"
+
+  # Per-phase build-pod resource defaults (operator-owned). memory is per-phase
+  # (a phase's spec.<phase>.memoryLimit overrides its ceiling; request is pinned
+  # == limit); cpu request/limit are global (same for every phase container).
+  phaseResources:
+    cpu: { request: "0.1", limit: "4" }
+    memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }   # fetch may be raised if it downloads large data
+
+  # Default deadline bounding the whole build Job when spec.activeDeadlineSeconds is unset.
+  activeDeadlineSeconds: 1800
 
   # WaitForFirstConsumer StorageClass backing all PVCs. Empty => cluster default.
   storageClass: ""

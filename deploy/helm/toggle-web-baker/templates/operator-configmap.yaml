@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "toggle-web-baker.operator.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+data:
+  config.yaml: |
+    metricsBindAddress: {{ .Values.operator.metricsBindAddress | quote }}
+    healthProbeBindAddress: {{ .Values.operator.healthProbeBindAddress | quote }}
+    leaderElect: {{ .Values.operator.leaderElect }}
+    registryAllowlist:
+      {{- range .Values.operator.registryAllowlist }}
+      - {{ . | quote }}
+      {{- end }}
+    clusterCIDRs:
+      {{- range .Values.operator.clusterCIDRs }}
+      - {{ . | quote }}
+      {{- end }}
+    traefikGroup: {{ .Values.operator.traefikGroup | quote }}
+    traefikNamespace: {{ .Values.operator.traefikNamespace | quote }}
+    imagePullSecret: {{ .Values.operator.imagePullSecret | quote }}
+    storageClass: {{ .Values.operator.storageClass | quote }}
+    measureInterval: {{ .Values.operator.measureInterval | quote }}
+    images:
+      clone: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clone "root" $) | quote }}
+      copier: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.copier "root" $) | quote }}
+      du: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.du "root" $) | quote }}
+      cleanup: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.cleanup "root" $) | quote }}
+      clock: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clock "root" $) | quote }}
+      nginx: {{ .Values.platformImages.nginx | quote }}
+    nodeImages: {{ include "toggle-web-baker.nodeImagesJSON" $ }}
+    phaseResources:
+      cpu:
+        request: {{ .Values.operator.phaseResources.cpu.request | quote }}
+        limit: {{ .Values.operator.phaseResources.cpu.limit | quote }}
+      memory:
+        setup: {{ .Values.operator.phaseResources.memory.setup | quote }}
+        fetch: {{ .Values.operator.phaseResources.memory.fetch | quote }}
+        build: {{ .Values.operator.phaseResources.memory.build | quote }}
+    activeDeadlineSeconds: {{ .Values.operator.activeDeadlineSeconds }}

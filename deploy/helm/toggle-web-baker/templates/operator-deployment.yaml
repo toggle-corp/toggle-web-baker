@@ -14,6 +14,9 @@ spec:
       app.kubernetes.io/component: operator
   template:
     metadata:
+      annotations:
+        # Roll the operator pod whenever the config ConfigMap content changes.
+        checksum/config: {{ include (print $.Template.BasePath "/operator-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "toggle-web-baker.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: operator
@@ -28,30 +31,9 @@ spec:
           image: {{ include "toggle-web-baker.image" (dict "image" .Values.operator.image "root" $) }}
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           args:
-            - --leader-elect={{ .Values.operator.leaderElect }}
-            - --metrics-bind-address={{ .Values.operator.metricsBindAddress }}
-            - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
-            {{- range .Values.operator.clusterCIDRs }}
-            - --cluster-cidrs={{ . }}
-            {{- end }}
-            {{- range .Values.operator.registryAllowlist }}
-            - --registry-allowlist={{ . }}
-            {{- end }}
-            {{- with .Values.operator.storageClass }}
-            - --storage-class={{ . }}
-            {{- end }}
-            - --traefik-namespace={{ .Values.operator.traefikNamespace }}
-            - --traefik-group={{ .Values.operator.traefikGroup }}
-            {{- with .Values.operator.imagePullSecret }}
-            - --image-pull-secret={{ . }}
-            {{- end }}
-            - --image-clone={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clone "root" $) }}
-            - --image-copier={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.copier "root" $) }}
-            - --image-du={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.du "root" $) }}
-            - --image-cleanup={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.cleanup "root" $) }}
-            - --image-clock={{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clock "root" $) }}
-            - --image-nginx={{ .Values.platformImages.nginx }}
-            - '--node-images={{ include "toggle-web-baker.nodeImagesJSON" $ }}'
+            - --config=/etc/baker/config.yaml
+          volumeMounts:
+            - { name: config, mountPath: /etc/baker, readOnly: true }
           ports:
             - name: metrics
               containerPort: 8080
@@ -76,3 +58,5 @@ spec:
               drop: ["ALL"]
           resources:
             {{- toYaml .Values.operator.resources | nindent 12 }}
+      volumes:
+        - { name: config, configMap: { name: {{ include "toggle-web-baker.operator.fullname" . }}-config } }
