@@ -217,6 +217,41 @@ func TestValidation_RejectsAbsoluteOutputDir(t *testing.T) {
 	}
 }
 
+func TestValidation_RejectsCurrentDirOutputDir(t *testing.T) {
+	// "." is a "." segment: the copier would publish the ENTIRE workspace
+	// (node_modules/.git/source), so the segment CEL rule rejects it even though
+	// it passes the RE2 pattern.
+	app := validApp("reject-outputdir-dot")
+	app.Spec.Build.OutputDir = "."
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for outputDir '.'")
+	}
+}
+
+func TestValidation_RejectsTrailingSlashOutputDir(t *testing.T) {
+	// "out/" has a trailing empty segment: the segment CEL rule rejects it.
+	app := validApp("reject-outputdir-trailing-slash")
+	app.Spec.Build.OutputDir = "out/"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for outputDir with a trailing slash")
+	}
+}
+
+func TestValidation_AcceptsDottedOutputDirName(t *testing.T) {
+	// "assets..min" contains ".." as a SUBSTRING but not as a path SEGMENT, so
+	// it is a safe relative dir and must be accepted (guards against a substring
+	// contains('..') false-positive).
+	app := validApp("accept-outputdir-dotted")
+	app.Spec.Build.OutputDir = "assets..min"
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected 'assets..min' outputDir to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
 func TestValidation_AcceptsSimpleOutputDir(t *testing.T) {
 	app := validApp("accept-outputdir-simple")
 	app.Spec.Build.OutputDir = "out"

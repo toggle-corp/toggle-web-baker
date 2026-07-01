@@ -20,10 +20,6 @@ func ingressName(app *bakerv1alpha1.FrontendApp) string      { return app.Name }
 func middlewareName(app *bakerv1alpha1.FrontendApp) string   { return app.Name + "-auth" }
 func buildNetPolName(app *bakerv1alpha1.FrontendApp) string  { return app.Name + "-build" }
 func nginxNetPolName(app *bakerv1alpha1.FrontendApp) string  { return app.Name + "-nginx" }
-func buildArgsConfigName(app *bakerv1alpha1.FrontendApp) string {
-	return app.Name + "-build-args"
-}
-
 // managedBy is the value of app.kubernetes.io/managed-by on every child.
 const managedBy = "toggle-web-baker"
 

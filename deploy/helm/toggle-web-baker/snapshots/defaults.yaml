@@ -208,11 +208,14 @@ spec:
                   outputDir:
                     description: |-
                       OutputDir is the subdir of the workspace holding the built bundle (the
-                      copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a relative
-                      path: no leading "/" and no ".." segment. The RE2 pattern pins the first
-                      character to an alnum/_/. and restricts the rest to a safe set (which
-                      rejects a leading "/"); the ".." rejection is a CEL rule on the spec (RE2
-                      has no lookaround).
+                      copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
+                      path. Two layers: the RE2 pattern restricts the character set (rejecting
+                      spaces/shell metachars and a leading "/"), and a CEL rule on the spec
+                      rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
+                      do a per-segment check). The segment rule also blocks the "." whole-dir
+                      footgun (which would publish the entire workspace) and trailing/duplicate
+                      slashes, while still allowing dotted names like "assets..min".
+                    maxLength: 256
                     pattern: ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$
                     type: string
                   runAsUser:
@@ -518,8 +521,10 @@ spec:
                 && has(self.fetch.command) && size(self.fetch.command) > 0)'
             - message: 'build needs an image: set spec.nodeVersion or build.image'
               rule: has(self.nodeVersion) || (has(self.build) && has(self.build.image))
-            - message: build.outputDir must not contain a '..' segment
-              rule: '!has(self.build) || !has(self.build.outputDir) || !self.build.outputDir.contains(''..'')'
+            - message: build.outputDir must be a relative path with no empty, '.'
+                or '..' segments
+              rule: '!has(self.build) || !has(self.build.outputDir) || self.build.outputDir.split(''/'').all(s,
+                s != '''' && s != ''.'' && s != ''..'')'
           status:
             description: FrontendAppStatus is the operator-owned observed state.
             properties:

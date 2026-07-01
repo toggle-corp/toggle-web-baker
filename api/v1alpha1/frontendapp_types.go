@@ -174,12 +174,15 @@ type PhaseSpec struct {
 type BuildPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// OutputDir is the subdir of the workspace holding the built bundle (the
-	// copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a relative
-	// path: no leading "/" and no ".." segment. The RE2 pattern pins the first
-	// character to an alnum/_/. and restricts the rest to a safe set (which
-	// rejects a leading "/"); the ".." rejection is a CEL rule on the spec (RE2
-	// has no lookaround).
+	// copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
+	// path. Two layers: the RE2 pattern restricts the character set (rejecting
+	// spaces/shell metachars and a leading "/"), and a CEL rule on the spec
+	// rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
+	// do a per-segment check). The segment rule also blocks the "." whole-dir
+	// footgun (which would publish the entire workspace) and trailing/duplicate
+	// slashes, while still allowing dotted names like "assets..min".
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$`
+	// +kubebuilder:validation:MaxLength=256
 	// +optional
 	OutputDir string `json:"outputDir,omitempty"`
 }
@@ -279,7 +282,7 @@ type StorageConfig struct {
 // +kubebuilder:validation:XValidation:rule="has(self.build) && has(self.build.command) && size(self.build.command) > 0",message="build.command is required"
 // +kubebuilder:validation:XValidation:rule="!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch) && has(self.fetch.command) && size(self.fetch.command) > 0)",message="secrets require a fetch.command to consume them"
 // +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || (has(self.build) && has(self.build.image))",message="build needs an image: set spec.nodeVersion or build.image"
-// +kubebuilder:validation:XValidation:rule="!has(self.build) || !has(self.build.outputDir) || !self.build.outputDir.contains('..')",message="build.outputDir must not contain a '..' segment"
+// +kubebuilder:validation:XValidation:rule="!has(self.build) || !has(self.build.outputDir) || self.build.outputDir.split('/').all(s, s != '' && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
 type FrontendAppSpec struct {
 	// +kubebuilder:validation:Required
 	Repo string `json:"repo"`

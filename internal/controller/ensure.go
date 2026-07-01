@@ -82,8 +82,8 @@ func (r *FrontendAppReconciler) ensureExists(ctx context.Context, app *bakerv1al
 	return r.Update(ctx, existing)
 }
 
-// ensureInfra reconciles the always-present children: PVCs, the build-args
-// ConfigMap, the clock SA/Role/RoleBinding/CronJob, and the build NetworkPolicy.
+// ensureInfra reconciles the always-present children: PVCs, the clock
+// SA/Role/RoleBinding/CronJob, and the build NetworkPolicy.
 func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
 	// Three PVCs (cache, dataCache, output) — WaitForFirstConsumer SC; the build
 	// pod is the first consumer of all three (deterministic co-binding).
@@ -92,23 +92,6 @@ func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alp
 		if err := r.ensureExists(ctx, app, pvc); err != nil {
 			return err
 		}
-	}
-
-	// Build-env ConfigMap (public literal values materialized for the build
-	// phase). buildArgs is gone; the public build-env channel is now
-	// spec.build.env. ValueFrom (ConfigMap-sourced) entries are skipped — only
-	// literal values are materialized here.
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: buildArgsConfigName(app), Namespace: app.Namespace, Labels: labelsFor(app)}}
-	if err := r.upsert(ctx, app, cm, func() {
-		data := map[string]string{}
-		for _, e := range app.Spec.Build.Env {
-			if e.ValueFrom == nil {
-				data[e.Name] = e.Value
-			}
-		}
-		cm.Data = data
-	}); err != nil {
-		return err
 	}
 
 	// Clock RBAC + CronJob (scoped to patch only this FrontendApp).
