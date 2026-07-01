@@ -204,6 +204,43 @@ func TestLoadConfig_ValidPopulatesOperatorConfig(t *testing.T) {
 	}
 }
 
+// Omitting the manager knobs must NOT silently disable the metrics/health
+// servers or leader election — they fall back to the deleted flag defaults.
+func TestLoadConfig_ManagerDefaultsWhenOmitted(t *testing.T) {
+	body := `
+clusterCIDRs: [10.0.0.0/8]
+phaseResources:
+  cpu: { request: "0.1", limit: "4" }
+  memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }
+activeDeadlineSeconds: 1800
+`
+	_, mgr, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if mgr.MetricsBindAddress != ":8080" || mgr.HealthProbeBindAddress != ":8081" {
+		t.Fatalf("bind addresses not defaulted: %+v", mgr)
+	}
+	if !mgr.LeaderElect {
+		t.Fatal("leaderElect must default to true when omitted")
+	}
+	if mgr.TraefikNamespace != "traefik" {
+		t.Fatalf("traefikNamespace not defaulted: %q", mgr.TraefikNamespace)
+	}
+}
+
+// An explicit leaderElect: false must be honored (not overridden by the default).
+func TestLoadConfig_LeaderElectFalseHonored(t *testing.T) {
+	body := strings.Replace(validConfigYAML, "leaderElect: true", "leaderElect: false", 1)
+	_, mgr, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if mgr.LeaderElect {
+		t.Fatal("explicit leaderElect: false must be honored")
+	}
+}
+
 func TestLoadConfig_EmptyClusterCIDRsError(t *testing.T) {
 	body := strings.Replace(validConfigYAML,
 		"clusterCIDRs:\n  - 10.0.0.0/16\n  - 10.96.0.0/12", "clusterCIDRs: []", 1)

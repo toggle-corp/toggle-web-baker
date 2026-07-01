@@ -115,10 +115,12 @@ type ManagerOptions struct {
 // so the json tags below drive the mapping. LoadConfig splits it into the
 // reconciler-facing OperatorConfig + the manager-level ManagerOptions.
 type FileConfig struct {
-	// Manager (controller-runtime) options.
+	// Manager (controller-runtime) options. LeaderElect is a pointer so an
+	// omitted key defaults to true (matching the deleted --leader-elect flag)
+	// rather than the bool zero value false, which would silently disable HA.
 	MetricsBindAddress     string `json:"metricsBindAddress,omitempty"`
 	HealthProbeBindAddress string `json:"healthProbeBindAddress,omitempty"`
-	LeaderElect            bool   `json:"leaderElect,omitempty"`
+	LeaderElect            *bool  `json:"leaderElect,omitempty"`
 
 	// Domain fields.
 	RegistryAllowlist []string                    `json:"registryAllowlist,omitempty"`
@@ -235,62 +237,70 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 	if err := cfg.Validate(); err != nil {
 		return OperatorConfig{}, ManagerOptions{}, err
 	}
-	// Reuse the same semantic checks the JSON flag path applied to node images.
-	if _, err := ParseNodeImages(nodeImagesToJSON(cfg.NodeImages)); err != nil {
+	// Semantic node-image checks (numeric key, non-empty image, non-root UID),
+	// run directly on the decoded map.
+	if err := validateNodeImages(cfg.NodeImages); err != nil {
 		return OperatorConfig{}, ManagerOptions{}, err
 	}
 
+	// Restore the deleted CLI-flag defaults so an omitted key can't silently
+	// disable the metrics/health servers (the Deployment's probes hit :8081) or
+	// leader election. clusterCIDRs stays mandatory (no safe default); these do.
 	mgr := ManagerOptions{
-		MetricsBindAddress:     fc.MetricsBindAddress,
-		HealthProbeBindAddress: fc.HealthProbeBindAddress,
-		LeaderElect:            fc.LeaderElect,
+		MetricsBindAddress:     defaultStr(fc.MetricsBindAddress, ":8080"),
+		HealthProbeBindAddress: defaultStr(fc.HealthProbeBindAddress, ":8081"),
+		LeaderElect:            fc.LeaderElect == nil || *fc.LeaderElect,
 		StorageClass:           fc.StorageClass,
-		TraefikNamespace:       fc.TraefikNamespace,
+		TraefikNamespace:       defaultStr(fc.TraefikNamespace, "traefik"),
 	}
 	return cfg, mgr, nil
 }
 
-// nodeImagesToJSON re-marshals the unmarshaled node-image map so LoadConfig can
-// reuse ParseNodeImages' semantic validation (numeric key, non-empty image,
-// non-root UID) without duplicating it here.
-func nodeImagesToJSON(m map[string]domain.NodeImage) string {
-	if len(m) == 0 {
-		return ""
+// defaultStr returns v, or def when v is empty.
+func defaultStr(v, def string) string {
+	if v == "" {
+		return def
 	}
-	b, _ := json.Marshal(m)
-	return string(b)
+	return v
 }
 
-// ParseNodeImages validates a node-image map supplied as a JSON string.
+// ParseNodeImages decodes a node-image map from a JSON string and validates it.
 // An empty string yields no entries (the feature is simply unused); malformed
-// JSON is a hard error so a bad chart value fails loudly at operator startup.
+// JSON is a hard error so a bad value fails loudly at operator startup.
 func ParseNodeImages(s string) (map[string]domain.NodeImage, error) {
 	if s == "" {
 		return nil, nil
 	}
 	var m map[string]domain.NodeImage
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		return nil, fmt.Errorf("parse -node-images: %w", err)
+		return nil, fmt.Errorf("parse node-images JSON: %w", err)
 	}
-	// Fail loud at startup on a semantically broken entry rather than emitting a
-	// build pod that can't schedule (empty image) or fails runAsNonRoot admission
-	// (missing / root UID). These images are operator-run, so a bad entry is an
-	// admin error to surface immediately, not per-app at build time.
-	for major, ni := range m {
-		if _, err := strconv.Atoi(major); err != nil {
-			return nil, fmt.Errorf("node-images: key %q is not a numeric node major", major)
-		}
-		if ni.Image == "" {
-			return nil, fmt.Errorf("node-images: entry %q has an empty image", major)
-		}
-		if ni.RunAsUser == nil {
-			return nil, fmt.Errorf("node-images: entry %q must set runAsUser (the image's numeric non-root UID)", major)
-		}
-		if *ni.RunAsUser < 1 {
-			return nil, fmt.Errorf("node-images: entry %q runAsUser must be >= 1 (non-root), got %d", major, *ni.RunAsUser)
-		}
+	if err := validateNodeImages(m); err != nil {
+		return nil, err
 	}
 	return m, nil
+}
+
+// validateNodeImages fails loud at startup on a semantically broken entry rather
+// than emitting a build pod that can't schedule (empty image) or fails
+// runAsNonRoot admission (missing / root UID). These images are operator-run, so
+// a bad entry is an admin error to surface immediately, not per-app at build time.
+func validateNodeImages(m map[string]domain.NodeImage) error {
+	for major, ni := range m {
+		if _, err := strconv.Atoi(major); err != nil {
+			return fmt.Errorf("node-images: key %q is not a numeric node major", major)
+		}
+		if ni.Image == "" {
+			return fmt.Errorf("node-images: entry %q has an empty image", major)
+		}
+		if ni.RunAsUser == nil {
+			return fmt.Errorf("node-images: entry %q must set runAsUser (the image's numeric non-root UID)", major)
+		}
+		if *ni.RunAsUser < 1 {
+			return fmt.Errorf("node-images: entry %q runAsUser must be >= 1 (non-root), got %d", major, *ni.RunAsUser)
+		}
+	}
+	return nil
 }
 
 // MetadataIP is the link-local cloud metadata endpoint, always denied to build
