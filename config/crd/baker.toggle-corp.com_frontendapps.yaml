@@ -253,6 +253,16 @@ spec:
               keepReleases:
                 default: 0
                 type: integer
+              nodeVersion:
+                description: |-
+                  NodeVersion selects an operator-managed node toolchain by MAJOR version
+                  (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
+                  writable HOME, so the app need not set image/runAsUser. A phase may still
+                  override with its own image (fully BYO for that phase). Available majors are
+                  operator/chart config; an unknown version fails the app at reconcile. Omit
+                  to supply build.image yourself.
+                minimum: 1
+                type: integer
               outputDir:
                 type: string
               packageManager:
@@ -456,6 +466,8 @@ spec:
             - message: secrets require a fetch.command to consume them
               rule: '!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch)
                 && has(self.fetch.command) && size(self.fetch.command) > 0)'
+            - message: 'build needs an image: set spec.nodeVersion or build.image'
+              rule: has(self.nodeVersion) || (has(self.build) && has(self.build.image))
           status:
             description: FrontendAppStatus is the operator-owned observed state.
             properties:

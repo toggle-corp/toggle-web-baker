@@ -65,8 +65,9 @@ func validApp(name string) *bakerv1alpha1.FrontendApp {
 			Namespace: "default",
 		},
 		Spec: bakerv1alpha1.FrontendAppSpec{
-			Repo: "https://example.com/repo.git",
-			Ref:  "main",
+			Repo:        "https://example.com/repo.git",
+			Ref:         "main",
+			NodeVersion: 18, // satisfies the build-needs-an-image rule
 			Build: bakerv1alpha1.PhaseSpec{
 				Command: []string{"yarn", "build"},
 			},
@@ -74,6 +75,55 @@ func validApp(name string) *bakerv1alpha1.FrontendApp {
 				Host: "app.example.com",
 			},
 		},
+	}
+}
+
+func TestValidation_RejectsBuildWithoutImageOrNodeVersion(t *testing.T) {
+	app := validApp("reject-no-build-image")
+	app.Spec.NodeVersion = 0 // omit both nodeVersion and build.image
+	app.Spec.Build.Image = ""
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected Create to be rejected when build has no image source")
+	}
+	if !strings.Contains(err.Error(), "nodeVersion or build.image") {
+		t.Fatalf("expected error mentioning the image sources, got: %v", err)
+	}
+}
+
+func TestValidation_AcceptsBuildImageWithoutNodeVersion(t *testing.T) {
+	app := validApp("accept-byo-build-image")
+	app.Spec.NodeVersion = 0
+	app.Spec.Build.Image = "docker.io/cimg/node:18.20"
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected explicit build.image to satisfy the rule, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsNodeVersionAndBuildImageTogether(t *testing.T) {
+	app := validApp("accept-nodeversion-and-image")
+	app.Spec.NodeVersion = 18
+	app.Spec.Build.Image = "docker.io/cimg/node:18.20" // per-phase override is legal
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected nodeVersion + explicit build.image to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsZeroNodeVersion(t *testing.T) {
+	// nodeVersion is Minimum=1; a bogus 0 with no build image is rejected. (An
+	// explicitly-set 0 is dropped by omitempty, so this asserts the pair: no
+	// image source available.)
+	app := validApp("reject-zero-nodeversion")
+	app.Spec.NodeVersion = 0
+	app.Spec.Build.Image = ""
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for nodeVersion 0 with no build image")
 	}
 }
 

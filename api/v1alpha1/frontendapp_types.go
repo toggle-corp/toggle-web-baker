@@ -273,12 +273,23 @@ type StorageConfig struct {
 // FrontendAppSpec is the desired state: operational tunables for one app.
 // +kubebuilder:validation:XValidation:rule="has(self.build) && has(self.build.command) && size(self.build.command) > 0",message="build.command is required"
 // +kubebuilder:validation:XValidation:rule="!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch) && has(self.fetch.command) && size(self.fetch.command) > 0)",message="secrets require a fetch.command to consume them"
+// +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || (has(self.build) && has(self.build.image))",message="build needs an image: set spec.nodeVersion or build.image"
 type FrontendAppSpec struct {
 	// +kubebuilder:validation:Required
 	Repo string `json:"repo"`
 	// +kubebuilder:default="HEAD"
 	// +optional
 	Ref string `json:"ref,omitempty"`
+
+	// NodeVersion selects an operator-managed node toolchain by MAJOR version
+	// (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
+	// writable HOME, so the app need not set image/runAsUser. A phase may still
+	// override with its own image (fully BYO for that phase). Available majors are
+	// operator/chart config; an unknown version fails the app at reconcile. Omit
+	// to supply build.image yourself.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	NodeVersion int `json:"nodeVersion,omitempty"`
 	// +kubebuilder:default=yarn
 	// +optional
 	PackageManager PackageManager `json:"packageManager,omitempty"`
