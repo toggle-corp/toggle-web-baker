@@ -230,6 +230,68 @@ func TestStorageVolumes_CapMappingAndBars(t *testing.T) {
 	}
 }
 
+func TestStorageVolumes_OutputTotalHasNoBar(t *testing.T) {
+	// "output" is the current release (bounded by output.capBytes → bar).
+	// "outputTotal" is the whole output PVC across all retained releases; the
+	// per-release cap does NOT bound it, so it must render as a number with no bar.
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "ns", "name": "vols"},
+		"spec": map[string]any{
+			"storage": map[string]any{
+				"output": map[string]any{"capBytes": int64(1000)},
+			},
+		},
+		"status": map[string]any{
+			"storage": map[string]any{
+				"sizes": map[string]any{"output": int64(500), "outputTotal": int64(5000)},
+			},
+		},
+	}}
+	a := FromUnstructured(obj)
+	byName := map[string]StorageVolume{}
+	for _, v := range a.Storage.Volumes {
+		byName[v.Name] = v
+	}
+
+	out := byName["output"]
+	if !out.HasBar || out.Cap != 1000 {
+		t.Errorf("output (current release) should keep its per-release bar: %+v", out)
+	}
+
+	total := byName["outputTotal"]
+	if total.HasBar || total.Cap != 0 {
+		t.Errorf("outputTotal must NOT reuse the per-release cap / bar: %+v", total)
+	}
+}
+
+func TestCapForKey_TotalIgnoresPerReleaseCap(t *testing.T) {
+	spec := map[string]any{"output": map[string]any{"capBytes": int64(1000)}}
+	if got := capForKey("output", spec); got != 1000 {
+		t.Errorf("capForKey(output) = %d, want 1000", got)
+	}
+	if got := capForKey("outputTotal", spec); got != 0 {
+		t.Errorf("capForKey(outputTotal) = %d, want 0 (total is not bounded by the per-release cap)", got)
+	}
+}
+
+func TestVolumeLabel(t *testing.T) {
+	cases := map[string]string{
+		"output":      "Output (current release)",
+		"outputTotal": "Output (all releases)",
+		"cache":       "Cache",
+		"dataCache":   "Data cache",
+		"unknownKey":  "unknownKey", // unmapped keys fall through to the raw name
+	}
+	for key, want := range cases {
+		if got := volumeLabel(key); got != want {
+			t.Errorf("volumeLabel(%q) = %q, want %q", key, got, want)
+		}
+		if got := (StorageVolume{Name: key}).DisplayName(); got != want {
+			t.Errorf("StorageVolume{%q}.DisplayName() = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestFromUnstructured_NoStatus(t *testing.T) {
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"namespace": "ns", "name": "fresh"},

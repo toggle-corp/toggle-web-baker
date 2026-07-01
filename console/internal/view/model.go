@@ -94,6 +94,29 @@ type StorageVolume struct {
 	HasBar bool
 }
 
+// DisplayName is the human label for the volume row; the raw status key (Name)
+// is not friendly. It delegates to volumeLabel so the mapping stays a pure,
+// unit-testable helper. Name itself is kept intact — sorting and tests rely on it.
+func (v StorageVolume) DisplayName() string { return volumeLabel(v.Name) }
+
+// volumeLabel maps a status.storage.sizes key to a readable card label. Unmapped
+// keys fall through to the raw key so a new operator key still renders (unpretty
+// but never blank).
+func volumeLabel(key string) string {
+	switch key {
+	case "output":
+		return "Output (current release)"
+	case "outputTotal":
+		return "Output (all releases)"
+	case "cache":
+		return "Cache"
+	case "dataCache":
+		return "Data cache"
+	default:
+		return key
+	}
+}
+
 // CleanupAction mirrors one entry of status.cleanup ({cache,releases}). Phase ∈
 // Pending|Running|Succeeded|Failed.
 type CleanupAction struct {
@@ -440,7 +463,8 @@ func volumesFrom(sizes, deltas, specStorage any) []StorageVolume {
 }
 
 // capForKey resolves a volume's byte cap from spec.storage by fuzzy-matching the
-// status size key. Order matters: "output" is checked before "cache" because a
+// status size key. Order matters: "total" is checked before "output" (a total is
+// not bounded by the per-release cap), and "output" before "cache" because a
 // hypothetical "output-cache" should map to the output cap.
 func capForKey(key string, specStorage any) int64 {
 	spec, ok := specStorage.(map[string]any)
@@ -449,6 +473,11 @@ func capForKey(key string, specStorage any) int64 {
 	}
 	k := strings.ToLower(key)
 	switch {
+	case strings.Contains(k, "total"):
+		// "outputTotal" is the whole output PVC across all retained releases; the
+		// per-release output.capBytes bounds a single release, not the total, and no
+		// total cap exists yet. Match "total" BEFORE "output" so it stays bar-less.
+		return 0
 	case strings.Contains(k, "output"):
 		return nestedInt(spec, "output", "capBytes")
 	case strings.Contains(k, "data"):
