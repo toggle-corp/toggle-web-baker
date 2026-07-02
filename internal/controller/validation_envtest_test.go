@@ -285,6 +285,43 @@ func TestValidation_AcceptsValidApp(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
+func TestValidation_AcceptsValidGroupLabel(t *testing.T) {
+	app := validApp("accept-group-label")
+	app.Spec.Group = "mapswipe"
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected 'mapswipe' group to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsUppercaseGroup(t *testing.T) {
+	app := validApp("reject-group-uppercase")
+	app.Spec.Group = "MapSwipe"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for uppercase group label")
+	}
+}
+
+func TestValidation_RejectsTrailingHyphenGroup(t *testing.T) {
+	app := validApp("reject-group-trailing-hyphen")
+	app.Spec.Group = "mapswipe-"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for group label with a trailing hyphen")
+	}
+}
+
+func TestValidation_RejectsOverlongGroup(t *testing.T) {
+	app := validApp("reject-group-overlong")
+	app.Spec.Group = strings.Repeat("a", 64) // MaxLength is 63
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for group label longer than 63 chars")
+	}
+}
+
 func TestValidation_DefaultsRefToHEAD(t *testing.T) {
 	app := validApp("defaults-ref-to-head")
 	app.Spec.Ref = "" // omit so the apiserver applies the default

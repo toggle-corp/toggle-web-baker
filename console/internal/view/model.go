@@ -345,10 +345,10 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 		Name:      obj.GetName(),
 	}
 
-	// Next scheduled is derived from spec.schedule (the CronJob clock), not
-	// status — the operator never writes status.nextScheduledBuildTime. Compute
-	// it BEFORE the status guard so a freshly-created app (valid spec, not yet
-	// reconciled) still shows its next build time instead of an em-dash.
+	// Next scheduled is derived from spec.schedule (the CronJob clock) — the
+	// FrontendApp status carries no next-build field. Compute it BEFORE the
+	// status guard so a freshly-created app (valid spec, not yet reconciled)
+	// still shows its next build time instead of an em-dash.
 	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
 	a.NextScheduledBuildTime = nextScheduled(asString(spec["schedule"]))
 

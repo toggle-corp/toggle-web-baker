@@ -329,12 +329,6 @@ type OutputThresholds struct {
 	CapBytes int64 `json:"capBytes,omitempty"`
 }
 
-// NodeStorage describes node-level headroom expectations.
-type NodeStorage struct {
-	// +optional
-	FreeSpaceHeadroomBytes int64 `json:"freeSpaceHeadroomBytes,omitempty"`
-}
-
 // StorageConfig groups the per-volume absolute-byte thresholds. The operator
 // also calls domain.ValidateStorage at reconcile time (cleanup < alert < cap).
 // +kubebuilder:validation:XValidation:rule="!has(self.cache) || !has(self.cache.cleanupBytes) || !has(self.cache.alertBytes) || self.cache.cleanupBytes < self.cache.alertBytes",message="cache.cleanupBytes must be < cache.alertBytes"
@@ -347,8 +341,6 @@ type StorageConfig struct {
 	DataCache DataCacheThresholds `json:"dataCache,omitempty"`
 	// +optional
 	Output OutputThresholds `json:"output,omitempty"`
-	// +optional
-	Node NodeStorage `json:"node,omitempty"`
 }
 
 // FrontendAppSpec is the desired state: operational tunables for one app.
@@ -624,8 +616,6 @@ type FrontendAppStatus struct {
 	LastBuildTime *metav1.Time `json:"lastBuildTime,omitempty"`
 	// +optional
 	LastSuccessfulBuildTime *metav1.Time `json:"lastSuccessfulBuildTime,omitempty"`
-	// +optional
-	NextScheduledBuildTime *metav1.Time `json:"nextScheduledBuildTime,omitempty"`
 
 	// +optional
 	Release ReleaseStatus `json:"release,omitempty"`

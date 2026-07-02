@@ -23,6 +23,7 @@ metadata:
 spec:
   repo: https://github.com/octocat/Hello-World
   ref: master
+  group: mapswipe  # informational label the console uses to group/filter apps
   schedule: "0 6 * * *"
   keepReleases: 2
   ingress:

@@ -455,13 +455,6 @@ spec:
                         format: int64
                         type: integer
                     type: object
-                  node:
-                    description: NodeStorage describes node-level headroom expectations.
-                    properties:
-                      freeSpaceHeadroomBytes:
-                        format: int64
-                        type: integer
-                    type: object
                   output:
                     description: OutputThresholds bound the served-bundle volume.
                     properties:
@@ -839,9 +832,6 @@ spec:
               lastProcessedRebuild:
                 type: string
               lastSuccessfulBuildTime:
-                format: date-time
-                type: string
-              nextScheduledBuildTime:
                 format: date-time
                 type: string
               nodeName:
