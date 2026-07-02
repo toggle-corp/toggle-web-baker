@@ -195,7 +195,9 @@ type PhaseSpec struct {
 type BuildPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// OutputDir is the subdir of the workspace holding the built bundle (the
-	// copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
+	// copier's OUTPUT_DIR). The "dist" default is declared here so it shows in
+	// kubectl explain / the stored spec; the copier still treats empty as
+	// "dist" for objects admitted before the default. Must be a safe relative
 	// path. Two layers: the RE2 pattern restricts the character set (rejecting
 	// spaces/shell metachars and a leading "/"), and a CEL rule on this type
 	// rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
@@ -204,6 +206,7 @@ type BuildPhaseSpec struct {
 	// slashes, while still allowing dotted names like "assets..min".
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$`
 	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:default="dist"
 	// +optional
 	OutputDir string `json:"outputDir,omitempty"`
 }

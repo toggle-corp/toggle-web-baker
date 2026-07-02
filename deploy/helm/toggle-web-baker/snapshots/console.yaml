@@ -284,9 +284,12 @@ spec:
                             pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
                             type: string
                           outputDir:
+                            default: dist
                             description: |-
                               OutputDir is the subdir of the workspace holding the built bundle (the
-                              copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
+                              copier's OUTPUT_DIR). The "dist" default is declared here so it shows in
+                              kubectl explain / the stored spec; the copier still treats empty as
+                              "dist" for objects admitted before the default. Must be a safe relative
                               path. Two layers: the RE2 pattern restricts the character set (rejecting
                               spaces/shell metachars and a leading "/"), and a CEL rule on this type
                               rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't

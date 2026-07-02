@@ -450,6 +450,27 @@ func TestValidation_AcceptsGitTransportRepos(t *testing.T) {
 	}
 }
 
+func TestValidation_DefaultsOutputDirToDist(t *testing.T) {
+	// The copier has always treated empty OUTPUT_DIR as "dist"; the CRD default
+	// makes that visible in the stored spec / kubectl explain instead of being
+	// buried in controller logic.
+	app := validApp("defaults-outputdir-dist")
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected Create to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+
+	got := &bakerv1alpha1.FrontendApp{}
+	key := client.ObjectKey{Namespace: "default", Name: "defaults-outputdir-dist"}
+	if err := testClient.Get(testCtx, key, got); err != nil {
+		t.Fatalf("failed to Get created object: %v", err)
+	}
+	if got.Spec.Pipeline.Phases.Build.OutputDir != "dist" {
+		t.Fatalf("expected outputDir defaulted to dist, got %q", got.Spec.Pipeline.Phases.Build.OutputDir)
+	}
+}
+
 func TestValidation_DefaultsRefToHEAD(t *testing.T) {
 	app := validApp("defaults-ref-to-head")
 	app.Spec.Ref = "" // omit so the apiserver applies the default
