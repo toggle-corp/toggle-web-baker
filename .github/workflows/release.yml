@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 jobs:
-  # Reuse CI, but with publishing on: builds + pushes all 6 images and the chart.
+  # Reuse CI, but with publishing on: builds + pushes all 9 images and the chart.
   build:
     uses: ./.github/workflows/ci.yml
     with:
@@ -74,7 +74,7 @@ jobs:
             echo "> Find your cluster's ranges: \`kubectl cluster-info dump | grep -E 'cluster-cidr|service-cluster-ip-range'\`"
             echo
             echo "**Images** (tag \`${{ github.ref_name }}\`)"
-            for img in operator console clone copier du cleanup; do
+            for img in operator console clone copier du cleanup clock node18 node24; do
               echo "- \`ghcr.io/toggle-corp/toggle-web-baker-$img:${{ github.ref_name }}\`"
             done
             echo
