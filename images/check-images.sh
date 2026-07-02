@@ -58,13 +58,17 @@ release_body_set() {
 	line="$(grep -E 'for img in .* ; do|for img in .*; do' "$RELEASE_YML" | head -n1)"
 	line="${line#*for img in }"
 	line="${line%%;*}"
-	# Deliberate word-split of the space-separated image list.
-	# shellcheck disable=SC2086
-	sort_uniq $line
+	# Split on whitespace WITHOUT glob-expanding the words (a stray `*` in the
+	# list would otherwise expand against the cwd).
+	local -a words
+	read -ra words <<<"$line"
+	sort_uniq "${words[@]}"
 }
 
 values_set() {
-	grep -oE 'toggle-web-baker-[a-z0-9]+' "$VALUES_YAML" |
+	# Hyphen is in the class so a future hyphenated image name (e.g. node-18)
+	# isn't truncated. OCI repo names are lowercase, so no uppercase needed.
+	grep -oE 'toggle-web-baker-[a-z0-9-]+' "$VALUES_YAML" |
 		sed 's/^toggle-web-baker-//' | sort -u
 }
 

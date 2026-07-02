@@ -73,9 +73,16 @@ jobs:
             echo
             echo "> Find your cluster's ranges: \`kubectl cluster-info dump | grep -E 'cluster-cidr|service-cluster-ip-range'\`"
             echo
-            echo "**Images** (tag \`${{ github.ref_name }}\`)"
+            echo "**Images**"
+            # Tool images ship at the release tag; node images ship at a content
+            # hash of their Dockerfile (images/content-tag.sh), so list each at
+            # the tag it is actually published under.
             for img in operator console clone copier du cleanup clock node18 node24; do
-              echo "- \`ghcr.io/toggle-corp/toggle-web-baker-$img:${{ github.ref_name }}\`"
+              case "$img" in
+                node18 | node24) tag="$(bash images/content-tag.sh "$img")" ;;
+                *) tag="${{ github.ref_name }}" ;;
+              esac
+              echo "- \`ghcr.io/toggle-corp/toggle-web-baker-$img:$tag\`"
             done
             echo
             echo "---"
