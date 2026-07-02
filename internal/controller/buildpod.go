@@ -335,7 +335,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	// non-positive — unset (0), a sub-second value that truncates to 0, or a
 	// negative duration — falls back to the operator-config default rather than
 	// producing an invalid (<0) or absent deadline the apiserver would reject.
-	deadline := int64(app.Spec.Pipeline.Timeout.Duration.Seconds())
+	deadline := int64(app.Spec.Pipeline.Timeout.Seconds())
 	if deadline <= 0 {
 		deadline = r.Config.ActiveDeadlineSeconds
 	}
