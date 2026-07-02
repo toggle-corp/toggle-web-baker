@@ -50,17 +50,20 @@ func (f *fakePodReader) PodLogTail(_ context.Context, _, pod, container string, 
 
 // fakeMetricser fakes the k8s.PodMetricser interface. usage is returned for
 // PodMetrics; err makes it fail; block (when honored) sleeps until the context
-// deadline so the bounded-timeout path can be exercised. calls counts invocations.
+// deadline so the bounded-timeout path can be exercised. calls counts
+// invocations; lastNode records the kubelet the server asked for.
 type fakeMetricser struct {
 	usage map[string]k8s.ContainerUsage
 	err   error
 	block bool
 
-	calls int
+	calls    int
+	lastNode string
 }
 
-func (f *fakeMetricser) PodMetrics(ctx context.Context, _, _ string) (map[string]k8s.ContainerUsage, error) {
+func (f *fakeMetricser) PodMetrics(ctx context.Context, node, _, _ string) (map[string]k8s.ContainerUsage, error) {
 	f.calls++
+	f.lastNode = node
 	if f.block {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -851,8 +854,18 @@ func TestRecentBuilds_RendersViewLogsButtonNotDetails(t *testing.T) {
 }
 
 // podWithLimits builds a pod whose named container carries cpu+mem limits, so
-// the metrics bars can be computed against a known cap.
+// the metrics bars can be computed against a known cap. NodeName is always set:
+// the server resolves the kubelet to ask from it before fetching metrics.
 func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {
+	pod := podWithInitLimits(podName, container, cpu, mem)
+	pod.Spec.Containers, pod.Spec.InitContainers = pod.Spec.InitContainers, nil
+	return pod
+}
+
+// podWithInitLimits is podWithLimits with the container as an INIT container —
+// the real build pod's shape (every step is init; only the copier is an app
+// container).
+func podWithInitLimits(podName, container, cpu, mem string) *corev1.Pod {
 	lim := corev1.ResourceList{}
 	if cpu != "" {
 		lim[corev1.ResourceCPU] = apiresource.MustParse(cpu)
@@ -863,7 +876,8 @@ func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName},
 		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
+			NodeName: "node-1",
+			InitContainers: []corev1.Container{
 				{Name: container, Resources: corev1.ResourceRequirements{Limits: lim}},
 			},
 		},
@@ -898,6 +912,49 @@ func TestPartial_LiveMetricsWithBars(t *testing.T) {
 	}
 	if !strings.Contains(body, "75%") || !strings.Contains(body, "50%") {
 		t.Errorf("bar widths should reflect limits (75%% cpu, 50%% mem); body=%s", body)
+	}
+	if metrics.lastNode != "node-1" {
+		t.Errorf("metrics fetch must target the pod's node; got %q", metrics.lastNode)
+	}
+}
+
+func TestPartial_LiveMetricsForInitContainerStep(t *testing.T) {
+	// The real build pod runs every step as an initContainer; limits for the
+	// bars must resolve from spec.initContainers, not just spec.containers.
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{pod: podWithInitLimits("mapswipe-uat-build-8-xyz", "build", "2", "4Gi")}
+	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
+		"build": {CPUMillicores: 1500, MemoryBytes: 2 * 1024 * 1024 * 1024},
+	}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if !strings.Contains(strings.ToLower(body), "live usage") {
+		t.Errorf("should render a Live usage block for an init step; body=%s", body)
+	}
+	if !strings.Contains(body, "75%") || !strings.Contains(body, "50%") {
+		t.Errorf("bars should draw against initContainer limits; body=%s", body)
+	}
+}
+
+func TestPartial_PodGoneSkipsMetricsWithNote(t *testing.T) {
+	// Without the pod there is no nodeName to resolve a kubelet from: the
+	// metrics fetch must be skipped entirely and the note rendered.
+	dyn := seededDyn(t, runningBuildStatus())
+	pods := &fakePodReader{getErr: context.DeadlineExceeded}
+	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
+		"build": {CPUMillicores: 1, MemoryBytes: 1},
+	}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if metrics.calls != 0 {
+		t.Errorf("metrics must not be fetched when the pod read fails; calls=%d", metrics.calls)
+	}
+	if !strings.Contains(strings.ToLower(body), "metrics unavailable") {
+		t.Errorf("should render the unavailable note; body=%s", body)
 	}
 }
 

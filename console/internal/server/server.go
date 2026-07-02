@@ -44,12 +44,14 @@ type Server struct {
 // New constructs the server around a FrontendApp client, a pod reader, a Loki
 // tailer, and a pod-metrics reader. metrics is best-effort: a nil value (or a
 // failing fetch) degrades gracefully and never blocks the status fragment.
+// Live metrics also need pods (the pod read resolves which kubelet to ask).
 func New(apps k8s.FrontendAppPatcher, pods PodReader, tailer LokiTailer, metrics k8s.PodMetricser) *Server {
 	return &Server{apps: apps, pods: pods, tailer: tailer, metrics: metrics}
 }
 
-// metricsTimeout bounds the live-metrics fetch so a slow/hanging metrics-server
-// never delays or fails the status fragment. On timeout the fragment degrades.
+// metricsTimeout bounds the live-metrics fetch (pod read + kubelet stats) so a
+// slow/hanging kubelet never delays or fails the status fragment. On timeout
+// the fragment degrades.
 const metricsTimeout = 1500 * time.Millisecond
 
 // Routes returns the configured mux. Go 1.22+ pattern routing carries the
@@ -136,19 +138,27 @@ func (s *Server) handlePartial(w http.ResponseWriter, r *http.Request) {
 
 // attachBuildMetrics populates app.BuildMetrics with the build pod's active
 // container live usage, best-effort. It only fetches when a build is live
-// (BuildActive && PodName != "") and bounds the fetch with metricsTimeout so a
-// slow/absent metrics-server never delays the status fragment. On any
+// (BuildActive && PodName != "") and bounds the whole fetch (pod read + kubelet
+// stats) with metricsTimeout so a slow node never delays the status fragment.
+// The pod read comes FIRST: it resolves both spec.nodeName (which kubelet to
+// ask — see k8s.Client.PodMetrics for why metrics.k8s.io cannot serve build
+// pods) and the active container's limits for the % bars. On any
 // timeout/error/no-data while a build IS running it leaves BuildMetrics nil and
 // sets BuildMetricsNote so the misconfiguration is visible; idle apps stay clean.
 func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.App) {
-	if s.metrics == nil || !app.BuildActive() || app.Build.PodName == "" {
+	if s.metrics == nil || s.pods == nil || !app.BuildActive() || app.Build.PodName == "" {
 		return
 	}
 	container := defaultContainer(containerSteps(app.Build))
 
 	mctx, cancel := context.WithTimeout(ctx, metricsTimeout)
 	defer cancel()
-	usageByContainer, err := s.metrics.PodMetrics(mctx, ns, app.Build.PodName)
+	pod, err := s.pods.GetPod(mctx, ns, app.Build.PodName)
+	if err != nil {
+		app.BuildMetricsNote = "metrics unavailable"
+		return
+	}
+	usageByContainer, err := s.metrics.PodMetrics(mctx, pod.Spec.NodeName, ns, app.Build.PodName)
 	if err != nil {
 		app.BuildMetricsNote = "metrics unavailable"
 		return
@@ -168,21 +178,15 @@ func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.Ap
 	}
 
 	// Resolve the active container's resource limits from the pod so the % bars
-	// have something to draw against. A missing pod/limit simply yields no bar.
-	if s.pods != nil {
-		// Share the bounded metrics budget: the pod read is part of the same
-		// best-effort metrics fetch and must never delay the status fragment.
-		if pod, perr := s.pods.GetPod(mctx, ns, app.Build.PodName); perr == nil {
-			cpuLim, memLim := containerLimits(pod, container)
-			bm.CPULimitMilli = cpuLim
-			bm.MemLimitBytes = memLim
-			if pct, over := view.StorageBar(usage.CPUMillicores, cpuLim); pct != view.StorageBarNoBar {
-				bm.HasCPUBar, bm.CPUBarPct, bm.CPUOver = true, pct, over
-			}
-			if pct, over := view.StorageBar(usage.MemoryBytes, memLim); pct != view.StorageBarNoBar {
-				bm.HasMemBar, bm.MemBarPct, bm.MemOver = true, pct, over
-			}
-		}
+	// have something to draw against. A missing limit simply yields no bar.
+	cpuLim, memLim := containerLimits(pod, container)
+	bm.CPULimitMilli = cpuLim
+	bm.MemLimitBytes = memLim
+	if pct, over := view.StorageBar(usage.CPUMillicores, cpuLim); pct != view.StorageBarNoBar {
+		bm.HasCPUBar, bm.CPUBarPct, bm.CPUOver = true, pct, over
+	}
+	if pct, over := view.StorageBar(usage.MemoryBytes, memLim); pct != view.StorageBarNoBar {
+		bm.HasMemBar, bm.MemBarPct, bm.MemOver = true, pct, over
 	}
 
 	app.BuildMetrics = bm
@@ -190,22 +194,26 @@ func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.Ap
 
 // containerLimits returns the named container's cpu (millicores) and memory
 // (bytes) limits from a pod, or (0,0) when the container or limits are absent.
+// Both container lists are searched: every build step runs as an initContainer
+// (only the copier is an app container), and the active step is usually init.
 func containerLimits(pod *corev1.Pod, container string) (cpuMilli, memBytes int64) {
 	if pod == nil {
 		return 0, 0
 	}
-	for i := range pod.Spec.Containers {
-		c := pod.Spec.Containers[i]
-		if c.Name != container {
-			continue
+	for _, list := range [][]corev1.Container{pod.Spec.InitContainers, pod.Spec.Containers} {
+		for i := range list {
+			c := list[i]
+			if c.Name != container {
+				continue
+			}
+			if cpu, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
+				cpuMilli = cpu.MilliValue()
+			}
+			if mem, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+				memBytes = mem.Value()
+			}
+			return cpuMilli, memBytes
 		}
-		if cpu, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
-			cpuMilli = cpu.MilliValue()
-		}
-		if mem, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
-			memBytes = mem.Value()
-		}
-		return cpuMilli, memBytes
 	}
 	return 0, 0
 }

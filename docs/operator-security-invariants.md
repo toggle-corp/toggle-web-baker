@@ -140,3 +140,7 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
   GitHub team check **fails closed**. The console is **read-only except** the
   rebuild-annotation patch and has **no Job/Pod-create RBAC**. **kubectl is the
   break-glass** if oauth2-proxy locks the team out (no basic-auth stopgap).
+- **Console kubelet access is `get` on `nodes/proxy` ONLY** (live build usage
+  via the kubelet summary API — init containers are invisible to
+  metrics-server). `create` on `nodes/proxy` stays ungranted: that verb is what
+  would allow exec/attach/port-forward through the kubelet.

@@ -226,12 +226,14 @@ type App struct {
 	HasStatus bool
 
 	// BuildMetrics is the live usage of the build pod's active container. It is
-	// populated by the server AFTER the live metrics fetch, NOT from .status, and
-	// is nil when there is no running build / metrics-server is unavailable.
+	// populated by the server AFTER the live kubelet-stats fetch, NOT from
+	// .status, and is nil when there is no running build / the kubelet stats are
+	// unreachable.
 	BuildMetrics *BuildMetrics
 	// BuildMetricsNote is set by the server ONLY when a build is live
 	// (BuildActive && PodName != "") but the metrics fetch failed, so a
-	// misconfiguration (metrics-server absent) is visible while idle stays clean.
+	// misconfiguration (e.g. missing nodes/proxy RBAC) is visible while idle
+	// stays clean.
 	BuildMetricsNote string
 }
 
