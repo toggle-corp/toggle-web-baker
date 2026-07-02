@@ -421,6 +421,10 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 		Trigger:     trigger,
 		TriggeredBy: by,
 		Steps:       deriveBuildSteps(applicableSteps(app), nil, false),
+		// Record the exact image each container was created with (digest-pinned
+		// for managed toolchains), read from the Job spec itself so it reflects
+		// the build that actually ran — not a later operator-config change.
+		ResolvedImages: containerImages(&job.Spec.Template.Spec),
 	}
 	// Stamp lastManualTrigger only on a MANUAL build so it survives intervening
 	// scheduled builds ("last human who rebuilt").
@@ -432,6 +436,19 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 	}
 	app.Status.LastBuildTime = ptr.To(metav1.NewTime(r.now()))
 	return nil
+}
+
+// containerImages flattens a pod spec's init + main containers into a
+// name→image map for status.build.resolvedImages.
+func containerImages(pod *corev1.PodSpec) map[string]string {
+	images := make(map[string]string, len(pod.InitContainers)+len(pod.Containers))
+	for _, c := range pod.InitContainers {
+		images[c.Name] = c.Image
+	}
+	for _, c := range pod.Containers {
+		images[c.Name] = c.Image
+	}
+	return images
 }
 
 // observeBuild reads the current build Job + copier termination message and

@@ -612,11 +612,18 @@ func cleanupActionFrom(v any) CleanupAction {
 	if !ok {
 		return CleanupAction{}
 	}
+	// completedAt (metav1.Time) replaced the legacy lastCompleted string in the
+	// operator; keep reading the old key so a console pointed at a cluster with
+	// an older operator still renders the completion time.
+	completed := asString(m["completedAt"])
+	if completed == "" {
+		completed = asString(m["lastCompleted"])
+	}
 	return CleanupAction{
 		RequestedAt:    asString(m["requestedAt"]),
 		RequestedBy:    asString(m["requestedBy"]),
 		Phase:          asString(m["phase"]),
-		LastCompleted:  asString(m["lastCompleted"]),
+		LastCompleted:  completed,
 		Message:        asString(m["message"]),
 		ReclaimedBytes: asInt(m["reclaimedBytes"]),
 	}

@@ -338,6 +338,10 @@ func (r *FrontendAppReconciler) startCleanup(ctx context.Context, app *bakerv1al
 	st.RequestedAt = a.requestedAt
 	st.RequestedBy = a.requestedBy
 	st.Phase = "Running"
+	// Fresh run: stamp the start and clear the previous run's completion so the
+	// StartedAt/CompletedAt pair always describes ONE cleanup run.
+	st.StartedAt = ptr.To(metav1.NewTime(r.now()))
+	st.CompletedAt = nil
 	return nil
 }
 
@@ -361,7 +365,7 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 			continue
 		}
 		st := actionStatus(app, mode)
-		st.LastCompleted = r.now().UTC().Format("2006-01-02T15:04:05Z07:00")
+		st.CompletedAt = ptr.To(metav1.NewTime(r.now()))
 		if cond.Type == batchv1.JobComplete {
 			res, msg := r.readCleanupResult(ctx, app, job)
 			st.Phase = "Succeeded"

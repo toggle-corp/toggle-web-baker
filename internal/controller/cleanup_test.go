@@ -243,6 +243,12 @@ func TestReconcile_StartsCacheCleanup(t *testing.T) {
 	if got.Status.Cleanup.Cache.RequestedBy != "octocat" {
 		t.Fatalf("RequestedBy = %q, want octocat", got.Status.Cleanup.Cache.RequestedBy)
 	}
+	if got.Status.Cleanup.Cache.StartedAt == nil {
+		t.Fatalf("StartedAt must be stamped when the cleanup Job is created")
+	}
+	if got.Status.Cleanup.Cache.CompletedAt != nil {
+		t.Fatalf("CompletedAt must stay unset while the cleanup is running")
+	}
 }
 
 // A fresh cleanup request while a build is active must NOT create a cleanup Job;
@@ -312,8 +318,8 @@ func TestReconcile_ObservesCompletedCacheCleanup(t *testing.T) {
 	if got.Status.Cleanup.Cache.ReclaimedBytes != 1200000000 {
 		t.Fatalf("reclaimedBytes = %d, want 1200000000", got.Status.Cleanup.Cache.ReclaimedBytes)
 	}
-	if got.Status.Cleanup.Cache.LastCompleted == "" {
-		t.Fatalf("LastCompleted must be set on completion")
+	if got.Status.Cleanup.Cache.CompletedAt == nil {
+		t.Fatalf("CompletedAt must be set on completion")
 	}
 	if !strings.Contains(got.Status.Cleanup.Cache.Message, "reclaim") {
 		t.Fatalf("message must summarize the cache prune, got %q", got.Status.Cleanup.Cache.Message)

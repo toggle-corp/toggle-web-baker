@@ -640,6 +640,17 @@ spec:
                       (which can get but not list pods) can fetch logs, and so a Loki query can
                       be scoped by pod label.
                     type: string
+                  resolvedImages:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      ResolvedImages maps each pipeline container (clone/setup/fetch/build/
+                      copier) to the exact image reference the build Job was created with —
+                      digest-pinned for operator-managed toolchains. Captured at Job CREATION
+                      (like SpecHashAnnotation) so it records the build that actually ran, not
+                      a later operator-config change. Bounded by the fixed pipeline shape.
+                    maxProperties: 8
+                    type: object
                   result:
                     description: BuildResult is the terminal outcome of a build pod.
                     type: string
@@ -744,6 +755,17 @@ spec:
                         (which can get but not list pods) can fetch logs, and so a Loki query can
                         be scoped by pod label.
                       type: string
+                    resolvedImages:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        ResolvedImages maps each pipeline container (clone/setup/fetch/build/
+                        copier) to the exact image reference the build Job was created with —
+                        digest-pinned for operator-managed toolchains. Captured at Job CREATION
+                        (like SpecHashAnnotation) so it records the build that actually ran, not
+                        a later operator-config change. Bounded by the fixed pipeline shape.
+                      maxProperties: 8
+                      type: object
                     result:
                       description: BuildResult is the terminal outcome of a build
                         pod.
@@ -826,9 +848,12 @@ spec:
                       release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
                       mirrors the triggering annotation so the operator can detect a fresh request.
                     properties:
-                      lastCompleted:
-                        description: LastCompleted is when the cleanup helper last
-                          finished.
+                      completedAt:
+                        description: |-
+                          CompletedAt is when the cleanup helper last finished. Together with
+                          StartedAt it makes the prune duration observable (was: lastCompleted, a
+                          hand-formatted string — every other status timestamp is a metav1.Time).
+                        format: date-time
                         type: string
                       message:
                         type: string
@@ -847,6 +872,11 @@ spec:
                         type: string
                       requestedBy:
                         description: RequestedBy is the user who requested the cleanup.
+                        type: string
+                      startedAt:
+                        description: StartedAt is when the cleanup helper Job was
+                          last created.
+                        format: date-time
                         type: string
                     type: object
                   releases:
@@ -855,9 +885,12 @@ spec:
                       release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
                       mirrors the triggering annotation so the operator can detect a fresh request.
                     properties:
-                      lastCompleted:
-                        description: LastCompleted is when the cleanup helper last
-                          finished.
+                      completedAt:
+                        description: |-
+                          CompletedAt is when the cleanup helper last finished. Together with
+                          StartedAt it makes the prune duration observable (was: lastCompleted, a
+                          hand-formatted string — every other status timestamp is a metav1.Time).
+                        format: date-time
                         type: string
                       message:
                         type: string
@@ -876,6 +909,11 @@ spec:
                         type: string
                       requestedBy:
                         description: RequestedBy is the user who requested the cleanup.
+                        type: string
+                      startedAt:
+                        description: StartedAt is when the cleanup helper Job was
+                          last created.
+                        format: date-time
                         type: string
                     type: object
                 type: object

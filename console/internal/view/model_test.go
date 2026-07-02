@@ -468,7 +468,7 @@ func TestFromUnstructured_Cleanup(t *testing.T) {
 					"requestedAt":    "2026-06-25T09:00:00Z",
 					"requestedBy":    "octocat",
 					"phase":          "Succeeded",
-					"lastCompleted":  "2026-06-25T09:05:00Z",
+					"completedAt":    "2026-06-25T09:05:00Z",
 					"reclaimedBytes": int64(1048576),
 					"message":        "pruned 3 layers",
 				},
@@ -488,10 +488,30 @@ func TestFromUnstructured_Cleanup(t *testing.T) {
 		t.Errorf("cache reclaimedBytes = %d, want 1048576", a.Cleanup.Cache.ReclaimedBytes)
 	}
 	if a.Cleanup.Cache.Message != "pruned 3 layers" || a.Cleanup.Cache.LastCompleted != "2026-06-25T09:05:00Z" {
-		t.Errorf("cache message/lastCompleted wrong: %+v", a.Cleanup.Cache)
+		t.Errorf("cache message/completedAt wrong: %+v", a.Cleanup.Cache)
 	}
 	if a.Cleanup.Releases.Phase != "Running" || a.Cleanup.Releases.ReclaimedBytes != 512 {
 		t.Errorf("releases cleanup wrong: %+v", a.Cleanup.Releases)
+	}
+}
+
+// A cluster still running an older operator writes the legacy lastCompleted
+// string; the view keeps rendering it until the operator is upgraded.
+func TestFromUnstructured_CleanupLegacyLastCompleted(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "mapswipe", "name": "mapswipe-uat"},
+		"status": map[string]any{
+			"cleanup": map[string]any{
+				"cache": map[string]any{
+					"phase":         "Succeeded",
+					"lastCompleted": "2026-06-25T09:05:00Z",
+				},
+			},
+		},
+	}}
+	a := FromUnstructured(obj)
+	if a.Cleanup.Cache.LastCompleted != "2026-06-25T09:05:00Z" {
+		t.Errorf("legacy lastCompleted must still populate, got %+v", a.Cleanup.Cache)
 	}
 }
 

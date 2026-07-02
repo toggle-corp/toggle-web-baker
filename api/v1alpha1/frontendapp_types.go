@@ -508,6 +508,14 @@ type BuildStatus struct {
 	// +optional
 	// +listType=atomic
 	Steps []BuildStep `json:"steps,omitempty"`
+	// ResolvedImages maps each pipeline container (clone/setup/fetch/build/
+	// copier) to the exact image reference the build Job was created with —
+	// digest-pinned for operator-managed toolchains. Captured at Job CREATION
+	// (like SpecHashAnnotation) so it records the build that actually ran, not
+	// a later operator-config change. Bounded by the fixed pipeline shape.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=8
+	ResolvedImages map[string]string `json:"resolvedImages,omitempty"`
 	// FailedStep names the step whose failure ended the build, when Result is
 	// Failed or Aborted.
 	// +optional
@@ -583,9 +591,14 @@ type CleanupActionStatus struct {
 	// Phase is the lifecycle of the cleanup helper: Pending|Running|Succeeded|Failed.
 	// +optional
 	Phase string `json:"phase,omitempty"`
-	// LastCompleted is when the cleanup helper last finished.
+	// StartedAt is when the cleanup helper Job was last created.
 	// +optional
-	LastCompleted string `json:"lastCompleted,omitempty"`
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// CompletedAt is when the cleanup helper last finished. Together with
+	// StartedAt it makes the prune duration observable (was: lastCompleted, a
+	// hand-formatted string — every other status timestamp is a metav1.Time).
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 	// ReclaimedBytes is the space reclaimed by the last completed cleanup.
 	// +optional
 	ReclaimedBytes int64 `json:"reclaimedBytes,omitempty"`
