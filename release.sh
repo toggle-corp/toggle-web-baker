@@ -16,6 +16,7 @@ export SCRIPT_DIR
 function release_custom_hook {
     # Bare SemVer (VERSION_TAG_PREFIX_MODE=forbid); strip a leading `v`
     # defensively so Chart.yaml stays strict SemVer.
+    # shellcheck disable=SC2154  # version_tag is assigned by fugit/scripts/release.sh before it calls this hook.
     chart_version="${version_tag#v}"
     chart="deploy/helm/toggle-web-baker/Chart.yaml"
 

@@ -1,0 +1,52 @@
+# pre-commit is used as a manually-run check runner, NOT a git hook: do not
+# run `pre-commit install`. Invoke it with `just lint` (or directly:
+# `pre-commit run --all-files`). CI runs the exact same thing in the
+# `pre-commit` job of .github/workflows/ci.yml, so this file is the single
+# place lint tools + versions are pinned.
+
+# Generated Helm snapshots are never touched by hooks (the whitespace/EOF
+# fixers would invalidate them).
+exclude: ^deploy/helm/toggle-web-baker/snapshots/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-executables-have-shebangs
+      - id: check-symlinks
+      - id: check-yaml
+        # Go-templated manifests are not parseable YAML.
+        exclude: ^deploy/helm/toggle-web-baker/templates/
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        # -x follows `source`d files; dialect comes from each script's shebang.
+        args: [-x]
+
+  # golangci-lint as local hooks (not the upstream hook repo) so BOTH Go
+  # modules are covered — the upstream hook can only run at the repo root and
+  # would silently skip console/. The version is pinned once via the anchor.
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint (operator module)
+        language: golang
+        additional_dependencies: &golangci-lint-pin
+          - github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+        entry: golangci-lint run
+        types: [go]
+        pass_filenames: false
+      - id: golangci-lint-console
+        name: golangci-lint (console module)
+        language: golang
+        additional_dependencies: *golangci-lint-pin
+        entry: bash -c 'cd console && exec golangci-lint run'
+        files: ^console/
+        types: [go]
+        pass_filenames: false

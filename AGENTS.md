@@ -29,33 +29,24 @@ absent in fresh clones. Read it if present.
   change to `api/v1alpha1/` CEL rules or the CRD.
 - `just helm-snapshots --check-diff-only` — verify the chart still renders to the
   committed snapshots. Run on any change to `api/v1alpha1/`, the CRD, or anything
-  under `deploy/helm/`. See the pre-commit note below.
+  under `deploy/helm/`. See the snapshot note below.
 - `just e2e-local` — full kind pipeline smoke (MANUAL, Docker required). See
   below.
 
-Lint with `just lint` (Go) and `make -C images shellcheck` (shell).
+## ALWAYS run `just lint` before pushing
 
-## ALWAYS run the REAL golangci-lint on BOTH modules before pushing
+`just lint` runs `pre-commit run --all-files`: golangci-lint on BOTH Go modules
+(operator root AND `console/` — a separate module), shellcheck on every tracked
+shell script, and file-hygiene checks (whitespace/EOF fixers, YAML syntax,
+merge markers). CI's `pre-commit` job runs the exact same thing, and tool
+versions are pinned in ONE place: `.pre-commit-config.yaml`. A lint failure in
+EITHER Go module is a CI failure.
 
-`just lint` is NOT enough to catch what CI catches. Two gaps bite repeatedly:
-
-- When `golangci-lint` is absent it falls back to `go vet`, which does NOT run
-  `errcheck` / `staticcheck` (e.g. unchecked `*.Close()`, `SA1012` nil Context).
-- Even when `golangci-lint` IS installed, `just lint` only lints the operator
-  (root) module — it never lints the `console/` module (a SEPARATE Go module).
-
-CI runs `golangci-lint v2.12.2` against the operator module AND `console/`
-independently (`.github/workflows/ci.yml`, `working-directory: console`). After
-each commit, before pushing, run that exact linter on BOTH modules so a lint
-failure is caught locally, not by CI:
-
-```sh
-go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-golangci-lint run ./...            # operator module (repo root)
-cd console && golangci-lint run ./... && cd ..   # console module
-```
-
-Both must report `0 issues`. A lint failure in EITHER module is a CI failure.
+pre-commit here is a manually-run check runner, NOT a git hook — do NOT run
+`pre-commit install`. One-time setup: `pipx install pre-commit` (or pip). The
+first run builds golangci-lint into pre-commit's cached env (needs network);
+later runs are fast. The whitespace/EOF hooks FIX files in place — re-stage and
+re-run until clean.
 
 ## ALWAYS check Helm snapshots before committing
 

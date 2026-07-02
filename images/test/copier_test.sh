@@ -9,7 +9,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=test/../copier/lib.sh
+# shellcheck source=../copier/lib.sh
 . "$HERE/../copier/lib.sh"
 
 PASS=0
@@ -193,7 +193,8 @@ export PHASE_ENV="$TMP/nope-phase-env" # missing -> empty freshness
 # Point OUTPUT_ROOT at the tmp tree so RELEASES_DIR (derived at source time)
 # is the releases dir we just populated, and outputTotal measures it.
 export OUTPUT_ROOT="$TMP/emit"
-# shellcheck source=test/../copier/entrypoint.sh
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../copier/entrypoint.sh
 COPIER_LIB_ONLY=1 . "$HERE/../copier/entrypoint.sh"
 export RELEASE_ABS="$TMP/emit/releases/r-new"
 export RELEASE_TS="20260630T120000Z-1"

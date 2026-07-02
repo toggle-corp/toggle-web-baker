@@ -13,16 +13,11 @@ test:
     go test ./...
     cd console && go test ./...
 
-# Lint with golangci-lint if available, otherwise fall back to go vet.
+# Run every lint check (golangci-lint on both Go modules, shellcheck, hygiene)
+# via pre-commit — identical to CI's pre-commit job. Needs the pre-commit
+# binary (pip/pipx install pre-commit); it is NOT installed as a git hook.
 lint:
-    #!/usr/bin/env sh
-    if command -v golangci-lint >/dev/null 2>&1; then
-        golangci-lint run
-    else
-        echo "golangci-lint not found; falling back to go vet"
-        go vet ./...
-        cd console && go vet ./...
-    fi
+    pre-commit run --all-files
 
 # Regenerate CRD and RBAC manifests into config/, then re-sync the chart CRD copy.
 manifests:

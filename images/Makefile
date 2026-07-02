@@ -7,8 +7,10 @@
 #   make build           # build all five images
 #   make clone           # build one image
 #   make test            # run the copier gate unit tests (no runtime needed)
-#   make shellcheck      # lint every shell script
 #   make digests         # print the pinned base digests
+#
+# Shellcheck lives in pre-commit now (auto-discovers every tracked shell
+# script, repo-wide): run `just lint` from the repo root.
 
 # Flat repo scheme: ghcr.io/toggle-corp/toggle-web-baker-<image> (matches the
 # operator's config.go defaults and the Helm chart image refs).
@@ -26,7 +28,7 @@ CLOCK_BASE   := alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491
 NODE18_BASE  := node@sha256:8d6421d663b4c28fd3ebc498332f249011d118945588d0a35cb9bc4b8ca09d9e
 NODE24_BASE  := node@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
 
-.PHONY: build $(IMAGES) test shellcheck digests
+.PHONY: build $(IMAGES) test digests
 
 build: $(IMAGES)
 
@@ -59,23 +61,6 @@ test:
 	bash ./test/node_test.sh
 	bash ./test/content_tag_test.sh
 	bash ./test/check_images_test.sh
-
-shellcheck:
-	shellcheck -x -s bash \
-		clone/entrypoint.sh clone/git-askpass.sh \
-		copier/entrypoint.sh copier/lib.sh \
-		du/entrypoint.sh \
-		cleanup/entrypoint.sh \
-		clock/entrypoint.sh \
-		test/copier_test.sh \
-		test/clone_test.sh \
-		test/cleanup_test.sh \
-		test/clock_test.sh \
-		test/node_test.sh \
-		test/content_tag_test.sh \
-		test/check_images_test.sh \
-		content-tag.sh \
-		check-images.sh
 
 digests:
 	@echo "clone:   $(CLONE_BASE)"

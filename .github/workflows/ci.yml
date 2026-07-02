@@ -47,28 +47,41 @@ jobs:
       - name: Test
         run: just test
       - name: Image shell tests
-        run: |
-          make -C images test
-          make -C images shellcheck
+        run: make -C images test
       - name: Image set drift check
         # Fail if the image set on disk drifts from the CI matrix, the
         # release-body loop, or the chart values.yaml refs. Needs yq (above).
         run: bash images/check-images.sh
       - name: Envtest (CRD validation)
         run: just test-envtest
-      - name: Lint (operator module)
-        uses: golangci/golangci-lint-action@v7
+
+  # All lint (golangci-lint on both Go modules, shellcheck, hygiene checks)
+  # lives in .pre-commit-config.yaml so local `just lint` and CI run the exact
+  # same pinned tools. pre-commit is a check runner here, not a git hook.
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          version: v2.12.2
-      - name: Lint (console module)
-        uses: golangci/golangci-lint-action@v7
+          # golangci-lint needs the fugit submodule present to typecheck.
+          submodules: true
+      - uses: actions/setup-go@v5
         with:
-          version: v2.12.2
-          working-directory: console
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install pre-commit
+        run: pipx install pre-commit
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-go${{ env.GO_VERSION }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files --show-diff-on-failure
 
   docker_build:
     # Gate publishing on a green build: nothing pushes unless tests/lint pass.
-    needs: build-test-lint
+    needs: [build-test-lint, pre-commit]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
