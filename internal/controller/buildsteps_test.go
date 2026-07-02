@@ -55,19 +55,19 @@ func TestApplicableSteps(t *testing.T) {
 		},
 		{
 			name: "setup via image only",
-			mut:  func(a *bakerv1alpha1.FrontendApp) { a.Spec.Setup.Image = "ghcr.io/toggle-corp/x" },
+			mut:  func(a *bakerv1alpha1.FrontendApp) { a.Spec.Pipeline.Phases.Setup.Image = "ghcr.io/toggle-corp/x" },
 			want: []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepSetup, bakerv1alpha1.StepBuild, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease},
 		},
 		{
 			name: "fetch via command only",
-			mut:  func(a *bakerv1alpha1.FrontendApp) { a.Spec.Fetch.Command = []string{"sh", "-c", "x"} },
+			mut:  func(a *bakerv1alpha1.FrontendApp) { a.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "x"} },
 			want: []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepFetch, bakerv1alpha1.StepBuild, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease},
 		},
 		{
 			name: "both setup and fetch",
 			mut: func(a *bakerv1alpha1.FrontendApp) {
-				a.Spec.Setup.Command = []string{"true"}
-				a.Spec.Fetch.Image = "ghcr.io/toggle-corp/y"
+				a.Spec.Pipeline.Phases.Setup.Command = []string{"true"}
+				a.Spec.Pipeline.Phases.Fetch.Image = "ghcr.io/toggle-corp/y"
 			},
 			want: []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepSetup, bakerv1alpha1.StepFetch, bakerv1alpha1.StepBuild, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease},
 		},
@@ -213,7 +213,7 @@ func stepStatus(steps []bakerv1alpha1.BuildStep, name string) bakerv1alpha1.Step
 // deriveBuildSteps: nil pod => every applicable step Pending.
 func TestDeriveBuildSteps_NilPod(t *testing.T) {
 	app := baseApp()
-	app.Spec.Setup.Command = []string{"true"}
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"true"}
 	steps := deriveBuildSteps(applicableSteps(app), nil, false)
 	for _, s := range steps {
 		if s.Status != bakerv1alpha1.StepStatusPending {
@@ -226,8 +226,8 @@ func TestDeriveBuildSteps_NilPod(t *testing.T) {
 // container (copier) states to step statuses; release follows releaseDone.
 func TestDeriveBuildSteps_MapsContainerStates(t *testing.T) {
 	app := baseApp()
-	app.Spec.Setup.Command = []string{"true"}
-	app.Spec.Fetch.Command = []string{"true"}
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"true"}
+	app.Spec.Pipeline.Phases.Fetch.Command = []string{"true"}
 
 	pod := &corev1.Pod{
 		Status: corev1.PodStatus{

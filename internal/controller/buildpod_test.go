@@ -4,9 +4,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -69,7 +71,7 @@ func TestBuildJob_BuildNeverMountsOutput(t *testing.T) {
 // Requirement 4: secrets injected ONLY into the fetch container.
 func TestBuildJob_SecretsOnlyInFetch(t *testing.T) {
 	app := baseApp()
-	app.Spec.Secrets = []bakerv1alpha1.EnvVarWithSecret{{
+	app.Spec.Pipeline.Phases.Fetch.Secrets = []bakerv1alpha1.EnvVarWithSecret{{
 		Name: "TOKEN",
 		ValueFrom: bakerv1alpha1.EnvVarWithSecretSource{
 			SecretKeyRef: bakerv1alpha1.SecretKeySelector{Name: "s", Key: "k"},
@@ -102,7 +104,7 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 	r := reconcilerForPod()
 
 	yarn := baseApp()
-	yarn.Spec.PackageManager = bakerv1alpha1.PackageManagerYarn
+	yarn.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerYarn
 	yjob := r.BuildJob(yarn, "t")
 	ybuild := containerByName(yjob.Spec.Template.Spec.InitContainers, "build")
 	if !hasEnv(ybuild.Env, "YARN_CACHE_FOLDER") {
@@ -110,7 +112,7 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 	}
 
 	pnpm := baseApp()
-	pnpm.Spec.PackageManager = bakerv1alpha1.PackageManagerPnpm
+	pnpm.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
 	pjob := r.BuildJob(pnpm, "t")
 	pbuild := containerByName(pjob.Spec.Template.Spec.InitContainers, "build")
 	if !hasEnv(pbuild.Env, "npm_config_store_dir") || !hasEnv(pbuild.Env, "npm_config_modules_dir") {
@@ -175,8 +177,8 @@ func TestBuildJob_HardenedSecurity(t *testing.T) {
 // phase (fetch here, with no nodeVersion) must NOT inherit it.
 func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.Image = "docker.io/cimg/node:18.20"
-	app.Spec.Build.RunAsUser = ptr.To(int64(3434))
+	app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
+	app.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(3434))
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 
@@ -217,8 +219,8 @@ func envValue(c *corev1.Container, name string) (string, bool) {
 // pins its UID, and injects the writable HOME — the app author writes none of it.
 func TestBuildJob_NodeVersionResolvesManagedImageUIDAndHome(t *testing.T) {
 	app := baseApp()
-	app.Spec.NodeVersion = 18
-	app.Spec.Build.Command = []string{"yarn", "build"}
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
 	r := reconcilerForPod()
 	r.Config.NodeImages = map[string]domain.NodeImage{
 		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
@@ -244,11 +246,11 @@ func TestBuildJob_NodeVersionResolvesManagedImageUIDAndHome(t *testing.T) {
 // other phases still inherit the managed image.
 func TestBuildJob_PhaseImageOverrideOptsOutOfManaged(t *testing.T) {
 	app := baseApp()
-	app.Spec.NodeVersion = 18
-	app.Spec.Build.Command = []string{"yarn", "build"}
-	app.Spec.Fetch.Image = "docker.io/library/python:3.12"
-	app.Spec.Fetch.RunAsUser = ptr.To(int64(4242))
-	app.Spec.Fetch.Command = []string{"python", "fetch.py"}
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+	app.Spec.Pipeline.Phases.Fetch.Image = "docker.io/library/python:3.12"
+	app.Spec.Pipeline.Phases.Fetch.RunAsUser = ptr.To(int64(4242))
+	app.Spec.Pipeline.Phases.Fetch.Command = []string{"python", "fetch.py"}
 	r := reconcilerForPod()
 	r.Config.NodeImages = map[string]domain.NodeImage{
 		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
@@ -277,7 +279,7 @@ func TestBuildJob_PhaseImageOverrideOptsOutOfManaged(t *testing.T) {
 // emit a pod with no memory limit (which could OOM the node).
 func TestBuildJob_MalformedMemoryLimitFallsBackToPhaseDefault(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.MemoryLimit = "this-is-not-a-quantity"
+	app.Spec.Pipeline.Phases.Build.MemoryLimit = "this-is-not-a-quantity"
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
@@ -341,7 +343,7 @@ func TestBuildJob_AllPhasesCarryResourceRequirements(t *testing.T) {
 // request == limit.
 func TestBuildJob_UserMemoryLimitOverridesDefault(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.MemoryLimit = "8Gi"
+	app.Spec.Pipeline.Phases.Build.MemoryLimit = "8Gi"
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
@@ -368,10 +370,19 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	}
 
 	custom := baseApp()
-	custom.Spec.ActiveDeadlineSeconds = 42
+	custom.Spec.Pipeline.Timeout = metav1.Duration{Duration: 42 * time.Second}
 	cj := r.BuildJob(custom, "tok")
 	if cj.Spec.ActiveDeadlineSeconds == nil || *cj.Spec.ActiveDeadlineSeconds != 42 {
 		t.Fatalf("spec deadline 42 must win, got %v", cj.Spec.ActiveDeadlineSeconds)
+	}
+
+	// A sub-second duration would truncate to 0 and spuriously fall back to the
+	// operator default; a duration string like "1h30m" must map to whole seconds.
+	dur := baseApp()
+	dur.Spec.Pipeline.Timeout = metav1.Duration{Duration: time.Hour + 30*time.Minute}
+	durJob := r.BuildJob(dur, "tok")
+	if durJob.Spec.ActiveDeadlineSeconds == nil || *durJob.Spec.ActiveDeadlineSeconds != 5400 {
+		t.Fatalf("timeout 1h30m must map to 5400s, got %v", durJob.Spec.ActiveDeadlineSeconds)
 	}
 }
 
@@ -458,7 +469,7 @@ func TestBuildJob_CopierUsesEnvNotArgs(t *testing.T) {
 	if len(copier.Args) != 0 {
 		t.Fatalf("copier must not use Args, got %v", copier.Args)
 	}
-	outputDir := app.Spec.Build.OutputDir
+	outputDir := app.Spec.Pipeline.Phases.Build.OutputDir
 	if outputDir == "" {
 		outputDir = "dist"
 	}
@@ -473,7 +484,7 @@ func TestBuildJob_CopierUsesEnvNotArgs(t *testing.T) {
 // set there must reach the build container.
 func TestBuildJob_BuildEnvReachesBuildContainer(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.Env = []bakerv1alpha1.EnvVar{{Name: "NEXT_PUBLIC_API", Value: "https://api"}}
+	app.Spec.Pipeline.Phases.Build.Env = []bakerv1alpha1.EnvVar{{Name: "NEXT_PUBLIC_API", Value: "https://api"}}
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
@@ -486,7 +497,7 @@ func TestBuildJob_BuildEnvReachesBuildContainer(t *testing.T) {
 // build.outputDir flows to the copier's OUTPUT_DIR (moved out of top-level spec).
 func TestBuildJob_BuildOutputDirFlowsToCopier(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.OutputDir = "out"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "out"
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
@@ -516,16 +527,16 @@ func TestBuildJob_OptionalPhasesNoOpWhenUnset(t *testing.T) {
 // When setup/fetch DO specify a command, it is preserved (not replaced by no-op).
 func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
 	app := baseApp()
-	app.Spec.Setup.Command = []string{"sh", "-c", "yarn install"}
-	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch-data"}
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"sh", "-c", "yarn install"}
+	app.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "fetch-data"}
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
-	if !slices.Equal(setup.Command, app.Spec.Setup.Command) {
+	if !slices.Equal(setup.Command, app.Spec.Pipeline.Phases.Setup.Command) {
 		t.Fatalf("setup command not preserved: got %v", setup.Command)
 	}
 	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
-	if !slices.Equal(fetch.Command, app.Spec.Fetch.Command) {
+	if !slices.Equal(fetch.Command, app.Spec.Pipeline.Phases.Fetch.Command) {
 		t.Fatalf("fetch command not preserved: got %v", fetch.Command)
 	}
 }
@@ -533,11 +544,11 @@ func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
 // Build is mandatory: its command must be passed through as-is, never no-oped.
 func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.Command = []string{"sh", "-c", "yarn build"}
+	app.Spec.Pipeline.Phases.Build.Command = []string{"sh", "-c", "yarn build"}
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
-	if !slices.Equal(build.Command, app.Spec.Build.Command) {
+	if !slices.Equal(build.Command, app.Spec.Pipeline.Phases.Build.Command) {
 		t.Fatalf("build command must equal spec build command, got %v", build.Command)
 	}
 	if len(build.Command) == 1 && build.Command[0] == "true" {
@@ -549,7 +560,7 @@ func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 // entrypoint opts into submodule recursion.
 func TestBuildJob_SubmodulesEnvWhenEnabled(t *testing.T) {
 	app := baseApp()
-	app.Spec.Submodules = true
+	app.Spec.Pipeline.Submodules = true
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")

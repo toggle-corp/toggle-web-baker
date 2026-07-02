@@ -65,12 +65,16 @@ func validApp(name string) *bakerv1alpha1.FrontendApp {
 			Namespace: "default",
 		},
 		Spec: bakerv1alpha1.FrontendAppSpec{
-			Repo:        "https://example.com/repo.git",
-			Ref:         "main",
-			NodeVersion: 18, // satisfies the build-needs-an-image rule
-			Build: bakerv1alpha1.BuildPhaseSpec{
-				PhaseSpec: bakerv1alpha1.PhaseSpec{
-					Command: []string{"yarn", "build"},
+			Repo: "https://example.com/repo.git",
+			Ref:  "main",
+			Pipeline: bakerv1alpha1.PipelineSpec{
+				NodeVersion: 18, // satisfies the build-needs-an-image rule
+				Phases: bakerv1alpha1.PhasesSpec{
+					Build: bakerv1alpha1.BuildPhaseSpec{
+						PhaseSpec: bakerv1alpha1.PhaseSpec{
+							Command: []string{"yarn", "build"},
+						},
+					},
 				},
 			},
 			Ingress: bakerv1alpha1.IngressConfig{
@@ -82,8 +86,8 @@ func validApp(name string) *bakerv1alpha1.FrontendApp {
 
 func TestValidation_RejectsBuildWithoutImageOrNodeVersion(t *testing.T) {
 	app := validApp("reject-no-build-image")
-	app.Spec.NodeVersion = 0 // omit both nodeVersion and build.image
-	app.Spec.Build.Image = ""
+	app.Spec.Pipeline.NodeVersion = 0 // omit both nodeVersion and build.image
+	app.Spec.Pipeline.Phases.Build.Image = ""
 
 	err := testClient.Create(testCtx, app)
 	if err == nil {
@@ -96,8 +100,8 @@ func TestValidation_RejectsBuildWithoutImageOrNodeVersion(t *testing.T) {
 
 func TestValidation_AcceptsBuildImageWithoutNodeVersion(t *testing.T) {
 	app := validApp("accept-byo-build-image")
-	app.Spec.NodeVersion = 0
-	app.Spec.Build.Image = "docker.io/cimg/node:18.20"
+	app.Spec.Pipeline.NodeVersion = 0
+	app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected explicit build.image to satisfy the rule, got: %v", err)
@@ -107,8 +111,8 @@ func TestValidation_AcceptsBuildImageWithoutNodeVersion(t *testing.T) {
 
 func TestValidation_AcceptsNodeVersionAndBuildImageTogether(t *testing.T) {
 	app := validApp("accept-nodeversion-and-image")
-	app.Spec.NodeVersion = 18
-	app.Spec.Build.Image = "docker.io/cimg/node:18.20" // per-phase override is legal
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20" // per-phase override is legal
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected nodeVersion + explicit build.image to be accepted, got: %v", err)
@@ -121,8 +125,8 @@ func TestValidation_RejectsZeroNodeVersion(t *testing.T) {
 	// explicitly-set 0 is dropped by omitempty, so this asserts the pair: no
 	// image source available.)
 	app := validApp("reject-zero-nodeversion")
-	app.Spec.NodeVersion = 0
-	app.Spec.Build.Image = ""
+	app.Spec.Pipeline.NodeVersion = 0
+	app.Spec.Pipeline.Phases.Build.Image = ""
 
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for nodeVersion 0 with no build image")
@@ -131,7 +135,7 @@ func TestValidation_RejectsZeroNodeVersion(t *testing.T) {
 
 func TestValidation_RejectsMissingBuildCommand(t *testing.T) {
 	app := validApp("reject-missing-build-command")
-	app.Spec.Build.Command = nil
+	app.Spec.Pipeline.Phases.Build.Command = nil
 
 	err := testClient.Create(testCtx, app)
 	if err == nil {
@@ -144,7 +148,7 @@ func TestValidation_RejectsMissingBuildCommand(t *testing.T) {
 
 func TestValidation_RejectsSecretsWithoutFetchCommand(t *testing.T) {
 	app := validApp("reject-secrets-without-fetch")
-	app.Spec.Secrets = []bakerv1alpha1.EnvVarWithSecret{
+	app.Spec.Pipeline.Phases.Fetch.Secrets = []bakerv1alpha1.EnvVarWithSecret{
 		{
 			Name: "API_TOKEN",
 			ValueFrom: bakerv1alpha1.EnvVarWithSecretSource{
@@ -155,7 +159,7 @@ func TestValidation_RejectsSecretsWithoutFetchCommand(t *testing.T) {
 			},
 		},
 	}
-	app.Spec.Fetch.Command = nil
+	app.Spec.Pipeline.Phases.Fetch.Command = nil
 
 	err := testClient.Create(testCtx, app)
 	if err == nil {
@@ -168,7 +172,7 @@ func TestValidation_RejectsSecretsWithoutFetchCommand(t *testing.T) {
 
 func TestValidation_AcceptsSecretsWithFetchCommand(t *testing.T) {
 	app := validApp("accept-secrets-with-fetch")
-	app.Spec.Secrets = []bakerv1alpha1.EnvVarWithSecret{
+	app.Spec.Pipeline.Phases.Fetch.Secrets = []bakerv1alpha1.EnvVarWithSecret{
 		{
 			Name: "API_TOKEN",
 			ValueFrom: bakerv1alpha1.EnvVarWithSecretSource{
@@ -179,7 +183,7 @@ func TestValidation_AcceptsSecretsWithFetchCommand(t *testing.T) {
 			},
 		},
 	}
-	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch-data"}
+	app.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "fetch-data"}
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected Create to succeed, got: %v", err)
@@ -191,7 +195,7 @@ func TestValidation_RejectsOutputDirWithParentSegment(t *testing.T) {
 	// "a/../b" has a ".." segment: the CEL rule rejects it (RE2 pattern alone
 	// can't catch an interior "..").
 	app := validApp("reject-outputdir-parent")
-	app.Spec.Build.OutputDir = "a/../b"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "a/../b"
 
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for outputDir with a '..' segment")
@@ -200,7 +204,7 @@ func TestValidation_RejectsOutputDirWithParentSegment(t *testing.T) {
 
 func TestValidation_RejectsOutputDirLeadingParent(t *testing.T) {
 	app := validApp("reject-outputdir-leading-parent")
-	app.Spec.Build.OutputDir = "../x"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "../x"
 
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for outputDir starting with '..'")
@@ -210,7 +214,7 @@ func TestValidation_RejectsOutputDirLeadingParent(t *testing.T) {
 func TestValidation_RejectsAbsoluteOutputDir(t *testing.T) {
 	// A leading "/" fails the RE2 pattern (first char must be alnum/_/.).
 	app := validApp("reject-outputdir-absolute")
-	app.Spec.Build.OutputDir = "/abs"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "/abs"
 
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for an absolute outputDir")
@@ -222,7 +226,7 @@ func TestValidation_RejectsCurrentDirOutputDir(t *testing.T) {
 	// (node_modules/.git/source), so the segment CEL rule rejects it even though
 	// it passes the RE2 pattern.
 	app := validApp("reject-outputdir-dot")
-	app.Spec.Build.OutputDir = "."
+	app.Spec.Pipeline.Phases.Build.OutputDir = "."
 
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for outputDir '.'")
@@ -232,7 +236,7 @@ func TestValidation_RejectsCurrentDirOutputDir(t *testing.T) {
 func TestValidation_RejectsTrailingSlashOutputDir(t *testing.T) {
 	// "out/" has a trailing empty segment: the segment CEL rule rejects it.
 	app := validApp("reject-outputdir-trailing-slash")
-	app.Spec.Build.OutputDir = "out/"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "out/"
 
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for outputDir with a trailing slash")
@@ -244,7 +248,7 @@ func TestValidation_AcceptsDottedOutputDirName(t *testing.T) {
 	// it is a safe relative dir and must be accepted (guards against a substring
 	// contains('..') false-positive).
 	app := validApp("accept-outputdir-dotted")
-	app.Spec.Build.OutputDir = "assets..min"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "assets..min"
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected 'assets..min' outputDir to be accepted, got: %v", err)
@@ -254,7 +258,7 @@ func TestValidation_AcceptsDottedOutputDirName(t *testing.T) {
 
 func TestValidation_AcceptsSimpleOutputDir(t *testing.T) {
 	app := validApp("accept-outputdir-simple")
-	app.Spec.Build.OutputDir = "out"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "out"
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected 'out' outputDir to be accepted, got: %v", err)
@@ -264,7 +268,7 @@ func TestValidation_AcceptsSimpleOutputDir(t *testing.T) {
 
 func TestValidation_AcceptsNestedOutputDir(t *testing.T) {
 	app := validApp("accept-outputdir-nested")
-	app.Spec.Build.OutputDir = "build/static"
+	app.Spec.Pipeline.Phases.Build.OutputDir = "build/static"
 
 	if err := testClient.Create(testCtx, app); err != nil {
 		t.Fatalf("expected 'build/static' outputDir to be accepted, got: %v", err)

@@ -58,7 +58,7 @@ type OperatorConfig struct {
 
 	// NodeImages maps a node MAJOR (decimal string key) to its managed image +
 	// UID + optional HOME. It is chart-owned (values.yaml), arriving in the
-	// operator config file. An app's spec.nodeVersion is resolved against this
+	// operator config file. An app's spec.pipeline.nodeVersion is resolved against this
 	// map; a version absent here fails the app at reconcile (ReasonUnknownNodeVersion).
 	NodeImages map[string]domain.NodeImage
 
@@ -69,7 +69,7 @@ type OperatorConfig struct {
 	PhaseResourceDefaults PhaseResourceDefaults
 
 	// ActiveDeadlineSeconds is the operator default deadline bounding the whole
-	// build Job when spec.activeDeadlineSeconds is unset.
+	// build Job when spec.pipeline.timeout is unset.
 	ActiveDeadlineSeconds int64
 }
 

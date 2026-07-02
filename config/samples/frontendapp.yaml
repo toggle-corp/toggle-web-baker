@@ -23,14 +23,16 @@ metadata:
 spec:
   repo: https://github.com/octocat/Hello-World
   ref: master
-  packageManager: yarn
   schedule: "0 6 * * *"
-  nodeVersion: 18   # operator-managed toolchain (image + UID + HOME); no build.image needed
-  # setup + fetch omitted on purpose -> operator no-ops them (["true"]).
-  build:
-    command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
-    outputDir: out
   keepReleases: 2
   ingress:
     host: smoke.local.test
     className: nginx
+  pipeline:
+    packageManager: yarn
+    nodeVersion: 18   # operator-managed toolchain (image + UID + HOME); no build.image needed
+    # setup + fetch omitted on purpose -> operator no-ops them (["true"]).
+    phases:
+      build:
+        command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
+        outputDir: out

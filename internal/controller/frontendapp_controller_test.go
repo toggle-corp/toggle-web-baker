@@ -59,9 +59,11 @@ func baseApp() *bakerv1alpha1.FrontendApp {
 	return &bakerv1alpha1.FrontendApp{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "apps", Generation: 1},
 		Spec: bakerv1alpha1.FrontendAppSpec{
-			Repo:           "https://example.com/repo.git",
-			PackageManager: bakerv1alpha1.PackageManagerYarn,
-			Ingress:        bakerv1alpha1.IngressConfig{Host: "demo.example.com"},
+			Repo:    "https://example.com/repo.git",
+			Ingress: bakerv1alpha1.IngressConfig{Host: "demo.example.com"},
+			Pipeline: bakerv1alpha1.PipelineSpec{
+				PackageManager: bakerv1alpha1.PackageManagerYarn,
+			},
 		},
 	}
 }
@@ -225,7 +227,7 @@ func TestReconcile_InvalidStorageClassRejected(t *testing.T) {
 // Requirement 10: ImageNotAllowed rejection at reconcile time.
 func TestReconcile_ImageNotAllowedRejected(t *testing.T) {
 	app := baseApp()
-	app.Spec.Build.Image = "docker.io/evil/builder:latest"
+	app.Spec.Pipeline.Phases.Build.Image = "docker.io/evil/builder:latest"
 	r, cl := newReconciler(t, app, wffc())
 	reconcile(t, r, app) // finalizer
 	reconcile(t, r, app)
@@ -243,8 +245,8 @@ func TestReconcile_ImageNotAllowedRejected(t *testing.T) {
 // fix to a cluster admin. No build Job is created.
 func TestReconcile_UnknownNodeVersionRejected(t *testing.T) {
 	app := baseApp()
-	app.Spec.NodeVersion = 19
-	app.Spec.Build.Command = []string{"yarn", "build"}
+	app.Spec.Pipeline.NodeVersion = 19
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
 	r, cl := newReconciler(t, app, wffc())
 	r.Config.NodeImages = map[string]domain.NodeImage{
 		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
@@ -476,7 +478,7 @@ func TestClockCronJob_PinsNonRootRunAsUser(t *testing.T) {
 // Steps = all applicable steps as Pending; PodName stays empty until observed.
 func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 	app := baseApp()
-	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch"}
+	app.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "fetch"}
 	app.Annotations = map[string]string{
 		bakerv1alpha1.RebuildAnnotation:   "tok-1",
 		bakerv1alpha1.RebuildByAnnotation: "octocat",
@@ -520,7 +522,7 @@ func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 // rebuilt" and has to survive intervening scheduled builds.
 func TestStartBuild_ScheduledPreservesLastManualTrigger(t *testing.T) {
 	app := baseApp()
-	app.Spec.Fetch.Command = []string{"sh", "-c", "fetch"}
+	app.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "fetch"}
 	app.Annotations = map[string]string{
 		bakerv1alpha1.RebuildAnnotation: "tok-2",
 	}

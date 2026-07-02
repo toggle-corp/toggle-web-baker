@@ -8,7 +8,7 @@ Node.js 24 base image for user frontend builds.
 |---|---|
 | **Runs as** | build-pod init/main container, `USER node` (UID 1000) |
 | **Base** | `node:24-alpine` pinned by digest |
-| **Selected via** | `spec.nodeVersion` on the FrontendApp (picks node 24) |
+| **Selected via** | `spec.pipeline.nodeVersion` on the FrontendApp (picks node 24) |
 | **Adds** | `bash` (phase entrypoints are bash), `git` (repo/submodule and lockfile flows), `build-base` + `python3` (node-gyp native addons), `corepack` with **yarn 1.22.22 + pnpm 10.18.0** pre-activated |
 
 The official `node:24-alpine` already provides a numeric `node` user (UID 1000),

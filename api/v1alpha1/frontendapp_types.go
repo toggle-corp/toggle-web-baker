@@ -185,6 +185,7 @@ type PhaseSpec struct {
 // BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
 // copier publishes. build carries more than setup/fetch, so it has its own type
 // (setup/fetch stay plain PhaseSpec).
+// +kubebuilder:validation:XValidation:rule="!has(self.outputDir) || self.outputDir.split('/').all(s, s != '' && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
 type BuildPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// OutputDir is the subdir of the workspace holding the built bundle (the
@@ -199,6 +200,64 @@ type BuildPhaseSpec struct {
 	// +kubebuilder:validation:MaxLength=256
 	// +optional
 	OutputDir string `json:"outputDir,omitempty"`
+}
+
+// FetchPhaseSpec is the fetch phase: a PhaseSpec plus the Secret-sourced env it
+// alone may consume. Secrets live here (not spec-wide) so the "secrets are
+// fetch-only" boundary is STRUCTURAL — no other phase type can carry them.
+// +kubebuilder:validation:XValidation:rule="!has(self.secrets) || size(self.secrets) == 0 || (has(self.command) && size(self.command) > 0)",message="secrets require a fetch.command to consume them"
+type FetchPhaseSpec struct {
+	PhaseSpec `json:",inline"`
+	// Secrets are Secret-sourced env injected into the FETCH phase ONLY.
+	// +optional
+	// +listType=atomic
+	Secrets []EnvVarWithSecret `json:"secrets,omitempty"`
+}
+
+// PhasesSpec is the ordered build pipeline: setup → fetch → build. setup and
+// fetch are optional (an app may install/fetch nothing); build is required (it
+// produces the served bundle). The operator runs them in this fixed order
+// regardless of map/field order.
+type PhasesSpec struct {
+	// +optional
+	Setup PhaseSpec `json:"setup,omitempty"`
+	// +optional
+	Fetch FetchPhaseSpec `json:"fetch,omitempty"`
+	// +kubebuilder:validation:Required
+	Build BuildPhaseSpec `json:"build"`
+}
+
+// PipelineSpec groups HOW the app is built: the toolchain (nodeVersion /
+// packageManager / submodules), the whole-pipeline timeout, and the ordered
+// phases. It deliberately excludes source identity (repo/ref) and scheduling,
+// which stay top-level on the spec.
+// +kubebuilder:validation:XValidation:rule="has(self.phases.build.command) && size(self.phases.build.command) > 0",message="pipeline.phases.build.command is required"
+// +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || has(self.phases.build.image)",message="build needs an image: set nodeVersion or build.image under pipeline"
+type PipelineSpec struct {
+	// NodeVersion selects an operator-managed node toolchain by MAJOR version
+	// (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
+	// writable HOME, so the app need not set image/runAsUser. A phase may still
+	// override with its own image (fully BYO for that phase). Available majors are
+	// operator/chart config; an unknown version fails the app at reconcile. Omit
+	// to supply build.image yourself.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	NodeVersion int `json:"nodeVersion,omitempty"`
+	// +kubebuilder:default=yarn
+	// +optional
+	PackageManager PackageManager `json:"packageManager,omitempty"`
+	// +optional
+	Submodules bool `json:"submodules,omitempty"`
+
+	// Timeout bounds the WHOLE build pipeline (all phases) as a Go duration
+	// string (e.g. "1h", "90m", "1h30m"; max unit is hours — no days). When unset
+	// or zero the operator supplies the default from its config (NO kubebuilder
+	// default here — operator config owns it).
+	// +optional
+	Timeout metav1.Duration `json:"timeout,omitempty"`
+
+	// +kubebuilder:validation:Required
+	Phases PhasesSpec `json:"phases"`
 }
 
 // PackageManager selects the JS package manager (drives the volume layout).
@@ -293,10 +352,6 @@ type StorageConfig struct {
 }
 
 // FrontendAppSpec is the desired state: operational tunables for one app.
-// +kubebuilder:validation:XValidation:rule="has(self.build) && has(self.build.command) && size(self.build.command) > 0",message="build.command is required"
-// +kubebuilder:validation:XValidation:rule="!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch) && has(self.fetch.command) && size(self.fetch.command) > 0)",message="secrets require a fetch.command to consume them"
-// +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || (has(self.build) && has(self.build.image))",message="build needs an image: set spec.nodeVersion or build.image"
-// +kubebuilder:validation:XValidation:rule="!has(self.build) || !has(self.build.outputDir) || self.build.outputDir.split('/').all(s, s != '' && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
 type FrontendAppSpec struct {
 	// +kubebuilder:validation:Required
 	Repo string `json:"repo"`
@@ -304,46 +359,18 @@ type FrontendAppSpec struct {
 	// +optional
 	Ref string `json:"ref,omitempty"`
 
-	// NodeVersion selects an operator-managed node toolchain by MAJOR version
-	// (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
-	// writable HOME, so the app need not set image/runAsUser. A phase may still
-	// override with its own image (fully BYO for that phase). Available majors are
-	// operator/chart config; an unknown version fails the app at reconcile. Omit
-	// to supply build.image yourself.
-	// +kubebuilder:validation:Minimum=1
-	// +optional
-	NodeVersion int `json:"nodeVersion,omitempty"`
-	// +kubebuilder:default=yarn
-	// +optional
-	PackageManager PackageManager `json:"packageManager,omitempty"`
-	// +optional
-	Submodules bool `json:"submodules,omitempty"`
-
 	// +kubebuilder:default="0 */12 * * *"
 	// +optional
 	Schedule string `json:"schedule,omitempty"`
 
-	// +optional
-	Setup PhaseSpec `json:"setup,omitempty"`
-	// +optional
-	Fetch PhaseSpec `json:"fetch,omitempty"`
-	// +optional
-	Build BuildPhaseSpec `json:"build,omitempty"`
+	// Pipeline is HOW the app is built: toolchain, timeout, and the ordered
+	// setup/fetch/build phases. Required — every app must build something.
+	// +kubebuilder:validation:Required
+	Pipeline PipelineSpec `json:"pipeline"`
 
 	// +kubebuilder:default=0
 	// +optional
 	KeepReleases int `json:"keepReleases,omitempty"`
-
-	// ActiveDeadlineSeconds bounds the WHOLE build Job (all phases). When unset
-	// the operator supplies the default from its config (NO kubebuilder default
-	// here — operator config owns it).
-	// +optional
-	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
-
-	// Secrets are Secret-sourced env injected into the FETCH phase ONLY.
-	// +optional
-	// +listType=atomic
-	Secrets []EnvVarWithSecret `json:"secrets,omitempty"`
 
 	// +kubebuilder:validation:Required
 	Ingress IngressConfig `json:"ingress"`

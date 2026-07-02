@@ -146,9 +146,9 @@ func toSecretEnvVars(in []bakerv1alpha1.EnvVarWithSecret) []corev1.EnvVar {
 }
 
 // resolvePhase computes the effective image/UID/HOME for one phase, applying the
-// spec.nodeVersion mapping and per-phase BYO overrides (see domain.ResolvePhase).
+// spec.pipeline.nodeVersion mapping and per-phase BYO overrides (see domain.ResolvePhase).
 func (r *FrontendAppReconciler) resolvePhase(app *bakerv1alpha1.FrontendApp, phase bakerv1alpha1.PhaseSpec) domain.ResolvedPhase {
-	return domain.ResolvePhase(phase.Image, phase.RunAsUser, app.Spec.NodeVersion, r.Config.NodeImages, r.Config.Images.Clone)
+	return domain.ResolvePhase(phase.Image, phase.RunAsUser, app.Spec.Pipeline.NodeVersion, r.Config.NodeImages, r.Config.Images.Clone)
 }
 
 // buildVolumesAndMounts returns the pod volumes plus the cache/work mounts,
@@ -195,7 +195,7 @@ func commonMounts() []corev1.VolumeMount {
 // yarn: node_modules live on the per-run emptyDir (work volume, set by
 // WorkingDir); the cache PVC holds only the yarn download cache.
 func pkgManagerEnv(app *bakerv1alpha1.FrontendApp) []corev1.EnvVar {
-	switch app.Spec.PackageManager {
+	switch app.Spec.Pipeline.PackageManager {
 	case bakerv1alpha1.PackageManagerPnpm:
 		return []corev1.EnvVar{
 			{Name: "npm_config_store_dir", Value: cacheMountPath + "/pnpm-store"},
@@ -225,7 +225,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		{Name: "REF", Value: app.Spec.Ref},
 		{Name: "SRC_DIR", Value: workMountPath},
 	}
-	if app.Spec.Submodules {
+	if app.Spec.Pipeline.Submodules {
 		cloneEnv = append(cloneEnv, corev1.EnvVar{Name: "SUBMODULES", Value: "1"})
 	}
 	clone := corev1.Container{
@@ -238,60 +238,60 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 
 	// Resolve each phase's effective image/UID/HOME (nodeVersion mapping + BYO
 	// overrides). HOME is injected only for managed node phases.
-	setupR := r.resolvePhase(app, app.Spec.Setup)
-	fetchR := r.resolvePhase(app, app.Spec.Fetch)
-	buildR := r.resolvePhase(app, app.Spec.Build.PhaseSpec)
+	setupR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Setup)
+	fetchR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Fetch.PhaseSpec)
+	buildR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Build.PhaseSpec)
 
 	// setup: install deps. Mounts cache (RW for pnpm store / yarn cache).
 	setupMounts := append(append([]corev1.VolumeMount{}, base...), cacheMount)
 	setup := corev1.Container{
 		Name:            "setup",
 		Image:           setupR.Image,
-		Command:         commandOrNoop(app.Spec.Setup.Command),
+		Command:         commandOrNoop(app.Spec.Pipeline.Phases.Setup.Command),
 		WorkingDir:      workMountPath,
-		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Setup.Env)...)),
+		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Pipeline.Phases.Setup.Env)...)),
 		VolumeMounts:    setupMounts,
-		Resources:       phaseResourceRequirements(r.Config, "setup", app.Spec.Setup.MemoryLimit),
+		Resources:       phaseResourceRequirements(r.Config, "setup", app.Spec.Pipeline.Phases.Setup.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(setupR),
 	}
 
 	// fetch: the ONLY container that receives secrets. Writes to /data.
-	fetchEnv := append([]corev1.EnvVar{}, toEnvVars(app.Spec.Fetch.Env)...)
-	fetchEnv = append(fetchEnv, toSecretEnvVars(app.Spec.Secrets)...)
+	fetchEnv := append([]corev1.EnvVar{}, toEnvVars(app.Spec.Pipeline.Phases.Fetch.Env)...)
+	fetchEnv = append(fetchEnv, toSecretEnvVars(app.Spec.Pipeline.Phases.Fetch.Secrets)...)
 	fetchMounts := append(append([]corev1.VolumeMount{}, base...),
 		corev1.VolumeMount{Name: volData, MountPath: dataMountPath})
 	fetch := corev1.Container{
 		Name:            "fetch",
 		Image:           fetchR.Image,
-		Command:         commandOrNoop(app.Spec.Fetch.Command),
+		Command:         commandOrNoop(app.Spec.Pipeline.Phases.Fetch.Command),
 		WorkingDir:      workMountPath,
 		Env:             withHome(fetchR, fetchEnv),
 		VolumeMounts:    fetchMounts,
-		Resources:       phaseResourceRequirements(r.Config, "fetch", app.Spec.Fetch.MemoryLimit),
+		Resources:       phaseResourceRequirements(r.Config, "fetch", app.Spec.Pipeline.Phases.Fetch.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(fetchR),
 	}
 
 	// build: public build.env + NODE_OPTIONS etc. Mounts cache RW (both PMs) and
 	// data RO. NEVER mounts the output PVC.
 	buildEnv := append([]corev1.EnvVar{}, pmEnv...)
-	buildEnv = append(buildEnv, toEnvVars(app.Spec.Build.Env)...)
+	buildEnv = append(buildEnv, toEnvVars(app.Spec.Pipeline.Phases.Build.Env)...)
 	buildMounts := append(append([]corev1.VolumeMount{}, base...),
 		cacheMount,
 		corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true})
 	build := corev1.Container{
 		Name:            "build",
 		Image:           buildR.Image,
-		Command:         app.Spec.Build.Command,
+		Command:         app.Spec.Pipeline.Phases.Build.Command,
 		WorkingDir:      workMountPath,
 		Env:             withHome(buildR, buildEnv),
 		VolumeMounts:    buildMounts,
-		Resources:       phaseResourceRequirements(r.Config, "build", app.Spec.Build.MemoryLimit),
+		Resources:       phaseResourceRequirements(r.Config, "build", app.Spec.Pipeline.Phases.Build.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(buildR),
 	}
 
 	// copier (MAIN): the only container mounting the output PVC. Publishes the
 	// built bundle and emits build-derived status as a termination message.
-	outputDir := app.Spec.Build.OutputDir
+	outputDir := app.Spec.Pipeline.Phases.Build.OutputDir
 	if outputDir == "" {
 		outputDir = "dist"
 	}
@@ -331,7 +331,9 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}
 	}
 
-	deadline := app.Spec.ActiveDeadlineSeconds
+	// pipeline.timeout is a duration; the k8s Job wants whole seconds. Zero
+	// (unset) falls back to the operator-config default.
+	deadline := int64(app.Spec.Pipeline.Timeout.Duration.Seconds())
 	if deadline == 0 {
 		deadline = r.Config.ActiveDeadlineSeconds
 	}

@@ -22,7 +22,7 @@ import (
 // role so it is never treated as a build pod).
 func TestCleanupJob_CacheMountsAndEnv(t *testing.T) {
 	app := baseApp()
-	app.Spec.PackageManager = bakerv1alpha1.PackageManagerPnpm
+	app.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
 	r, _ := newReconciler(t, app, wffc())
 
 	job := r.CleanupJob(app, cleanupModeCache)
@@ -138,8 +138,8 @@ func TestCleanupSC_ReleasesUnprivileged(t *testing.T) {
 // UNPRIVILEGED as that uid.
 func TestCleanupSC_CacheKnownUIDUnprivileged(t *testing.T) {
 	app := baseApp()
-	app.Spec.Setup.RunAsUser = ptr.To(int64(3434))
-	app.Spec.Build.RunAsUser = ptr.To(int64(3434))
+	app.Spec.Pipeline.Phases.Setup.RunAsUser = ptr.To(int64(3434))
+	app.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(3434))
 	r, _ := newReconciler(t, app, wffc())
 	sc := r.CleanupJob(app, cleanupModeCache).Spec.Template.Spec.Containers[0].SecurityContext
 	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != 3434 {
@@ -159,8 +159,8 @@ func TestCleanupSC_CacheKnownUIDUnprivileged(t *testing.T) {
 func TestCleanupSC_CacheUnknownUIDFallsBackToRoot(t *testing.T) {
 	base := baseApp()
 	mismatch := baseApp()
-	mismatch.Spec.Setup.RunAsUser = ptr.To(int64(3434))
-	mismatch.Spec.Build.RunAsUser = ptr.To(int64(1000))
+	mismatch.Spec.Pipeline.Phases.Setup.RunAsUser = ptr.To(int64(3434))
+	mismatch.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(1000))
 	for name, app := range map[string]*bakerv1alpha1.FrontendApp{"image-default": base, "phase-mismatch": mismatch} {
 		r, _ := newReconciler(t, app, wffc())
 		sc := r.CleanupJob(app, cleanupModeCache).Spec.Template.Spec.Containers[0].SecurityContext

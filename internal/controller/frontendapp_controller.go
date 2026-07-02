@@ -205,25 +205,25 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 // phaseImages collects the user-supplied phase images for the allowlist check.
 func phaseImages(app *bakerv1alpha1.FrontendApp) []domain.PhaseImage {
 	var out []domain.PhaseImage
-	if app.Spec.Setup.Image != "" {
-		out = append(out, domain.PhaseImage{Phase: "setup", Image: app.Spec.Setup.Image})
+	if app.Spec.Pipeline.Phases.Setup.Image != "" {
+		out = append(out, domain.PhaseImage{Phase: "setup", Image: app.Spec.Pipeline.Phases.Setup.Image})
 	}
-	if app.Spec.Fetch.Image != "" {
-		out = append(out, domain.PhaseImage{Phase: "fetch", Image: app.Spec.Fetch.Image})
+	if app.Spec.Pipeline.Phases.Fetch.Image != "" {
+		out = append(out, domain.PhaseImage{Phase: "fetch", Image: app.Spec.Pipeline.Phases.Fetch.Image})
 	}
-	if app.Spec.Build.Image != "" {
-		out = append(out, domain.PhaseImage{Phase: "build", Image: app.Spec.Build.Image})
+	if app.Spec.Pipeline.Phases.Build.Image != "" {
+		out = append(out, domain.PhaseImage{Phase: "build", Image: app.Spec.Pipeline.Phases.Build.Image})
 	}
 	return out
 }
 
-// validateNodeVersion checks that a set spec.nodeVersion resolves in the
+// validateNodeVersion checks that a set spec.pipeline.nodeVersion resolves in the
 // operator's node-image map. nodeVersion 0 (unset, BYO image) always passes.
 func (r *FrontendAppReconciler) validateNodeVersion(app *bakerv1alpha1.FrontendApp) error {
-	if app.Spec.NodeVersion == 0 {
+	if app.Spec.Pipeline.NodeVersion == 0 {
 		return nil
 	}
-	if _, ok := domain.LookupNodeImage(r.Config.NodeImages, app.Spec.NodeVersion); ok {
+	if _, ok := domain.LookupNodeImage(r.Config.NodeImages, app.Spec.Pipeline.NodeVersion); ok {
 		return nil
 	}
 	known := make([]string, 0, len(r.Config.NodeImages))
@@ -231,7 +231,7 @@ func (r *FrontendAppReconciler) validateNodeVersion(app *bakerv1alpha1.FrontendA
 		known = append(known, k)
 	}
 	sort.Strings(known)
-	return fmt.Errorf("nodeVersion %d is not available; known versions: %v. Ask a cluster admin to add it to the operator's node-image map (Helm values operator.nodeImages)", app.Spec.NodeVersion, known)
+	return fmt.Errorf("nodeVersion %d is not available; known versions: %v. Ask a cluster admin to add it to the operator's node-image map (Helm values operator.nodeImages)", app.Spec.Pipeline.NodeVersion, known)
 }
 
 func storageConfigFrom(app *bakerv1alpha1.FrontendApp) domain.StorageConfig {
@@ -259,18 +259,18 @@ func envMap(in []bakerv1alpha1.EnvVar) map[string]string {
 
 func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
 	var secretRefs []string
-	for _, s := range app.Spec.Secrets {
+	for _, s := range app.Spec.Pipeline.Phases.Fetch.Secrets {
 		secretRefs = append(secretRefs, s.ValueFrom.SecretKeyRef.Name+"/"+s.ValueFrom.SecretKeyRef.Key)
 	}
 	return domain.BuildSpec{
 		Repo:           app.Spec.Repo,
 		Ref:            app.Spec.Ref,
-		PackageManager: string(app.Spec.PackageManager),
-		NodeVersion:    app.Spec.NodeVersion,
-		Setup:          domain.PhaseSpec{Image: app.Spec.Setup.Image, Command: app.Spec.Setup.Command, RunAsUser: app.Spec.Setup.RunAsUser, Env: envMap(app.Spec.Setup.Env)},
-		Fetch:          domain.PhaseSpec{Image: app.Spec.Fetch.Image, Command: app.Spec.Fetch.Command, RunAsUser: app.Spec.Fetch.RunAsUser, Env: envMap(app.Spec.Fetch.Env)},
-		Build:          domain.PhaseSpec{Image: app.Spec.Build.Image, Command: app.Spec.Build.Command, RunAsUser: app.Spec.Build.RunAsUser, Env: envMap(app.Spec.Build.Env)},
-		OutputDir:      app.Spec.Build.OutputDir,
+		PackageManager: string(app.Spec.Pipeline.PackageManager),
+		NodeVersion:    app.Spec.Pipeline.NodeVersion,
+		Setup:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Setup.Image, Command: app.Spec.Pipeline.Phases.Setup.Command, RunAsUser: app.Spec.Pipeline.Phases.Setup.RunAsUser, Env: envMap(app.Spec.Pipeline.Phases.Setup.Env)},
+		Fetch:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Fetch.Image, Command: app.Spec.Pipeline.Phases.Fetch.Command, RunAsUser: app.Spec.Pipeline.Phases.Fetch.RunAsUser, Env: envMap(app.Spec.Pipeline.Phases.Fetch.Env)},
+		Build:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Build.Image, Command: app.Spec.Pipeline.Phases.Build.Command, RunAsUser: app.Spec.Pipeline.Phases.Build.RunAsUser, Env: envMap(app.Spec.Pipeline.Phases.Build.Env)},
+		OutputDir:      app.Spec.Pipeline.Phases.Build.OutputDir,
 		SecretRefs:     secretRefs,
 	}
 }

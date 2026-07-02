@@ -55,13 +55,6 @@ spec:
             description: 'FrontendAppSpec is the desired state: operational tunables
               for one app.'
             properties:
-              activeDeadlineSeconds:
-                description: |-
-                  ActiveDeadlineSeconds bounds the WHOLE build Job (all phases). When unset
-                  the operator supplies the default from its config (NO kubebuilder default
-                  here — operator config owns it).
-                format: int64
-                type: integer
               auth:
                 description: |-
                   AuthConfig configures optional HTTP basic auth. Exactly one of passwordHash or
@@ -86,153 +79,6 @@ spec:
                 - message: auth requires exactly one of passwordHash or secretRef
                   rule: '(has(self.passwordHash) ? 1 : 0) + (has(self.secretRef) ?
                     1 : 0) == 1'
-              build:
-                description: |-
-                  BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
-                  copier publishes. build carries more than setup/fetch, so it has its own type
-                  (setup/fetch stay plain PhaseSpec).
-                properties:
-                  command:
-                    items:
-                      type: string
-                    type: array
-                  env:
-                    items:
-                      description: |-
-                        EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
-                        reach the built bundle, so it must never carry secrets.
-                      properties:
-                        name:
-                          type: string
-                        value:
-                          type: string
-                        valueFrom:
-                          description: |-
-                            EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
-                            ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
-                            secrets can never leak into setup/build env via this type.
-                          properties:
-                            configMapKeyRef:
-                              description: ConfigMapKeySelector selects a key from
-                                a ConfigMap in the app namespace.
-                              properties:
-                                key:
-                                  type: string
-                                name:
-                                  type: string
-                              required:
-                              - key
-                              - name
-                              type: object
-                          type: object
-                      required:
-                      - name
-                      type: object
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  image:
-                    type: string
-                  memoryLimit:
-                    description: |-
-                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
-                      "2Gi"). When omitted the operator supplies a per-phase default (operator
-                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
-                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
-                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-                      Shared by setup/fetch/build via PhaseSpec.
-                    type: string
-                  outputDir:
-                    description: |-
-                      OutputDir is the subdir of the workspace holding the built bundle (the
-                      copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
-                      path. Two layers: the RE2 pattern restricts the character set (rejecting
-                      spaces/shell metachars and a leading "/"), and a CEL rule on the spec
-                      rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
-                      do a per-segment check). The segment rule also blocks the "." whole-dir
-                      footgun (which would publish the entire workspace) and trailing/duplicate
-                      slashes, while still allowing dotted names like "assets..min".
-                    maxLength: 256
-                    pattern: ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$
-                    type: string
-                  runAsUser:
-                    description: |-
-                      RunAsUser pins this phase container's numeric UID. The build pod sets
-                      runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
-                      (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
-                      cannot verify a named user is non-root (CreateContainerConfigError). Set
-                      this to the image's numeric non-root UID to satisfy the constraint. Must
-                      be > 0 (non-root).
-                    format: int64
-                    minimum: 1
-                    type: integer
-                type: object
-              fetch:
-                description: |-
-                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
-                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
-                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
-                properties:
-                  command:
-                    items:
-                      type: string
-                    type: array
-                  env:
-                    items:
-                      description: |-
-                        EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
-                        reach the built bundle, so it must never carry secrets.
-                      properties:
-                        name:
-                          type: string
-                        value:
-                          type: string
-                        valueFrom:
-                          description: |-
-                            EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
-                            ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
-                            secrets can never leak into setup/build env via this type.
-                          properties:
-                            configMapKeyRef:
-                              description: ConfigMapKeySelector selects a key from
-                                a ConfigMap in the app namespace.
-                              properties:
-                                key:
-                                  type: string
-                                name:
-                                  type: string
-                              required:
-                              - key
-                              - name
-                              type: object
-                          type: object
-                      required:
-                      - name
-                      type: object
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  image:
-                    type: string
-                  memoryLimit:
-                    description: |-
-                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
-                      "2Gi"). When omitted the operator supplies a per-phase default (operator
-                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
-                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
-                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-                      Shared by setup/fetch/build via PhaseSpec.
-                    type: string
-                  runAsUser:
-                    description: |-
-                      RunAsUser pins this phase container's numeric UID. The build pod sets
-                      runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
-                      (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
-                      cannot verify a named user is non-root (CreateContainerConfigError). Set
-                      this to the image's numeric non-root UID to satisfy the constraint. Must
-                      be > 0 (non-root).
-                    format: int64
-                    minimum: 1
-                    type: integer
-                type: object
               ingress:
                 description: IngressConfig describes the public ingress for the served
                   bundle.
@@ -255,24 +101,316 @@ spec:
               keepReleases:
                 default: 0
                 type: integer
-              nodeVersion:
+              pipeline:
                 description: |-
-                  NodeVersion selects an operator-managed node toolchain by MAJOR version
-                  (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
-                  writable HOME, so the app need not set image/runAsUser. A phase may still
-                  override with its own image (fully BYO for that phase). Available majors are
-                  operator/chart config; an unknown version fails the app at reconcile. Omit
-                  to supply build.image yourself.
-                minimum: 1
-                type: integer
-              packageManager:
-                default: yarn
-                description: PackageManager selects the JS package manager (drives
-                  the volume layout).
-                enum:
-                - yarn
-                - pnpm
-                type: string
+                  Pipeline is HOW the app is built: toolchain, timeout, and the ordered
+                  setup/fetch/build phases. Required — every app must build something.
+                properties:
+                  nodeVersion:
+                    description: |-
+                      NodeVersion selects an operator-managed node toolchain by MAJOR version
+                      (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
+                      writable HOME, so the app need not set image/runAsUser. A phase may still
+                      override with its own image (fully BYO for that phase). Available majors are
+                      operator/chart config; an unknown version fails the app at reconcile. Omit
+                      to supply build.image yourself.
+                    minimum: 1
+                    type: integer
+                  packageManager:
+                    default: yarn
+                    description: PackageManager selects the JS package manager (drives
+                      the volume layout).
+                    enum:
+                    - yarn
+                    - pnpm
+                    type: string
+                  phases:
+                    description: |-
+                      PhasesSpec is the ordered build pipeline: setup → fetch → build. setup and
+                      fetch are optional (an app may install/fetch nothing); build is required (it
+                      produces the served bundle). The operator runs them in this fixed order
+                      regardless of map/field order.
+                    properties:
+                      build:
+                        description: |-
+                          BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
+                          copier publishes. build carries more than setup/fetch, so it has its own type
+                          (setup/fetch stay plain PhaseSpec).
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            items:
+                              description: |-
+                                EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                                reach the built bundle, so it must never carry secrets.
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                valueFrom:
+                                  description: |-
+                                    EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                                    ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                                    secrets can never leak into setup/build env via this type.
+                                  properties:
+                                    configMapKeyRef:
+                                      description: ConfigMapKeySelector selects a
+                                        key from a ConfigMap in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  type: object
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          image:
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                              "2Gi"). When omitted the operator supplies a per-phase default (operator
+                              config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                              memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                              Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                              Shared by setup/fetch/build via PhaseSpec.
+                            type: string
+                          outputDir:
+                            description: |-
+                              OutputDir is the subdir of the workspace holding the built bundle (the
+                              copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
+                              path. Two layers: the RE2 pattern restricts the character set (rejecting
+                              spaces/shell metachars and a leading "/"), and a CEL rule on the spec
+                              rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
+                              do a per-segment check). The segment rule also blocks the "." whole-dir
+                              footgun (which would publish the entire workspace) and trailing/duplicate
+                              slashes, while still allowing dotted names like "assets..min".
+                            maxLength: 256
+                            pattern: ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$
+                            type: string
+                          runAsUser:
+                            description: |-
+                              RunAsUser pins this phase container's numeric UID. The build pod sets
+                              runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                              (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                              cannot verify a named user is non-root (CreateContainerConfigError). Set
+                              this to the image's numeric non-root UID to satisfy the constraint. Must
+                              be > 0 (non-root).
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        type: object
+                        x-kubernetes-validations:
+                        - message: build.outputDir must be a relative path with no
+                            empty, '.' or '..' segments
+                          rule: '!has(self.outputDir) || self.outputDir.split(''/'').all(s,
+                            s != '''' && s != ''.'' && s != ''..'')'
+                      fetch:
+                        description: |-
+                          FetchPhaseSpec is the fetch phase: a PhaseSpec plus the Secret-sourced env it
+                          alone may consume. Secrets live here (not spec-wide) so the "secrets are
+                          fetch-only" boundary is STRUCTURAL — no other phase type can carry them.
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            items:
+                              description: |-
+                                EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                                reach the built bundle, so it must never carry secrets.
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                valueFrom:
+                                  description: |-
+                                    EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                                    ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                                    secrets can never leak into setup/build env via this type.
+                                  properties:
+                                    configMapKeyRef:
+                                      description: ConfigMapKeySelector selects a
+                                        key from a ConfigMap in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  type: object
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          image:
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                              "2Gi"). When omitted the operator supplies a per-phase default (operator
+                              config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                              memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                              Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                              Shared by setup/fetch/build via PhaseSpec.
+                            type: string
+                          runAsUser:
+                            description: |-
+                              RunAsUser pins this phase container's numeric UID. The build pod sets
+                              runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                              (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                              cannot verify a named user is non-root (CreateContainerConfigError). Set
+                              this to the image's numeric non-root UID to satisfy the constraint. Must
+                              be > 0 (non-root).
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          secrets:
+                            description: Secrets are Secret-sourced env injected into
+                              the FETCH phase ONLY.
+                            items:
+                              description: |-
+                                EnvVarWithSecret is a Secret-sourced environment variable, intended for the
+                                FETCH phase ONLY. The operator injects these solely into the fetch container.
+                              properties:
+                                name:
+                                  type: string
+                                valueFrom:
+                                  description: EnvVarWithSecretSource is the inline
+                                    source for a secret-backed env var.
+                                  properties:
+                                    secretKeyRef:
+                                      description: SecretKeySelector selects a key
+                                        from a Secret in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  required:
+                                  - secretKeyRef
+                                  type: object
+                              required:
+                              - name
+                              - valueFrom
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                        x-kubernetes-validations:
+                        - message: secrets require a fetch.command to consume them
+                          rule: '!has(self.secrets) || size(self.secrets) == 0 ||
+                            (has(self.command) && size(self.command) > 0)'
+                      setup:
+                        description: |-
+                          PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                          public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                          secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            items:
+                              description: |-
+                                EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                                reach the built bundle, so it must never carry secrets.
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                valueFrom:
+                                  description: |-
+                                    EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                                    ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                                    secrets can never leak into setup/build env via this type.
+                                  properties:
+                                    configMapKeyRef:
+                                      description: ConfigMapKeySelector selects a
+                                        key from a ConfigMap in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  type: object
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          image:
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                              "2Gi"). When omitted the operator supplies a per-phase default (operator
+                              config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                              memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                              Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                              Shared by setup/fetch/build via PhaseSpec.
+                            type: string
+                          runAsUser:
+                            description: |-
+                              RunAsUser pins this phase container's numeric UID. The build pod sets
+                              runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                              (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                              cannot verify a named user is non-root (CreateContainerConfigError). Set
+                              this to the image's numeric non-root UID to satisfy the constraint. Must
+                              be > 0 (non-root).
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        type: object
+                    required:
+                    - build
+                    type: object
+                  submodules:
+                    type: boolean
+                  timeout:
+                    description: |-
+                      Timeout bounds the WHOLE build pipeline (all phases) as a Go duration
+                      string (e.g. "1h", "90m", "1h30m"; max unit is hours — no days). When unset
+                      or zero the operator supplies the default from its config (NO kubebuilder
+                      default here — operator config owns it).
+                    type: string
+                required:
+                - phases
+                type: object
+                x-kubernetes-validations:
+                - message: pipeline.phases.build.command is required
+                  rule: has(self.phases.build.command) && size(self.phases.build.command)
+                    > 0
+                - message: 'build needs an image: set nodeVersion or build.image under
+                    pipeline'
+                  rule: has(self.nodeVersion) || has(self.phases.build.image)
               ref:
                 default: HEAD
                 type: string
@@ -281,108 +419,6 @@ spec:
               schedule:
                 default: 0 */12 * * *
                 type: string
-              secrets:
-                description: Secrets are Secret-sourced env injected into the FETCH
-                  phase ONLY.
-                items:
-                  description: |-
-                    EnvVarWithSecret is a Secret-sourced environment variable, intended for the
-                    FETCH phase ONLY. The operator injects these solely into the fetch container.
-                  properties:
-                    name:
-                      type: string
-                    valueFrom:
-                      description: EnvVarWithSecretSource is the inline source for
-                        a secret-backed env var.
-                      properties:
-                        secretKeyRef:
-                          description: SecretKeySelector selects a key from a Secret
-                            in the app namespace.
-                          properties:
-                            key:
-                              type: string
-                            name:
-                              type: string
-                          required:
-                          - key
-                          - name
-                          type: object
-                      required:
-                      - secretKeyRef
-                      type: object
-                  required:
-                  - name
-                  - valueFrom
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
-              setup:
-                description: |-
-                  PhaseSpec describes one pipeline phase container (setup / fetch / build). The
-                  public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
-                  secretKeyRef field, so a CEL rule would be tautological — none is declared.
-                properties:
-                  command:
-                    items:
-                      type: string
-                    type: array
-                  env:
-                    items:
-                      description: |-
-                        EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
-                        reach the built bundle, so it must never carry secrets.
-                      properties:
-                        name:
-                          type: string
-                        value:
-                          type: string
-                        valueFrom:
-                          description: |-
-                            EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
-                            ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
-                            secrets can never leak into setup/build env via this type.
-                          properties:
-                            configMapKeyRef:
-                              description: ConfigMapKeySelector selects a key from
-                                a ConfigMap in the app namespace.
-                              properties:
-                                key:
-                                  type: string
-                                name:
-                                  type: string
-                              required:
-                              - key
-                              - name
-                              type: object
-                          type: object
-                      required:
-                      - name
-                      type: object
-                    type: array
-                    x-kubernetes-list-type: atomic
-                  image:
-                    type: string
-                  memoryLimit:
-                    description: |-
-                      MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
-                      "2Gi"). When omitted the operator supplies a per-phase default (operator
-                      config owns the defaults, NOT the CRD — no kubebuilder default here). The
-                      memory REQUEST is always pinned equal to the limit (incompressible ⇒
-                      Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-                      Shared by setup/fetch/build via PhaseSpec.
-                    type: string
-                  runAsUser:
-                    description: |-
-                      RunAsUser pins this phase container's numeric UID. The build pod sets
-                      runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
-                      (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
-                      cannot verify a named user is non-root (CreateContainerConfigError). Set
-                      this to the image's numeric non-root UID to satisfy the constraint. Must
-                      be > 0 (non-root).
-                    format: int64
-                    minimum: 1
-                    type: integer
-                type: object
               storage:
                 description: |-
                   StorageConfig groups the per-volume absolute-byte thresholds. The operator
@@ -442,25 +478,11 @@ spec:
                 - message: output.alertBytes must be < output.capBytes
                   rule: '!has(self.output) || !has(self.output.alertBytes) || !has(self.output.capBytes)
                     || self.output.alertBytes < self.output.capBytes'
-              submodules:
-                type: boolean
             required:
             - ingress
+            - pipeline
             - repo
             type: object
-            x-kubernetes-validations:
-            - message: build.command is required
-              rule: has(self.build) && has(self.build.command) && size(self.build.command)
-                > 0
-            - message: secrets require a fetch.command to consume them
-              rule: '!has(self.secrets) || size(self.secrets) == 0 || (has(self.fetch)
-                && has(self.fetch.command) && size(self.fetch.command) > 0)'
-            - message: 'build needs an image: set spec.nodeVersion or build.image'
-              rule: has(self.nodeVersion) || (has(self.build) && has(self.build.image))
-            - message: build.outputDir must be a relative path with no empty, '.'
-                or '..' segments
-              rule: '!has(self.build) || !has(self.build.outputDir) || self.build.outputDir.split(''/'').all(s,
-                s != '''' && s != ''.'' && s != ''..'')'
           status:
             description: FrontendAppStatus is the operator-owned observed state.
             properties:

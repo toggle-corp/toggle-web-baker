@@ -86,8 +86,8 @@ func rootCleanupSC() *corev1.SecurityContext {
 // only when BOTH pin the same non-zero RunAsUser is ownership known and uniform
 // (uid 0 is impossible — the build pod enforces runAsNonRoot).
 func cacheWriterUID(app *bakerv1alpha1.FrontendApp) (int64, bool) {
-	su := app.Spec.Setup.RunAsUser
-	bu := app.Spec.Build.RunAsUser
+	su := app.Spec.Pipeline.Phases.Setup.RunAsUser
+	bu := app.Spec.Pipeline.Phases.Build.RunAsUser
 	if su == nil || bu == nil || *su != *bu || *su == 0 {
 		return 0, false
 	}
@@ -151,7 +151,7 @@ func (r *FrontendAppReconciler) CleanupJob(app *bakerv1alpha1.FrontendApp, mode 
 	default: // cache
 		env = []corev1.EnvVar{
 			{Name: "MODE", Value: cleanupModeCache},
-			{Name: "PACKAGE_MANAGER", Value: string(app.Spec.PackageManager)},
+			{Name: "PACKAGE_MANAGER", Value: string(app.Spec.Pipeline.PackageManager)},
 			// Manual force: prune regardless of the configured threshold.
 			{Name: "CLEANUP_THRESHOLD_BYTES", Value: "0"},
 		}
