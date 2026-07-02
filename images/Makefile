@@ -57,6 +57,8 @@ test:
 	bash ./test/cleanup_test.sh
 	bash ./test/clock_test.sh
 	bash ./test/node_test.sh
+	bash ./test/content_tag_test.sh
+	bash ./test/check_images_test.sh
 
 shellcheck:
 	shellcheck -x -s bash \
@@ -69,7 +71,11 @@ shellcheck:
 		test/clone_test.sh \
 		test/cleanup_test.sh \
 		test/clock_test.sh \
-		test/node_test.sh
+		test/node_test.sh \
+		test/content_tag_test.sh \
+		test/check_images_test.sh \
+		content-tag.sh \
+		check-images.sh
 
 digests:
 	@echo "clone:   $(CLONE_BASE)"
