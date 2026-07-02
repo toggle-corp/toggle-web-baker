@@ -11,6 +11,8 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -323,6 +325,96 @@ func TestValidation_RejectsOverlongGroup(t *testing.T) {
 	}
 }
 
+func TestValidation_RejectsAuthWithBothSources(t *testing.T) {
+	// passwordHash and secretRef are alternative sources for the same htpasswd
+	// line; setting both is ambiguous (which one wins?), so the CEL rule demands
+	// exactly one.
+	hash := "user:$2y$05$abcdefghijklmnopqrstuv"
+	app := validApp("reject-auth-both-sources")
+	app.Spec.Auth = &bakerv1alpha1.AuthConfig{
+		PasswordHash: &hash,
+		SecretRef:    &bakerv1alpha1.AuthSecretRef{Name: "creds", Key: "htpasswd"},
+	}
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected rejection when both passwordHash and secretRef are set")
+	}
+	if !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("expected error mentioning 'exactly one', got: %v", err)
+	}
+}
+
+func TestValidation_RejectsAuthWithNoSource(t *testing.T) {
+	// An empty auth block would silently mean "no auth" while LOOKING like auth
+	// was configured; if auth is present it must actually carry a credential.
+	app := validApp("reject-auth-no-source")
+	app.Spec.Auth = &bakerv1alpha1.AuthConfig{}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for auth with neither passwordHash nor secretRef")
+	}
+}
+
+func TestValidation_AcceptsAuthPasswordHashOnly(t *testing.T) {
+	hash := "user:$2y$05$abcdefghijklmnopqrstuv"
+	app := validApp("accept-auth-passwordhash")
+	app.Spec.Auth = &bakerv1alpha1.AuthConfig{PasswordHash: &hash}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected auth with only passwordHash to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsAuthSecretRefOnly(t *testing.T) {
+	app := validApp("accept-auth-secretref")
+	app.Spec.Auth = &bakerv1alpha1.AuthConfig{
+		SecretRef: &bakerv1alpha1.AuthSecretRef{Name: "creds", Key: "htpasswd"},
+	}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected auth with only secretRef to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsMissingIngressHost(t *testing.T) {
+	// ingress.host is Required: without a host there is nothing to route. The
+	// typed struct always serializes host (no omitempty), and structural-schema
+	// `required` only checks key PRESENCE (an empty string passes), so we must
+	// drop the key via unstructured to exercise the rule.
+	app := validApp("reject-missing-ingress-host")
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(app)
+	if err != nil {
+		t.Fatalf("failed to convert app to unstructured: %v", err)
+	}
+	unstructured.RemoveNestedField(obj, "spec", "ingress", "host")
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+
+	err = testClient.Create(testCtx, u)
+	if err == nil {
+		t.Fatalf("expected rejection for ingress without a host")
+	}
+	if !strings.Contains(err.Error(), "host") {
+		t.Fatalf("expected error mentioning host, got: %v", err)
+	}
+}
+
+func TestValidation_RejectsNegativeNodeVersion(t *testing.T) {
+	// nodeVersion is Minimum=1. Unlike the zero case (dropped by omitempty), -1
+	// survives serialization, so this hits the numeric bound itself even though a
+	// BYO build.image satisfies the image-source CEL rule.
+	app := validApp("reject-negative-nodeversion")
+	app.Spec.Pipeline.NodeVersion = -1
+	app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for negative nodeVersion")
+	}
+}
+
 func TestValidation_RejectsZeroTimeout(t *testing.T) {
 	// An explicit "0s" is rejected: unset (nil) is the way to ask for the
 	// operator default, and a zero deadline is never a sane pipeline bound.
@@ -408,6 +500,61 @@ func TestValidation_RejectsNegativeStorageBytes(t *testing.T) {
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for negative dataCache.runDeltaBytes")
 	}
+}
+
+func TestValidation_RejectsCacheCleanupNotBelowAlert(t *testing.T) {
+	// cleanup must trigger BEFORE the alert threshold, otherwise the operator
+	// would page a human for a condition it was configured to fix itself.
+	app := validApp("reject-cache-cleanup-ge-alert")
+	app.Spec.Storage.Cache.CleanupBytes = 200
+	app.Spec.Storage.Cache.AlertBytes = 100
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected rejection for cache.cleanupBytes >= cache.alertBytes")
+	}
+	if !strings.Contains(err.Error(), "cleanupBytes must be <") {
+		t.Fatalf("expected error mentioning the cleanup/alert ordering, got: %v", err)
+	}
+}
+
+func TestValidation_RejectsOutputAlertNotBelowCap(t *testing.T) {
+	// The cap is the hard ceiling for the served bundle; an alert at or above it
+	// could never fire before the cap kicks in, so the ordering is enforced.
+	app := validApp("reject-output-alert-ge-cap")
+	app.Spec.Storage.Output.AlertBytes = 100
+	app.Spec.Storage.Output.CapBytes = 100
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for output.alertBytes >= output.capBytes")
+	}
+}
+
+func TestValidation_AcceptsOrderedStorageThresholds(t *testing.T) {
+	// cleanup < alert and alert < cap is the intended configuration shape.
+	app := validApp("accept-ordered-storage")
+	app.Spec.Storage.Cache.CleanupBytes = 100
+	app.Spec.Storage.Cache.AlertBytes = 200
+	app.Spec.Storage.Output.AlertBytes = 300
+	app.Spec.Storage.Output.CapBytes = 400
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected ordered storage thresholds to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsAlertBytesWithoutCleanupBytes(t *testing.T) {
+	// Only alertBytes set (cleanupBytes stays 0/omitted): the has() guards mean
+	// the ordering rule only applies when BOTH thresholds are present, so a
+	// partial config must not be rejected.
+	app := validApp("accept-alert-without-cleanup")
+	app.Spec.Storage.Cache.AlertBytes = 100
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected lone cache.alertBytes to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
 func TestValidation_RejectsNegativeKeepReleases(t *testing.T) {
