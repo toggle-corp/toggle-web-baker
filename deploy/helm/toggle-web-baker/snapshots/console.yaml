@@ -662,7 +662,9 @@ spec:
                       copier) to the exact image reference the build Job was created with —
                       digest-pinned for operator-managed toolchains. Captured at Job CREATION
                       (like SpecHashAnnotation) so it records the build that actually ran, not
-                      a later operator-config change. Bounded by the fixed pipeline shape.
+                      a later operator-config change. Bounded by the fixed pipeline shape:
+                      5 containers today (clone/setup/fetch/build/copier), 8 leaves headroom
+                      for new pipeline steps without an API bump.
                     maxProperties: 8
                     type: object
                   result:
@@ -777,7 +779,9 @@ spec:
                         copier) to the exact image reference the build Job was created with —
                         digest-pinned for operator-managed toolchains. Captured at Job CREATION
                         (like SpecHashAnnotation) so it records the build that actually ran, not
-                        a later operator-config change. Bounded by the fixed pipeline shape.
+                        a later operator-config change. Bounded by the fixed pipeline shape:
+                        5 containers today (clone/setup/fetch/build/copier), 8 leaves headroom
+                        for new pipeline steps without an API bump.
                       maxProperties: 8
                       type: object
                     result:

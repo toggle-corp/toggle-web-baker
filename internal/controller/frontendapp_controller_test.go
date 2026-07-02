@@ -545,6 +545,14 @@ func TestStartBuild_RecordsResolvedImages(t *testing.T) {
 			t.Fatalf("container %s created with an empty image", c.Name)
 		}
 	}
+	// Fixed anchors independent of the BuildJob-derived expectation above:
+	// "clone" lives in initContainers and "copier" in containers, so their
+	// presence proves containerImages flattened BOTH lists.
+	for _, name := range []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepCopier} {
+		if got[name] == "" {
+			t.Fatalf("resolvedImages missing %q: %v", name, got)
+		}
+	}
 }
 
 // Behavior 6b: a SCHEDULED startBuild (no "by" annotation) leaves Build.TriggeredBy
