@@ -43,11 +43,11 @@ operator:
   nodeImages:
     "18":
       repository: ghcr.io/toggle-corp/toggle-web-baker-node18
-      tag: ""
+      tag: "18-75947be37b25"
       runAsUser: 1000
     "24":
       repository: ghcr.io/toggle-corp/toggle-web-baker-node24
-      tag: ""
+      tag: "24-37c498189aa7"
       runAsUser: 1000
 
   # The values below are rendered into the operator config ConfigMap
