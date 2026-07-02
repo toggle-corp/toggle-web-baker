@@ -32,11 +32,7 @@ func TestProjectPodUsage(t *testing.T) {
 	if len(usage) != 2 {
 		t.Fatalf("want 2 containers, got %d: %v", len(usage), usage)
 	}
-	b := usage["build"]
-	if b.CPUMillicores != 431 { // 431648513 nanocores -> 431 millicores
-		t.Errorf("build CPU = %dm, want 431m", b.CPUMillicores)
-	}
-	if b.MemoryBytes != 634040320 {
+	if b := usage["build"]; b.MemoryBytes != 634040320 {
 		t.Errorf("build mem = %d, want 634040320", b.MemoryBytes)
 	}
 	if _, ok := usage["web"]; ok {
@@ -62,8 +58,8 @@ func TestProjectPodUsage_MissingSamplesReadZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projectPodUsage: %v", err)
 	}
-	if u := usage["setup"]; u.CPUMillicores != 0 || u.MemoryBytes != 0 {
-		t.Errorf("missing samples should read 0/0, got %+v", u)
+	if u := usage["setup"]; u.MemoryBytes != 0 {
+		t.Errorf("missing samples should read 0, got %+v", u)
 	}
 }
 

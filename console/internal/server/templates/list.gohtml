@@ -1,25 +1,56 @@
 {{define "list.gohtml"}}
 {{template "head" .Head}}
+<main>
+<div class="listhead">
+  <h2>FrontendApps <span class="count">· {{.Total}}</span></h2>
+  <span class="small muted" style="margin-left:auto">degraded first</span>
+</div>
+
+{{/* Status facets: counts come from the UNFILTERED set; links compose with the
+     active group filter. Pure query-param navigation — works with JS off. */}}
+<nav class="chips" aria-label="Filter by status">
+  {{range .StatusFacets}}<a class="chip{{if .Active}} chip-active{{end}}" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}} ({{.Count}})</a>{{end}}
+</nav>
+
+{{/* Group chips: one per distinct spec.group, plus "ungrouped" when apps
+     without a group exist. Hidden entirely when no app carries a group. */}}
+{{if .GroupChips}}
+<nav class="chips" aria-label="Filter by group">
+  {{range .GroupChips}}<a class="chip{{if .Active}} chip-active{{end}}" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
+</nav>
+{{end}}
+
+<div class="tablewrap">
 <table>
   <thead>
-    <tr><th>Health</th><th>Namespace / Name</th><th>Phase</th><th>Spec</th><th>URL</th><th>Last build</th></tr>
+    <tr><th>Health</th><th>Name</th><th class="c-url">URL</th><th>Last build</th><th>Next build</th></tr>
   </thead>
   <tbody>
   {{range .Apps}}
-    <tr class="row-{{.HealthClass}}">
-      <td>{{template "statusbadge" .}}</td>
-      <td><a href="/ns/{{.Namespace}}/app/{{.Name}}"><strong>{{.Name}}</strong></a>
-          <div class="small muted">{{.Namespace}}</div>
-          {{template "flowstrip" .Build}}</td>
-      <td>{{dash .Phase}}</td>
-      <td>{{if .SpecStale}}<span class="badge b-stale">STALE</span>{{else}}<span class="small muted">in sync</span>{{end}}</td>
-      <td class="small">{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener">{{.URL}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="small muted">{{timetag .LastSuccessfulBuild}}</td>
+    <tr{{if or (eq .HealthClass "degraded") (eq .HealthClass "degraded-serving")}} class="tint-degraded"{{end}}>
+      <td class="c-health"><span class="badge b-{{.HealthClass}}" title="{{.HealthLabel}}">{{.HealthShortLabel}}</span></td>
+      <td class="c-name">
+        <a href="/ns/{{.Namespace}}/app/{{.Name}}" class="app-name">{{.Name}}</a>
+        {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE</span>{{end}}
+        {{if .StorageBadgeLabel}}<span class="badge {{.StorageBadgeClass}}" title="storage threshold state: {{.Storage.ThresholdState}}">{{.StorageBadgeLabel}}</span>{{end}}
+        <div class="app-ns">{{.Namespace}}{{if .Group}} · {{.Group}}{{end}}</div>
+        {{if .ShowFlow}}{{template "flowstrip" .Build}}{{end}}
+      </td>
+      <td class="c-url">{{if .URL}}<a href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener">{{.URLHost}} ↗</a>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="c-last">
+        {{if .BuildActive}}<span class="last-run">Running</span> · started {{timetag .Build.StartTime}}
+        {{else if .Build.Result}}<span{{if eq .Build.Result "Failed"}} class="last-fail"{{end}}>{{.Build.Result}}</span> · {{timetag .LastBuildTime}}
+          {{if and (eq .Build.Result "Failed") .LastSuccessfulBuild}}<br><span class="small">last good {{timetag .LastSuccessfulBuild}}</span>{{end}}
+        {{else}}<span class="muted">never</span>{{end}}
+      </td>
+      <td class="c-next">{{timetag .NextScheduledBuildTime}}</td>
     </tr>
   {{else}}
-    <tr><td colspan="6" class="muted">No FrontendApps found in any namespace.</td></tr>
+    <tr><td colspan="5" class="muted">No FrontendApps match.</td></tr>
   {{end}}
   </tbody>
 </table>
+</div>
+</main>
 {{template "foot"}}
 {{end}}

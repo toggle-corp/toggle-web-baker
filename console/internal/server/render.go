@@ -79,6 +79,9 @@ type head struct {
 	// suppresses the "no user header" badge that would otherwise scream a
 	// misconfiguration on a page that is intentionally userless.
 	Anon bool
+	// Bare suppresses the standard header entirely; the detail page renders its
+	// own sticky status bar (breadcrumb + actions + theme select) instead.
+	Bare bool
 }
 
 type signedOutData struct {
@@ -87,7 +90,14 @@ type signedOutData struct {
 
 type listData struct {
 	Head head
-	Apps []view.App
+	// Apps is the filtered, health-ranked row set; Total is the unfiltered
+	// count shown in the heading.
+	Apps  []view.App
+	Total int
+	// StatusFacets / GroupChips are the server-rendered filter chip rows; both
+	// are computed from the unfiltered set (see handleList).
+	StatusFacets []statusFacet
+	GroupChips   []groupChip
 }
 
 type detailData struct {
@@ -105,13 +115,13 @@ type partialData struct {
 	App view.App
 }
 
-// logpaneData drives the log pane fragment: the container select, a source
-// note, and either the lines or an unavailable message.
+// logpaneData drives the log pane fragment: the container badge buttons, a
+// source note, and either the lines or an unavailable message.
 type logpaneData struct {
 	Namespace   string
 	Build       view.Build
 	Container   string
-	Steps       []view.Step // option list for the container <select>
+	Steps       []view.Step // the container badge-button row
 	SourceNote  string      // "live pod" / "Loki" / "pod (Loki unavailable)"
 	Lines       []string
 	Unavailable string // non-empty → render this instead of lines

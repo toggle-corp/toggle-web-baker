@@ -572,6 +572,185 @@ func TestApp_CleanupBusy(t *testing.T) {
 	}
 }
 
+func TestFromUnstructured_Group(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "ns", "name": "grouped"},
+		"spec":     map[string]any{"group": "ifrc-go"},
+	}}
+	if got := FromUnstructured(obj).Group; got != "ifrc-go" {
+		t.Errorf("Group = %q, want ifrc-go", got)
+	}
+
+	// Absent spec.group (older resources) → "".
+	if got := FromUnstructured(fullStatusObj()).Group; got != "" {
+		t.Errorf("absent spec.group should map to empty, got %q", got)
+	}
+	// Mistyped spec.group must not panic and coerces to "".
+	weird := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"namespace": "ns", "name": "weird"},
+		"spec":     map[string]any{"group": map[string]any{}},
+	}}
+	if got := FromUnstructured(weird).Group; got != "" {
+		t.Errorf("mistyped spec.group should coerce to empty, got %q", got)
+	}
+}
+
+func TestApp_URLHost(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"https URL", "https://mapswipe.org", "mapswipe.org"},
+		{"URL with path", "https://go.ifrc.org/emergencies", "go.ifrc.org"},
+		{"empty", "", ""},
+		{"schemeless falls back to raw", "mapswipe.org", "mapswipe.org"},
+		{"unparseable falls back to raw", "http://[::1:bad", "http://[::1:bad"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := (App{URL: c.url}).URLHost(); got != c.want {
+				t.Errorf("URLHost(%q) = %q, want %q", c.url, got, c.want)
+			}
+		})
+	}
+}
+
+// appWithHealth builds a minimal App carrying the conditions/phase that map to
+// the given health class (see HealthClass).
+func appWithHealth(class string) App {
+	switch class {
+	case "degraded":
+		return App{Conditions: []Condition{{Type: "Degraded", Status: "True"}}}
+	case "degraded-serving":
+		return App{Conditions: []Condition{
+			{Type: "Degraded", Status: "True"}, {Type: "Ready", Status: "True"},
+		}}
+	case "ready":
+		return App{Conditions: []Condition{{Type: "Ready", Status: "True"}}}
+	case "building":
+		return App{Phase: "Building"}
+	default:
+		return App{}
+	}
+}
+
+func TestApp_HealthRank_OrdersMostBrokenFirst(t *testing.T) {
+	order := []string{"degraded", "degraded-serving", "building", "pending", "ready"}
+	for i := 1; i < len(order); i++ {
+		prev := appWithHealth(order[i-1])
+		cur := appWithHealth(order[i])
+		if prev.HealthRank() >= cur.HealthRank() {
+			t.Errorf("HealthRank(%s)=%d should sort before HealthRank(%s)=%d",
+				order[i-1], prev.HealthRank(), order[i], cur.HealthRank())
+		}
+	}
+}
+
+func TestApp_HealthShortLabel(t *testing.T) {
+	if got := appWithHealth("degraded-serving").HealthShortLabel(); got != "Serving last-good" {
+		t.Errorf("degraded-serving short label = %q", got)
+	}
+	if got := appWithHealth("ready").HealthShortLabel(); got != "Ready" {
+		t.Errorf("ready short label = %q", got)
+	}
+	if got := appWithHealth("pending").HealthShortLabel(); got != "Unknown" {
+		t.Errorf("pending (no phase) short label = %q", got)
+	}
+}
+
+func TestApp_StorageBadge(t *testing.T) {
+	cases := []struct {
+		state     string
+		wantLabel string
+		wantClass string
+	}{
+		{"Alert", "STORAGE ALERT", "b-stale"},
+		{"Critical", "STORAGE CRITICAL", "b-degraded"},
+		{"OK", "", ""},
+		{"", "", ""},
+		{"weird", "", ""},
+	}
+	for _, c := range cases {
+		a := App{Storage: Storage{ThresholdState: c.state}}
+		if got := a.StorageBadgeLabel(); got != c.wantLabel {
+			t.Errorf("StorageBadgeLabel(%q) = %q, want %q", c.state, got, c.wantLabel)
+		}
+		if got := a.StorageBadgeClass(); got != c.wantClass {
+			t.Errorf("StorageBadgeClass(%q) = %q, want %q", c.state, got, c.wantClass)
+		}
+	}
+}
+
+func TestApp_ShowFlow(t *testing.T) {
+	cases := []struct {
+		name string
+		app  App
+		want bool
+	}{
+		{"building app", App{Phase: "Building"}, true},
+		{"running build", App{Build: Build{Phase: "Running"}}, true},
+		{"failed last result", App{Build: Build{Phase: "Complete", Result: "Failed"}}, true},
+		{"healthy idle", App{Phase: "Ready", Build: Build{Phase: "Complete", Result: "Succeeded"}}, false},
+		{"empty", App{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.app.ShowFlow(); got != c.want {
+				t.Errorf("ShowFlow() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestApp_ServingJobName(t *testing.T) {
+	history := []Build{
+		{JobName: "b-3", Result: "Failed"},
+		{JobName: "b-2", Result: "Succeeded"},
+		{JobName: "b-1", Result: "Succeeded"},
+	}
+	ready := App{
+		Conditions:   []Condition{{Type: "Ready", Status: "True"}},
+		BuildHistory: history,
+	}
+	if got := ready.ServingJobName(); got != "b-2" {
+		t.Errorf("ServingJobName = %q, want b-2 (newest successful)", got)
+	}
+	notReady := App{BuildHistory: history}
+	if got := notReady.ServingJobName(); got != "" {
+		t.Errorf("not-Ready app should have no serving marker, got %q", got)
+	}
+	noSuccess := App{
+		Conditions:   []Condition{{Type: "Ready", Status: "True"}},
+		BuildHistory: []Build{{JobName: "b-9", Result: "Failed"}},
+	}
+	if got := noSuccess.ServingJobName(); got != "" {
+		t.Errorf("no successful history should have no serving marker, got %q", got)
+	}
+}
+
+func TestBuild_Duration(t *testing.T) {
+	cases := []struct {
+		name  string
+		build Build
+		want  string
+	}{
+		{"seconds", Build{StartTime: "2026-06-25T09:00:00Z", CompletionTime: "2026-06-25T09:00:34Z"}, "34s"},
+		{"minutes+seconds", Build{StartTime: "2026-06-25T09:00:00Z", CompletionTime: "2026-06-25T09:06:12Z"}, "6m12s"},
+		{"no completion", Build{StartTime: "2026-06-25T09:00:00Z"}, ""},
+		{"no start", Build{CompletionTime: "2026-06-25T09:00:00Z"}, ""},
+		{"completion before start", Build{StartTime: "2026-06-25T09:10:00Z", CompletionTime: "2026-06-25T09:00:00Z"}, ""},
+		{"garbage", Build{StartTime: "nope", CompletionTime: "also nope"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.build.Duration(); got != c.want {
+				t.Errorf("Duration() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestApp_BuildActive(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -591,6 +770,30 @@ func TestApp_BuildActive(t *testing.T) {
 			a := App{Phase: c.appPhase, Build: Build{Phase: c.bldPhase}}
 			if got := a.BuildActive(); got != c.wantTrue {
 				t.Errorf("BuildActive()=%v, want %v", got, c.wantTrue)
+			}
+		})
+	}
+}
+
+func TestCondition_HealthClass(t *testing.T) {
+	cases := []struct {
+		name     string
+		condType string
+		status   string
+		want     string
+	}{
+		{"ready true is healthy", "Ready", "True", "true"},
+		{"ready false is unhealthy", "Ready", "False", "false"},
+		{"degraded false is healthy (negative polarity)", "Degraded", "False", "true"},
+		{"degraded true is unhealthy", "Degraded", "True", "false"},
+		{"unknown stays unknown", "Ready", "Unknown", "unknown"},
+		{"degraded unknown stays unknown", "Degraded", "Unknown", "unknown"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cond := Condition{Type: c.condType, Status: c.status}
+			if got := cond.HealthClass(); got != c.want {
+				t.Errorf("HealthClass()=%q, want %q", got, c.want)
 			}
 		})
 	}

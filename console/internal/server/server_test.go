@@ -296,7 +296,44 @@ func cleanupBusyStatus() map[string]any {
 	}
 }
 
-func TestStorageCard_RendersCleanupButtonsDisabledWhenBusy(t *testing.T) {
+// The prune buttons live in the detail page's sticky status bar (the storage
+// card keeps only the prune STATUS rows). Busy state disables both buttons.
+func TestStatusBar_RendersCleanupButtonsDisabledWhenBusy(t *testing.T) {
+	dyn := seededDyn(t, cleanupBusyStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/cleanup-cache") || !strings.Contains(body, "/cleanup-releases") {
+		t.Errorf("status bar should render both cleanup forms; body=%s", body)
+	}
+	if !strings.Contains(body, `btn-danger" disabled`) {
+		t.Errorf("cleanup buttons should be disabled while busy; body=%s", body)
+	}
+	// Danger styling on the destructive actions.
+	if !strings.Contains(body, "btn-danger") {
+		t.Errorf("prune buttons should carry the danger variant; body=%s", body)
+	}
+}
+
+func TestStatusBar_CleanupButtonsEnabledWhenIdle(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if !strings.Contains(body, "/cleanup-cache") {
+		t.Errorf("idle detail page should still render cleanup forms; body=%s", body)
+	}
+	if strings.Contains(body, `btn-danger" disabled`) {
+		t.Errorf("cleanup buttons must NOT be disabled when idle; body=%s", body)
+	}
+}
+
+func TestStorageCard_RendersPruneStatusRowsWithoutForms(t *testing.T) {
 	dyn := seededDyn(t, cleanupBusyStatus())
 	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
 
@@ -305,32 +342,233 @@ func TestStorageCard_RendersCleanupButtonsDisabledWhenBusy(t *testing.T) {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "/cleanup-cache") || !strings.Contains(body, "/cleanup-releases") {
-		t.Errorf("storage card should render both cleanup forms; body=%s", body)
-	}
-	if !strings.Contains(body, "disabled") {
-		t.Errorf("cleanup buttons should be disabled while busy; body=%s", body)
-	}
-	// Cleanup status (reclaimed/message/phase) should surface.
+	// Cleanup status (reclaimed/message/phase) stays on the storage card…
 	if !strings.Contains(body, "pruned layers") {
 		t.Errorf("should render the cleanup message; body=%s", body)
 	}
 	if !strings.Contains(body, view.HumanizeBytes(1048576)) {
 		t.Errorf("should render reclaimed bytes humanized; body=%s", body)
 	}
+	// …but the forms moved to the status bar, out of the fragment.
+	if strings.Contains(body, "/cleanup-cache") || strings.Contains(body, "<form") {
+		t.Errorf("the fragment must not carry cleanup forms anymore; body=%s", body)
+	}
 }
 
-func TestStorageCard_CleanupButtonsEnabledWhenIdle(t *testing.T) {
-	dyn := seededDyn(t, completedBuildStatus())
-	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
-
-	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
-	body := rec.Body.String()
-	if !strings.Contains(body, "/cleanup-cache") {
-		t.Errorf("idle storage card should still render cleanup forms; body=%s", body)
+// fappObj builds one FrontendApp unstructured object for multi-app list tests.
+func fappObj(ns, name string, spec, status map[string]any) *unstructured.Unstructured {
+	obj := map[string]any{
+		"apiVersion": "baker.toggle-corp.com/v1alpha1",
+		"kind":       "FrontendApp",
+		"metadata":   map[string]any{"namespace": ns, "name": name},
 	}
-	if strings.Contains(body, "disabled") {
-		t.Errorf("cleanup buttons must NOT be disabled when idle; body=%s", body)
+	if spec != nil {
+		obj["spec"] = spec
+	}
+	if status != nil {
+		obj["status"] = status
+	}
+	return &unstructured.Unstructured{Object: obj}
+}
+
+// listFixtureServer seeds three apps covering the filter axes:
+//   - alpha/web-degraded  group=grp-a  degraded, failed build, STALE, storage Critical
+//   - beta/web-ready      group=grp-b  ready, storage Alert
+//   - gamma/web-ungrouped (no group)   no status → pending
+func listFixtureServer(t *testing.T) *Server {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	degraded := fappObj("alpha", "web-degraded",
+		map[string]any{"group": "grp-a"},
+		map[string]any{
+			"phase":     "Degraded",
+			"url":       "https://degraded.example.org/some/path",
+			"specStale": true,
+			"conditions": []any{
+				map[string]any{"type": "Degraded", "status": "True"},
+			},
+			"build": map[string]any{
+				"phase": "Failed", "result": "Failed", "jobName": "web-degraded-b-1",
+				"failedStep": "build",
+				"steps": []any{
+					map[string]any{"name": "clone", "status": "Succeeded"},
+					map[string]any{"name": "build", "status": "Failed"},
+				},
+			},
+			"lastBuildTime":           "2026-07-01T09:00:00Z",
+			"lastSuccessfulBuildTime": "2026-06-30T09:00:00Z",
+			"storage":                 map[string]any{"thresholdState": "Critical"},
+		})
+	ready := fappObj("beta", "web-ready",
+		map[string]any{"group": "grp-b"},
+		map[string]any{
+			"phase": "Ready",
+			"url":   "https://ready.example.org",
+			"conditions": []any{
+				map[string]any{"type": "Ready", "status": "True"},
+			},
+			"build": map[string]any{
+				"phase": "Complete", "result": "Succeeded", "jobName": "web-ready-b-1",
+				"steps": []any{map[string]any{"name": "build", "status": "Succeeded"}},
+			},
+			"lastBuildTime": "2026-07-02T03:00:00Z",
+			"storage":       map[string]any{"thresholdState": "Alert"},
+		})
+	ungrouped := fappObj("gamma", "web-ungrouped", nil, nil)
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, degraded, ready, ungrouped)
+	return New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+}
+
+func getList(srv *Server, target string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("X-Auth-Request-User", "octocat")
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestList_StatusFacetCountsFromUnfilteredSet(t *testing.T) {
+	srv := listFixtureServer(t)
+
+	rec := getList(srv, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"all (3)", "ready (1)", "building (0)", "degraded (1)", "serving last-good (0)", "pending (1)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("facets should contain %q; body=%s", want, body)
+		}
+	}
+
+	// Filtering must not change the counts (they come from the unfiltered set).
+	rec = getList(srv, "/?status=degraded")
+	body = rec.Body.String()
+	if !strings.Contains(body, "web-degraded") {
+		t.Errorf("degraded filter should keep the degraded app; body=%s", body)
+	}
+	if strings.Contains(body, "web-ready") || strings.Contains(body, "web-ungrouped") {
+		t.Errorf("degraded filter should drop other apps; body=%s", body)
+	}
+	if !strings.Contains(body, "all (3)") || !strings.Contains(body, "ready (1)") {
+		t.Errorf("facet counts must stay unfiltered; body=%s", body)
+	}
+	// Heading total also stays unfiltered.
+	if !strings.Contains(body, "· 3") {
+		t.Errorf("heading should show the unfiltered total; body=%s", body)
+	}
+}
+
+func TestList_UnknownStatusParamIsIgnored(t *testing.T) {
+	srv := listFixtureServer(t)
+	body := getList(srv, "/?status=bogus").Body.String()
+	for _, name := range []string{"web-degraded", "web-ready", "web-ungrouped"} {
+		if !strings.Contains(body, name) {
+			t.Errorf("bogus status should be ignored (all rows); missing %s; body=%s", name, body)
+		}
+	}
+}
+
+func TestList_GroupChipsAndFilter(t *testing.T) {
+	srv := listFixtureServer(t)
+
+	body := getList(srv, "/").Body.String()
+	if !strings.Contains(body, "Filter by group") {
+		t.Fatalf("group chip row should render; body=%s", body)
+	}
+	for _, want := range []string{">grp-a</a>", ">grp-b</a>", ">ungrouped</a>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("group chips should contain %q; body=%s", want, body)
+		}
+	}
+
+	// Group filter keeps only that group's apps.
+	body = getList(srv, "/?group=grp-a").Body.String()
+	if !strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ready") {
+		t.Errorf("group=grp-a should keep only grp-a apps; body=%s", body)
+	}
+	// The ungrouped sentinel selects apps WITHOUT a group.
+	body = getList(srv, "/?group=ungrouped").Body.String()
+	if !strings.Contains(body, "web-ungrouped") || strings.Contains(body, "web-degraded") {
+		t.Errorf("group=ungrouped should keep only group-less apps; body=%s", body)
+	}
+
+	// Group + status compose (server-side).
+	body = getList(srv, "/?group=grp-a&status=ready").Body.String()
+	if strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ready") {
+		t.Errorf("composed filters should exclude everything here; body=%s", body)
+	}
+	if !strings.Contains(body, "No FrontendApps match") {
+		t.Errorf("empty composed filter should render the empty row; body=%s", body)
+	}
+	// Facet links carry the active group so the params keep composing.
+	if !strings.Contains(body, "group=grp-a&amp;status=degraded") {
+		t.Errorf("status facet URLs should preserve the group param; body=%s", body)
+	}
+}
+
+func TestList_GroupChipsHiddenWhenNoGroups(t *testing.T) {
+	srv, _ := newTestServer(t) // single seeded app without spec.group
+	body := getList(srv, "/").Body.String()
+	if strings.Contains(body, "Filter by group") {
+		t.Errorf("group chip row must be hidden when no app carries a group; body=%s", body)
+	}
+}
+
+func TestList_SortsMostBrokenFirst(t *testing.T) {
+	srv := listFixtureServer(t)
+	body := getList(srv, "/").Body.String()
+	iDegraded := strings.Index(body, "web-degraded")
+	iPending := strings.Index(body, "web-ungrouped") // pending (no status)
+	iReady := strings.Index(body, "web-ready")
+	if iDegraded < 0 || iPending < 0 || iReady < 0 {
+		t.Fatalf("all three rows should render; body=%s", body)
+	}
+	if iDegraded >= iPending || iPending >= iReady {
+		t.Errorf("rows should sort degraded < pending < ready; got %d/%d/%d", iDegraded, iPending, iReady)
+	}
+	// Degraded rows carry the background tint, not a side stripe.
+	if !strings.Contains(body, "tint-degraded") {
+		t.Errorf("degraded row should carry tint-degraded; body=%s", body)
+	}
+	if strings.Contains(body, "row-degraded") {
+		t.Errorf("side-stripe row classes must be gone; body=%s", body)
+	}
+}
+
+func TestList_RowBadgesColumnsAndFlow(t *testing.T) {
+	srv := listFixtureServer(t)
+	body := getList(srv, "/").Body.String()
+
+	// Storage badges: Critical → red, Alert → amber.
+	if !strings.Contains(body, "STORAGE CRITICAL") || !strings.Contains(body, "STORAGE ALERT") {
+		t.Errorf("storage threshold badges should render; body=%s", body)
+	}
+	if !strings.Contains(body, ">STALE<") {
+		t.Errorf("STALE badge should render on the stale app; body=%s", body)
+	}
+	// URL cell: host only, full URL in the title attribute.
+	if !strings.Contains(body, "degraded.example.org ↗") {
+		t.Errorf("URL cell should show the bare host with ↗; body=%s", body)
+	}
+	if !strings.Contains(body, `title="https://degraded.example.org/some/path"`) {
+		t.Errorf("full URL should live in the title attr; body=%s", body)
+	}
+	// Group shows as small text in the Name cell.
+	if !strings.Contains(body, "alpha · grp-a") {
+		t.Errorf("Name cell should show namespace · group; body=%s", body)
+	}
+	// Next build column renders for every row (from spec.schedule / default).
+	if !strings.Contains(body, "Next build") {
+		t.Errorf("list should have a Next build column; body=%s", body)
+	}
+	// The flow strip renders only on the failed row, not the healthy one.
+	if !strings.Contains(body, "step-failed") {
+		t.Errorf("failed row should carry its flow strip; body=%s", body)
+	}
+	if got := strings.Count(body, `<div class="flow">`); got != 1 {
+		t.Errorf("only the failed/active rows get a flow strip; got %d strips; body=%s", got, body)
 	}
 }
 
@@ -430,6 +668,48 @@ func TestDetail_RendersStatus(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Request rebuild") {
 		t.Error("detail page should render the rebuild button")
+	}
+}
+
+// The detail page is the cockpit layout: a sticky status bar (breadcrumb,
+// health badge, mono URL chip, phase, actions) instead of the standard header,
+// a left column ending in the Internals disclosure, and the docked log pane.
+func TestDetail_CockpitLayout(t *testing.T) {
+	status := map[string]any{
+		"phase": "Ready",
+		"url":   "https://mapswipe.org/some/page",
+		"conditions": []any{
+			map[string]any{"type": "Ready", "status": "True"},
+		},
+	}
+	srv := New(k8s.NewWithDynamic(seededDyn(t, status)), &fakePodReader{}, &fakeLokiTailer{}, nil)
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="statusbar"`,              // sticky status bar
+		`class="crumbs"`,                 // breadcrumb inside it
+		`class="sb-url"`,                 // prominent mono URL chip…
+		`>mapswipe.org&nbsp;↗<`,          // …showing the bare host
+		"phase <b>Ready</b>",             // phase readout
+		`class="cockpit"`,                // split layout
+		`class="card logdock col-right"`, // docked log pane
+		`<details class="internals">`,    // internals disclosure
+		"Observed generation",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail page should contain %q; body=%s", want, body)
+		}
+	}
+	// Bare page: no standard header (the status bar replaces it).
+	if strings.Contains(body, "<header>") {
+		t.Errorf("detail page must not render the standard header; body=%s", body)
+	}
+	// The theme select still exists (in the status bar).
+	if !strings.Contains(body, `id="theme-select"`) {
+		t.Errorf("detail page should keep the theme select; body=%s", body)
 	}
 }
 
@@ -785,6 +1065,37 @@ func TestLogs_RendersColoredLines(t *testing.T) {
 	}
 }
 
+// The container picker is a row of badge buttons (not a <select>): one per
+// real container, the active one marked selected/aria-pressed, all carrying
+// the data-log-container contract the detail JS delegates on.
+func TestLogs_ContainerBadgeButtonsReplaceSelect(t *testing.T) {
+	dyn := seededDyn(t, completedBuildStatus())
+	pods := &fakePodReader{}
+	loki := &fakeLokiTailer{configured: true, lines: []string{"archived"}}
+	srv := New(k8s.NewWithDynamic(dyn), pods, loki, nil)
+
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/logs?build=mapswipe-uat-build-9&container=clone",
+		"mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<select") {
+		t.Errorf("the container <select> must be gone; body=%s", body)
+	}
+	// One badge button per container step, each carrying the contract attr.
+	if got := strings.Count(body, "data-log-container"); got != 2 {
+		t.Errorf("want 2 container badge buttons (clone, build), got %d; body=%s", got, body)
+	}
+	// The requested container renders selected.
+	if !strings.Contains(body, `value="clone" data-log-container class="cbtn selected" aria-pressed="true"`) {
+		t.Errorf("clone badge should render selected; body=%s", body)
+	}
+	if !strings.Contains(body, `value="build" data-log-container class="cbtn" aria-pressed="false"`) {
+		t.Errorf("build badge should render unselected; body=%s", body)
+	}
+}
+
 func TestLogs_FollowToggleHiddenWhenIdle(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus()) // no build in flight
 	pods := &fakePodReader{}
@@ -853,11 +1164,11 @@ func TestRecentBuilds_RendersViewLogsButtonNotDetails(t *testing.T) {
 	}
 }
 
-// podWithLimits builds a pod whose named container carries cpu+mem limits, so
-// the metrics bars can be computed against a known cap. NodeName is always set:
+// podWithLimits builds a pod whose named container carries a memory limit, so
+// the metrics bar can be computed against a known cap. NodeName is always set:
 // the server resolves the kubelet to ask from it before fetching metrics.
-func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {
-	pod := podWithInitLimits(podName, container, cpu, mem)
+func podWithLimits(podName, container, mem string) *corev1.Pod {
+	pod := podWithInitLimits(podName, container, mem)
 	pod.Spec.Containers, pod.Spec.InitContainers = pod.Spec.InitContainers, nil
 	return pod
 }
@@ -865,11 +1176,8 @@ func podWithLimits(podName, container, cpu, mem string) *corev1.Pod {
 // podWithInitLimits is podWithLimits with the container as an INIT container —
 // the real build pod's shape (every step is init; only the copier is an app
 // container).
-func podWithInitLimits(podName, container, cpu, mem string) *corev1.Pod {
+func podWithInitLimits(podName, container, mem string) *corev1.Pod {
 	lim := corev1.ResourceList{}
-	if cpu != "" {
-		lim[corev1.ResourceCPU] = apiresource.MustParse(cpu)
-	}
 	if mem != "" {
 		lim[corev1.ResourceMemory] = apiresource.MustParse(mem)
 	}
@@ -886,9 +1194,9 @@ func podWithInitLimits(podName, container, cpu, mem string) *corev1.Pod {
 
 func TestPartial_LiveMetricsWithBars(t *testing.T) {
 	dyn := seededDyn(t, runningBuildStatus())
-	pods := &fakePodReader{pod: podWithLimits("mapswipe-uat-build-8-xyz", "build", "2", "4Gi")}
+	pods := &fakePodReader{pod: podWithLimits("mapswipe-uat-build-8-xyz", "build", "4Gi")}
 	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
-		"build": {CPUMillicores: 1500, MemoryBytes: 2 * 1024 * 1024 * 1024},
+		"build": {MemoryBytes: 2 * 1024 * 1024 * 1024},
 	}}
 	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
 
@@ -900,18 +1208,19 @@ func TestPartial_LiveMetricsWithBars(t *testing.T) {
 	if !strings.Contains(strings.ToLower(body), "live usage") {
 		t.Errorf("should render a Live usage block; body=%s", body)
 	}
-	if !strings.Contains(body, "1.50 cores") {
-		t.Errorf("should show CPU usage 1.50 cores; body=%s", body)
-	}
 	if !strings.Contains(body, "2.0 GiB") {
 		t.Errorf("should show memory usage 2.0 GiB; body=%s", body)
 	}
-	// CPU bar: 1500m of 2000m = 75%. Mem bar: 2Gi of 4Gi = 50%.
+	// Mem bar: 2Gi of 4Gi = 50%.
 	if !strings.Contains(body, "bar-fill") {
-		t.Errorf("should render usage bars when limits known; body=%s", body)
+		t.Errorf("should render the memory bar when the limit is known; body=%s", body)
 	}
-	if !strings.Contains(body, "75%") || !strings.Contains(body, "50%") {
-		t.Errorf("bar widths should reflect limits (75%% cpu, 50%% mem); body=%s", body)
+	if !strings.Contains(body, "50%") {
+		t.Errorf("bar width should reflect the limit (50%% mem); body=%s", body)
+	}
+	// CPU is intentionally gone from the usage block.
+	if strings.Contains(body, "CPU") || strings.Contains(body, "cores") {
+		t.Errorf("usage block must not render CPU; body=%s", body)
 	}
 	if metrics.lastNode != "node-1" {
 		t.Errorf("metrics fetch must target the pod's node; got %q", metrics.lastNode)
@@ -922,9 +1231,9 @@ func TestPartial_LiveMetricsForInitContainerStep(t *testing.T) {
 	// The real build pod runs every step as an initContainer; limits for the
 	// bars must resolve from spec.initContainers, not just spec.containers.
 	dyn := seededDyn(t, runningBuildStatus())
-	pods := &fakePodReader{pod: podWithInitLimits("mapswipe-uat-build-8-xyz", "build", "2", "4Gi")}
+	pods := &fakePodReader{pod: podWithInitLimits("mapswipe-uat-build-8-xyz", "build", "4Gi")}
 	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
-		"build": {CPUMillicores: 1500, MemoryBytes: 2 * 1024 * 1024 * 1024},
+		"build": {MemoryBytes: 2 * 1024 * 1024 * 1024},
 	}}
 	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
 
@@ -933,8 +1242,8 @@ func TestPartial_LiveMetricsForInitContainerStep(t *testing.T) {
 	if !strings.Contains(strings.ToLower(body), "live usage") {
 		t.Errorf("should render a Live usage block for an init step; body=%s", body)
 	}
-	if !strings.Contains(body, "75%") || !strings.Contains(body, "50%") {
-		t.Errorf("bars should draw against initContainer limits; body=%s", body)
+	if !strings.Contains(body, "50%") {
+		t.Errorf("bar should draw against initContainer limits; body=%s", body)
 	}
 }
 
@@ -944,7 +1253,7 @@ func TestPartial_PodGoneSkipsMetricsWithNote(t *testing.T) {
 	dyn := seededDyn(t, runningBuildStatus())
 	pods := &fakePodReader{getErr: context.DeadlineExceeded}
 	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
-		"build": {CPUMillicores: 1, MemoryBytes: 1},
+		"build": {MemoryBytes: 1},
 	}}
 	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
 
@@ -960,17 +1269,17 @@ func TestPartial_PodGoneSkipsMetricsWithNote(t *testing.T) {
 
 func TestPartial_LiveMetricsNoBarWhenNoLimit(t *testing.T) {
 	dyn := seededDyn(t, runningBuildStatus())
-	// Pod has the container but no limits → values shown, no bar.
-	pods := &fakePodReader{pod: podWithLimits("mapswipe-uat-build-8-xyz", "build", "", "")}
+	// Pod has the container but no limits → value shown, no bar.
+	pods := &fakePodReader{pod: podWithLimits("mapswipe-uat-build-8-xyz", "build", "")}
 	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
-		"build": {CPUMillicores: 350, MemoryBytes: 512 * 1024 * 1024},
+		"build": {MemoryBytes: 512 * 1024 * 1024},
 	}}
 	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
 
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/partial", "mapswipe", "mapswipe-uat")
 	body := rec.Body.String()
-	if !strings.Contains(body, "350m") {
-		t.Errorf("should show CPU usage 350m; body=%s", body)
+	if !strings.Contains(body, "512.0 MiB") {
+		t.Errorf("should show memory usage 512.0 MiB; body=%s", body)
 	}
 	if strings.Contains(body, "bar-fill") {
 		t.Errorf("must NOT render a bar when no limit known; body=%s", body)
@@ -981,7 +1290,7 @@ func TestPartial_IdleAppFetchesNoMetrics(t *testing.T) {
 	dyn := seededDyn(t, completedBuildStatus())
 	pods := &fakePodReader{}
 	metrics := &fakeMetricser{usage: map[string]k8s.ContainerUsage{
-		"build": {CPUMillicores: 1, MemoryBytes: 1},
+		"build": {MemoryBytes: 1},
 	}}
 	srv := New(k8s.NewWithDynamic(dyn), pods, &fakeLokiTailer{}, metrics)
 

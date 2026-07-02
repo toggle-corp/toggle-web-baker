@@ -7,6 +7,7 @@ package view
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,23 @@ type Condition struct {
 
 // IsTrue reports whether the condition status is the string "True".
 func (c Condition) IsTrue() bool { return c.Status == "True" }
+
+// HealthClass maps the condition to its display color class ("true" green,
+// "false" red, "unknown" muted) by HEALTHINESS, not raw status: Degraded is a
+// negative-polarity condition, so Degraded=False is the healthy (green) value
+// and Degraded=True the unhealthy (red) one.
+func (c Condition) HealthClass() string {
+	healthyWhenTrue := c.Type != "Degraded"
+	switch c.Status {
+	case "True", "False":
+		if (c.Status == "True") == healthyWhenTrue {
+			return "true"
+		}
+		return "false"
+	default:
+		return "unknown"
+	}
+}
 
 // Step is one entry of a build's ordered per-step timeline (status.build.steps[]
 // and each buildHistory[].steps[]). Status ∈ Pending|Running|Succeeded|Failed|Aborted.
@@ -126,6 +144,25 @@ func (b Build) TriggerLabel() string {
 	return b.Trigger
 }
 
+// Duration renders the build's wall-clock duration ("34s", "6m12s") from its
+// start/completion timestamps. Empty when either timestamp is missing or
+// unparseable, or when completion precedes start (clock skew).
+func (b Build) Duration() string {
+	start, err := time.Parse(time.RFC3339, b.StartTime)
+	if err != nil {
+		return ""
+	}
+	end, err := time.Parse(time.RFC3339, b.CompletionTime)
+	if err != nil {
+		return ""
+	}
+	d := end.Sub(start)
+	if d < 0 {
+		return ""
+	}
+	return d.Round(time.Second).String()
+}
+
 // Release mirrors status.release.
 type Release struct {
 	Current      string
@@ -203,6 +240,11 @@ type App struct {
 	Namespace string
 	Name      string
 
+	// Group is the optional spec.group label ("" when unset — read defensively;
+	// older resources have no such field). It drives the list page's group
+	// filter chips and the small group text under the app name.
+	Group string
+
 	ObservedGeneration int64
 	Phase              string
 	NodeName           string
@@ -242,32 +284,19 @@ type App struct {
 	BuildMetricsNote string
 }
 
-// BuildMetrics carries the build pod's active-container live usage, populated by
-// the handler. It is nil on the idle path. The Has*Bar fields gate the % bars,
-// which only render when a positive resource limit was resolved from the pod.
+// BuildMetrics carries the build pod's active-container live memory usage,
+// populated by the handler. It is nil on the idle path. HasMemBar gates the %
+// bar, which only renders when a positive memory limit was resolved from the
+// pod. CPU is deliberately not exposed: the console's usage block shows memory
+// only (memory is what OOM-kills builds; CPU is throttled, never fatal).
 type BuildMetrics struct {
 	Container     string
-	CPUMillicores int64
 	MemoryBytes   int64
-	CPUHuman      string // e.g. "1.50 cores" or "350m"
 	MemoryHuman   string // reuse HumanizeBytes
-	CPULimitMilli int64  // 0 = unknown (no bar)
-	MemLimitBytes int64
-	CPUBarPct     int
+	MemLimitBytes int64  // 0 = unknown (no bar)
 	MemBarPct     int
-	CPUOver       bool
 	MemOver       bool
-	HasCPUBar     bool
 	HasMemBar     bool
-}
-
-// HumanizeCPU renders millicores as cores ("1.50 cores") at/above 1000m, else
-// as millicores ("350m"). Pure so the template stays logic-free.
-func HumanizeCPU(milli int64) string {
-	if milli >= 1000 {
-		return fmt.Sprintf("%.2f cores", float64(milli)/1000)
-	}
-	return fmt.Sprintf("%dm", milli)
 }
 
 // Ready / Degraded helpers drive the visual treatment. Ready=True together
@@ -343,6 +372,97 @@ func (a App) HealthLabel() string {
 	}
 }
 
+// HealthShortLabel is the compact list-row variant of HealthLabel: the
+// degraded-serving state shrinks to "Serving last-good" (the full explanation
+// lives in the badge title / detail page); everything else is unchanged. The
+// health badge itself carries the serving-last-good message, so the list needs
+// no extra SERVING LAST-GOOD badge.
+func (a App) HealthShortLabel() string {
+	if a.HealthClass() == "degraded-serving" {
+		return "Serving last-good"
+	}
+	return a.HealthLabel()
+}
+
+// HealthRank orders list rows most-broken-first: degraded, degraded-serving,
+// building, pending, ready. Sorting is stable within a rank.
+func (a App) HealthRank() int {
+	switch a.HealthClass() {
+	case "degraded":
+		return 0
+	case "degraded-serving":
+		return 1
+	case "building":
+		return 2
+	case "pending":
+		return 3
+	default: // ready
+		return 4
+	}
+}
+
+// URLHost is the bare host of the app URL for compact display ("mapswipe.org"
+// for "https://mapswipe.org/x"). It falls back to the raw URL when parsing
+// yields no host, so a malformed status URL still renders something.
+func (a App) URLHost() string {
+	if a.URL == "" {
+		return ""
+	}
+	if u, err := url.Parse(a.URL); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return a.URL
+}
+
+// StorageBadgeLabel is the list-row storage badge text: "STORAGE ALERT" /
+// "STORAGE CRITICAL" when status.storage.thresholdState is Alert / Critical,
+// else "" (no badge). Paired with StorageBadgeClass.
+func (a App) StorageBadgeLabel() string {
+	switch a.Storage.ThresholdState {
+	case "Alert":
+		return "STORAGE ALERT"
+	case "Critical":
+		return "STORAGE CRITICAL"
+	default:
+		return ""
+	}
+}
+
+// StorageBadgeClass is the badge CSS class paired with StorageBadgeLabel:
+// amber (b-stale) for Alert, red (b-degraded) for Critical, "" otherwise.
+func (a App) StorageBadgeClass() string {
+	switch a.Storage.ThresholdState {
+	case "Alert":
+		return "b-stale"
+	case "Critical":
+		return "b-degraded"
+	default:
+		return ""
+	}
+}
+
+// ShowFlow gates the list-row flow strip: only rows with a build in flight or
+// a failed last result need the step detail; healthy rows carry their state in
+// the health badge alone.
+func (a App) ShowFlow() bool {
+	return a.BuildActive() || a.Build.Result == "Failed"
+}
+
+// ServingJobName is the job name of the newest successful history build while
+// the app is Ready — the row the Recent-builds timeline marks "← serving".
+// Empty when the app is not Ready or no successful build is in the history.
+func (a App) ServingJobName() string {
+	if !a.Ready() {
+		return ""
+	}
+	for _, b := range a.BuildHistory {
+		if b.Result == "Succeeded" {
+			return b.JobName
+		}
+	}
+	return ""
+}
+
 // FromUnstructured projects a FrontendApp object into the view model. It never
 // errors: missing or mistyped fields are simply left at their zero value so a
 // half-populated status (mid-reconcile, or an older operator) still renders.
@@ -358,6 +478,11 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 	// still shows its next build time instead of an em-dash.
 	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
 	a.NextScheduledBuildTime = nextScheduled(asString(spec["schedule"]))
+
+	// spec.group is optional and newer than some deployed resources — read it
+	// defensively (missing/mistyped → ""), and before the status guard so a
+	// freshly-created app is already filterable by group.
+	a.Group = asString(spec["group"])
 
 	status, found, _ := unstructured.NestedMap(obj.Object, "status")
 	if !found || status == nil {

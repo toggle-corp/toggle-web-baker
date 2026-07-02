@@ -5,17 +5,19 @@ import "strings"
 // Step display helpers. Icon and CSSClass are paired with AriaLabel so the
 // pipeline flow is conveyed by text too, never emoji/color alone.
 
-// Icon returns the glyph for the step's status. Unknown/Pending → "·".
+// Icon returns the text glyph for the step's status (✓ ● ✕ ◼ ·) — deliberate
+// plain-text glyphs, not emoji, so they inherit the step's colour and weight.
+// Unknown/Pending → "·".
 func (s Step) Icon() string {
 	switch s.Status {
 	case "Succeeded":
-		return "✅"
+		return "✓"
 	case "Running":
-		return "⏳"
+		return "●"
 	case "Failed":
-		return "❌"
+		return "✕"
 	case "Aborted":
-		return "⏹️"
+		return "◼"
 	default: // Pending and anything unrecognised
 		return "·"
 	}

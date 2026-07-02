@@ -1,110 +1,93 @@
 {{define "detail.gohtml"}}
 {{template "head" .Head}}
 {{with .App}}
-<div class="breadcrumb"><a href="/">apps</a> / {{.Namespace}} / <strong>{{.Name}}</strong></div>
 
+{{/* Sticky status bar: identity, health, URL, phase, and the write actions.
+     Rebuild stays primary; the two prunes are danger actions grouped behind an
+     overflow menu. All three are plain POST forms with confirm() — no JS needed
+     to act — and disable while a build or cleanup runs (CleanupBusy). */}}
+<div class="statusbar">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/">apps</a> / <span class="mono">{{.Namespace}}</span> / <strong class="mono">{{.Name}}</strong>
+  </nav>
+  {{template "statusbadge" .}}
+  {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE</span>{{end}}
+  {{if .URL}}<a class="sb-url" href="{{.URL}}" target="_blank" rel="noopener" title="{{.URL}}">{{.URLHost}}&nbsp;↗</a>{{end}}
+  <span class="sb-phase">phase <b>{{dash .Phase}}</b></span>
+  {{if .Group}}<span class="sb-phase">group <b class="mono">{{.Group}}</b></span>{{end}}
+  <span class="sb-spacer"></span>
+  <div class="sb-actions">
+    <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/rebuild"
+          onsubmit="return confirm('Request a manual rebuild of {{.Name}}? This patches the rebuild annotation; the operator decides when to act.');">
+      <button type="submit" class="btn" title="Patches rebuild.baker.toggle-corp.com/requested-at; the operator decides when to act">Request rebuild</button>
+    </form>
+    <details class="overflow">
+      <summary><span class="btn btn-ghost" role="button" tabindex="0">More&nbsp;▾</span></summary>
+      <div class="menu">
+        <div class="hint">Destructive actions — the operator prunes on its next reconcile.</div>
+        <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/cleanup-cache"
+              onsubmit="return confirm('Prune the build cache for {{.Name}}? Regenerable; safe.');">
+          <button type="submit" class="btn btn-danger" {{if .CleanupBusy}}disabled title="busy: a build or cleanup is in progress"{{end}}>Prune cache</button>
+        </form>
+        <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/cleanup-releases"
+              onsubmit="return confirm('Delete OLD releases of {{.Name}}? Keeps the current and previous release. This cannot be undone.');">
+          <button type="submit" class="btn btn-danger" {{if .CleanupBusy}}disabled title="busy: a build or cleanup is in progress"{{end}}>Prune old releases</button>
+        </form>
+      </div>
+    </details>
+    <select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </div>
+</div>
+
+<main>
 {{if not .HasStatus}}
   <div class="banner banner-warn">No status yet — the operator has not reconciled this FrontendApp.</div>
-{{else if and .Ready .Degraded}}
-  <div class="banner banner-degraded">SERVING LAST-GOOD — the latest build failed (Degraded=True) but the previous release is still being served (Ready=True).</div>
-{{else if .Degraded}}
-  <div class="banner banner-degraded">DEGRADED — not serving.</div>
-{{else if .Ready}}
-  <div class="banner banner-ok">Ready.</div>
 {{end}}
-
 {{if $.Requested}}<div class="banner banner-warn">Rebuild requested. The operator will pick it up on its next reconcile.</div>{{end}}
-
 {{if eq $.CleanupRequested "cache"}}<div class="banner banner-warn">Cache cleanup requested. The operator will pick it up on its next reconcile.</div>{{end}}
 {{if eq $.CleanupRequested "releases"}}<div class="banner banner-warn">Release cleanup requested. The operator will pick it up on its next reconcile.</div>{{end}}
 
-<p>
-  {{template "statusbadge" .}}
-  {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE — current spec not yet deployed</span>{{end}}
-  {{if .URL}}&nbsp;<a href="{{.URL}}" target="_blank" rel="noopener">{{.URL}}</a>{{end}}
-</p>
+<div class="cockpit">
 
-<div class="grid">
-
-  <div class="card">
-    <h2>Overview</h2>
-    <div class="body">
-      <div class="kv"><span class="k">Phase</span><span class="v">{{dash .Phase}}</span></div>
-      <div class="kv"><span class="k">Observed generation</span><span class="v">{{.ObservedGeneration}}</span></div>
-      <div class="kv"><span class="k">Node</span><span class="v">{{dash .NodeName}}</span></div>
-      <div class="kv"><span class="k">Last built spec hash</span><span class="v"><code>{{dash .LastBuiltSpecHash}}</code></span></div>
+  {{/* LEFT: pollable live region (build flow, recent builds, conditions,
+       schedule, release, storage) + static internals disclosure. The poller
+       swaps #live-region's innerHTML against /partial; data-active marks the
+       fast cadence while a build runs. */}}
+  <div class="col-left">
+    <div id="live-region"
+         data-partial="/ns/{{.Namespace}}/app/{{.Name}}/partial"
+         data-logs="/ns/{{.Namespace}}/app/{{.Name}}/logs"
+         {{if .BuildActive}}data-active="1"{{end}}>
+      {{template "liveregion" .}}
     </div>
-  </div>
 
-  <div class="card">
-    <h2>Conditions</h2>
-    <div class="body">
-      {{range .Conditions}}
-        <div class="kv">
-          <span class="k">{{.Type}}</span>
-          <span class="v b-{{if eq .Status "True"}}true{{else if eq .Status "False"}}false{{else}}unknown{{end}}"
-                title="{{.Reason}}: {{.Message}}">{{.Status}}</span>
-        </div>
-        {{if .Message}}<div class="small muted" style="padding:0 0 6px">{{.Message}}</div>{{end}}
-      {{else}}<div class="muted">No conditions reported.</div>{{end}}
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Schedule</h2>
-    <div class="body">
-      <div class="kv"><span class="k">Last build</span><span class="v">{{timetag .LastBuildTime}}</span></div>
-      <div class="kv"><span class="k">Last successful</span><span class="v">{{timetag .LastSuccessfulBuild}}</span></div>
-      <div class="kv"><span class="k">Next scheduled</span><span class="v">{{timetagFull .NextScheduledBuildTime}}</span></div>
-      <div class="kv"><span class="k">Last processed rebuild</span><span class="v">{{timetag .LastProcessedRebuild}}</span></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Release</h2>
-    <div class="body">
-      <div class="kv"><span class="k">Current</span><span class="v">{{dash .Release.Current}}</span></div>
-      <div class="kv"><span class="k">Previous</span><span class="v">{{dash .Release.Previous}}</span></div>
-      <div class="kv"><span class="k">Serving since</span><span class="v">{{timetag .Release.ServingSince}}</span></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Manual rebuild</h2>
-    <div class="body">
-      <div class="kv"><span class="k">Last triggered by</span><span class="v">{{dash .ManualTrigger.TriggeredBy}}</span></div>
-      <div class="kv"><span class="k">Last triggered at</span><span class="v">{{timetag .ManualTrigger.Time}}</span></div>
-      <div style="padding-top:12px">
-        <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/rebuild"
-              onsubmit="return confirm('Request a manual rebuild of {{.Name}}? This patches the rebuild annotation; the operator decides when to act.');">
-          <button type="submit">Request rebuild</button>
-        </form>
-        <p class="small muted" style="margin-top:8px">Patches
-          <code>rebuild.baker.toggle-corp.com/requested-at</code> and
-          <code>/by</code>. Read-only otherwise — no jobs/pods are created by the console.</p>
+    <details class="internals">
+      <summary>Internals</summary>
+      <div class="body">
+        <div class="kv"><span class="k">Observed generation</span><span class="v">{{.ObservedGeneration}}</span></div>
+        <div class="kv"><span class="k">Node</span><span class="v">{{dash .NodeName}}</span></div>
+        <div class="kv"><span class="k">Last built spec hash</span><span class="v"><code>{{dash .LastBuiltSpecHash}}</code></span></div>
+        <div class="kv"><span class="k">Current job</span><span class="v">{{dash .Build.JobName}}</span></div>
+        <div class="kv"><span class="k">Pod</span><span class="v">{{dash .Build.PodName}}</span></div>
+        <div class="kv"><span class="k">Manual trigger · by</span><span class="v">{{dash .ManualTrigger.TriggeredBy}}</span></div>
+        <div class="kv"><span class="k">Manual trigger · at</span><span class="v">{{timetag .ManualTrigger.Time}}</span></div>
+        <p class="small muted" style="margin:8px 0 0">Rebuild patches
+          <code>rebuild.baker.toggle-corp.com/requested-at</code> and <code>/by</code>.
+          The console is read-only otherwise — no jobs or pods are created here.</p>
       </div>
-    </div>
+    </details>
   </div>
 
-</div>
-
-{{/* Pollable live region: build flow, recent builds, storage. Refreshed by JS
-     against /ns/.../partial. data-active marks fast-poll while a build runs. */}}
-<div id="live-region"
-     data-partial="/ns/{{.Namespace}}/app/{{.Name}}/partial"
-     data-logs="/ns/{{.Namespace}}/app/{{.Name}}/logs"
-     {{if .BuildActive}}data-active="1"{{end}}>
-  {{template "liveregion" .}}
-</div>
-
-<div class="card" style="margin-top:16px">
-  <h2>Build logs</h2>
-  <div class="body">
+  {{/* RIGHT: docked log pane, sticky under the status bar. The fragment
+       (logpane.gohtml) is fetched into #logpane and swapped on every load. */}}
+  <section class="card logdock col-right" aria-label="Build logs">
     <div id="logpane" data-current-build="{{.Build.JobName}}">
       <p class="small muted logpane-empty">Loading logs…</p>
     </div>
-  </div>
+  </section>
+
 </div>
+</main>
 {{end}}
 
 <script>
@@ -149,7 +132,9 @@
   }
 
   // --- Log pane: preserve selected container + scroll across refreshes. ---
-  function curContainer(){var s=logpane.querySelector('[data-log-container]');return s?s.value:'';}
+  // The container picker is a row of badge buttons; the selected one carries
+  // .selected (server-rendered on each fragment, toggled locally on click).
+  function curContainer(){var s=logpane.querySelector('[data-log-container].selected');return s?s.value:'';}
   // pinDisplayedBuild freezes the manual view on the build currently rendered in
   // the pane (its data-build), so leaving follow mode keeps showing that build.
   function pinDisplayedBuild(){
@@ -185,21 +170,30 @@
   }
   // Event delegation survives the innerHTML swaps of the fragment.
   if(logpane){
-    logpane.addEventListener('change',function(e){
-      if(!e.target){return;}
-      // Picking a container switches to manual and pins the displayed build.
-      if(e.target.matches('[data-log-container]')){
-        follow=false;
-        pinDisplayedBuild();
-        loadLogs();
-      }else if(e.target.matches('[data-follow-toggle]')){
-        follow=e.target.checked;
-        // Turning follow OFF must pin the build currently shown, else manual
-        // loadLogs falls back to the stale page-load build and shows old logs.
-        // Turning it ON snaps back to the live build, so drop the history pin.
-        if(!follow){pinDisplayedBuild();}else{selectedJob='';markSelectedRow();}
-        loadLogs();
+    // Clicking a container badge switches to manual and pins the displayed
+    // build. Toggle the selected state locally first so curContainer() sees the
+    // choice; the next fragment re-renders it server-side from ?container=.
+    logpane.addEventListener('click',function(e){
+      var btn=e.target&&e.target.closest?e.target.closest('[data-log-container]'):null;
+      if(!btn){return;}
+      var all=logpane.querySelectorAll('[data-log-container]');
+      for(var i=0;i<all.length;i++){
+        var on=(all[i]===btn);
+        all[i].classList.toggle('selected',on);
+        all[i].setAttribute('aria-pressed',on?'true':'false');
       }
+      follow=false;
+      pinDisplayedBuild();
+      loadLogs();
+    });
+    logpane.addEventListener('change',function(e){
+      if(!e.target||!e.target.matches||!e.target.matches('[data-follow-toggle]')){return;}
+      follow=e.target.checked;
+      // Turning follow OFF must pin the build currently shown, else manual
+      // loadLogs falls back to the stale page-load build and shows old logs.
+      // Turning it ON snaps back to the live build, so drop the history pin.
+      if(!follow){pinDisplayedBuild();}else{selectedJob='';markSelectedRow();}
+      loadLogs();
     });
   }
 
@@ -234,6 +228,13 @@
   loadLogs();
   setTimeout(pollRegion, active()?3000:20000);
   setTimeout(pollLogs, active()?3000:60000);
+
+  // Close the destructive-actions overflow menu on outside click / Escape.
+  var ov=document.querySelector('details.overflow');
+  if(ov){
+    document.addEventListener('click',function(e){if(ov.open&&!ov.contains(e.target)){ov.open=false;}});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'){ov.open=false;}});
+  }
 })();
 </script>
 {{template "foot"}}

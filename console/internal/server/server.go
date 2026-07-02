@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"time"
 
@@ -94,13 +95,188 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadGateway, "Could not list FrontendApps", err)
 		return
 	}
-	sort.SliceStable(apps, func(i, j int) bool {
-		if apps[i].Namespace != apps[j].Namespace {
-			return apps[i].Namespace < apps[j].Namespace
+
+	// Server-side filters (plain query params — no client-side JS). Facet
+	// counts and group chips are computed from the UNFILTERED set so the chips
+	// never vanish while a filter is active; the two params compose.
+	status := r.URL.Query().Get("status")
+	if !validHealthClass(status) {
+		status = ""
+	}
+	group := r.URL.Query().Get("group")
+
+	facets := statusFacets(apps, status, group)
+	chips := groupChips(apps, status, group)
+	filtered := filterApps(apps, status, group)
+
+	// Most-broken-first: degraded, degraded-serving, building, pending, ready;
+	// stable namespace/name order within a rank.
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if ri, rj := filtered[i].HealthRank(), filtered[j].HealthRank(); ri != rj {
+			return ri < rj
 		}
-		return apps[i].Name < apps[j].Name
+		if filtered[i].Namespace != filtered[j].Namespace {
+			return filtered[i].Namespace < filtered[j].Namespace
+		}
+		return filtered[i].Name < filtered[j].Name
 	})
-	render(w, "list", listData{Head: head{Title: "Apps", User: userFrom(r)}, Apps: apps})
+
+	render(w, "list", listData{
+		Head:         head{Title: "Apps", User: userFrom(r)},
+		Apps:         filtered,
+		Total:        len(apps),
+		StatusFacets: facets,
+		GroupChips:   chips,
+	})
+}
+
+// healthClasses is the fixed facet order (after "all"). Values are the
+// view.App.HealthClass() strings.
+var healthClasses = []string{"ready", "building", "degraded", "degraded-serving", "pending"}
+
+func validHealthClass(s string) bool {
+	for _, hc := range healthClasses {
+		if s == hc {
+			return true
+		}
+	}
+	return false
+}
+
+// facetLabel is the chip text for a health class; degraded-serving reads as
+// its human name.
+func facetLabel(hc string) string {
+	if hc == "degraded-serving" {
+		return "serving last-good"
+	}
+	return hc
+}
+
+// ungroupedParam is the ?group= sentinel selecting apps WITHOUT a spec.group.
+// A real group literally named "ungrouped" would be shadowed by it — accepted;
+// the chip row simply filters the group-less apps.
+const ungroupedParam = "ungrouped"
+
+// listURL builds a list link composing the two filter params. Empty values are
+// omitted so the "all" chips link to a clean URL.
+func listURL(status, group string) string {
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if group != "" {
+		q.Set("group", group)
+	}
+	if len(q) == 0 {
+		return "/"
+	}
+	return "/?" + q.Encode()
+}
+
+// statusFacet is one status filter chip: "ready (4)" linking to /?status=ready
+// (composed with the active group).
+type statusFacet struct {
+	Value  string // health class; "" = all
+	Label  string
+	Count  int
+	Active bool
+	URL    string
+}
+
+// statusFacets computes the fixed-order status chips with counts from the
+// UNFILTERED app set.
+func statusFacets(apps []view.App, activeStatus, group string) []statusFacet {
+	counts := map[string]int{}
+	for _, a := range apps {
+		counts[a.HealthClass()]++
+	}
+	facets := []statusFacet{{
+		Label:  "all",
+		Count:  len(apps),
+		Active: activeStatus == "",
+		URL:    listURL("", group),
+	}}
+	for _, hc := range healthClasses {
+		facets = append(facets, statusFacet{
+			Value:  hc,
+			Label:  facetLabel(hc),
+			Count:  counts[hc],
+			Active: activeStatus == hc,
+			URL:    listURL(hc, group),
+		})
+	}
+	return facets
+}
+
+// groupChip is one group filter chip linking to /?group=<g> (composed with the
+// active status).
+type groupChip struct {
+	Value  string // group name, ungroupedParam, or "" = all
+	Label  string
+	Active bool
+	URL    string
+}
+
+// groupChips builds the group chip row: "all", one chip per distinct
+// spec.group, and "ungrouped" when group-less apps exist. When NO app carries
+// a group the row is omitted entirely (nil) — a lone "all·ungrouped" pair
+// would be noise.
+func groupChips(apps []view.App, status, activeGroup string) []groupChip {
+	set := map[string]bool{}
+	hasUngrouped := false
+	for _, a := range apps {
+		if a.Group == "" {
+			hasUngrouped = true
+		} else {
+			set[a.Group] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	groups := make([]string, 0, len(set))
+	for g := range set {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+
+	chips := []groupChip{{Label: "all", Active: activeGroup == "", URL: listURL(status, "")}}
+	for _, g := range groups {
+		chips = append(chips, groupChip{Value: g, Label: g, Active: activeGroup == g, URL: listURL(status, g)})
+	}
+	if hasUngrouped {
+		chips = append(chips, groupChip{
+			Value:  ungroupedParam,
+			Label:  "ungrouped",
+			Active: activeGroup == ungroupedParam,
+			URL:    listURL(status, ungroupedParam),
+		})
+	}
+	return chips
+}
+
+// filterApps applies the composed status + group filters.
+func filterApps(apps []view.App, status, group string) []view.App {
+	out := make([]view.App, 0, len(apps))
+	for _, a := range apps {
+		if status != "" && a.HealthClass() != status {
+			continue
+		}
+		switch group {
+		case "":
+			// no group filter
+		case ungroupedParam:
+			if a.Group != "" {
+				continue
+			}
+		default:
+			if a.Group != group {
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +290,9 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	app := view.FromUnstructured(obj)
 	s.attachBuildMetrics(r.Context(), ns, &app)
 	render(w, "detail", detailData{
-		Head:             head{Title: name, User: userFrom(r)},
+		// Bare: the detail page has no standard header — its sticky status bar
+		// carries the breadcrumb, actions, and theme select instead.
+		Head:             head{Title: name, User: userFrom(r), Bare: true},
 		App:              app,
 		Requested:        r.URL.Query().Get("rebuild") == "requested",
 		CleanupRequested: r.URL.Query().Get("cleanup"),
@@ -170,21 +348,15 @@ func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.Ap
 	}
 
 	bm := &view.BuildMetrics{
-		Container:     container,
-		CPUMillicores: usage.CPUMillicores,
-		MemoryBytes:   usage.MemoryBytes,
-		CPUHuman:      view.HumanizeCPU(usage.CPUMillicores),
-		MemoryHuman:   view.HumanizeBytes(usage.MemoryBytes),
+		Container:   container,
+		MemoryBytes: usage.MemoryBytes,
+		MemoryHuman: view.HumanizeBytes(usage.MemoryBytes),
 	}
 
-	// Resolve the active container's resource limits from the pod so the % bars
-	// have something to draw against. A missing limit simply yields no bar.
-	cpuLim, memLim := containerLimits(pod, container)
-	bm.CPULimitMilli = cpuLim
+	// Resolve the active container's memory limit from the pod so the % bar has
+	// something to draw against. A missing limit simply yields no bar.
+	memLim := containerMemLimit(pod, container)
 	bm.MemLimitBytes = memLim
-	if pct, over := view.StorageBar(usage.CPUMillicores, cpuLim); pct != view.StorageBarNoBar {
-		bm.HasCPUBar, bm.CPUBarPct, bm.CPUOver = true, pct, over
-	}
 	if pct, over := view.StorageBar(usage.MemoryBytes, memLim); pct != view.StorageBarNoBar {
 		bm.HasMemBar, bm.MemBarPct, bm.MemOver = true, pct, over
 	}
@@ -192,13 +364,13 @@ func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.Ap
 	app.BuildMetrics = bm
 }
 
-// containerLimits returns the named container's cpu (millicores) and memory
-// (bytes) limits from a pod, or (0,0) when the container or limits are absent.
-// Both container lists are searched: every build step runs as an initContainer
-// (only the copier is an app container), and the active step is usually init.
-func containerLimits(pod *corev1.Pod, container string) (cpuMilli, memBytes int64) {
+// containerMemLimit returns the named container's memory limit in bytes from a
+// pod, or 0 when the container or limit is absent. Both container lists are
+// searched: every build step runs as an initContainer (only the copier is an
+// app container), and the active step is usually init.
+func containerMemLimit(pod *corev1.Pod, container string) int64 {
 	if pod == nil {
-		return 0, 0
+		return 0
 	}
 	for _, list := range [][]corev1.Container{pod.Spec.InitContainers, pod.Spec.Containers} {
 		for i := range list {
@@ -206,21 +378,18 @@ func containerLimits(pod *corev1.Pod, container string) (cpuMilli, memBytes int6
 			if c.Name != container {
 				continue
 			}
-			if cpu, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
-				cpuMilli = cpu.MilliValue()
-			}
 			if mem, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
-				memBytes = mem.Value()
+				return mem.Value()
 			}
-			return cpuMilli, memBytes
+			return 0
 		}
 	}
-	return 0, 0
+	return 0
 }
 
 // handleLogs returns the log pane fragment for one build. It resolves the log
 // source (live pod / Loki / retained pod / unavailable) and renders the
-// container <select>, a one-line source note, and the lines (or a note).
+// container badge buttons, a one-line source note, and the lines (or a note).
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")

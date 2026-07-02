@@ -8,9 +8,10 @@ import (
 )
 
 // ContainerUsage is one container's live resource usage, in normalized units.
+// Only memory is carried: the console's usage block dropped CPU (memory is
+// what OOM-kills builds; CPU is throttled, never fatal).
 type ContainerUsage struct {
-	CPUMillicores int64
-	MemoryBytes   int64
+	MemoryBytes int64
 }
 
 // PodMetricser returns per-container live usage for one pod, keyed by container
@@ -53,7 +54,8 @@ func (c *Client) PodMetrics(ctx context.Context, node, namespace, pod string) (m
 
 // statsSummary mirrors the kubelet summary API response — only the fields the
 // console projects. Decoded from JSON rather than importing the k8s.io/kubelet
-// stats types, keeping this module free of another k8s dependency.
+// stats types, keeping this module free of another k8s dependency. CPU samples
+// are deliberately not decoded: the console's usage block is memory-only.
 type statsSummary struct {
 	Pods []struct {
 		PodRef struct {
@@ -61,10 +63,7 @@ type statsSummary struct {
 			Namespace string `json:"namespace"`
 		} `json:"podRef"`
 		Containers []struct {
-			Name string `json:"name"`
-			CPU  struct {
-				UsageNanoCores *uint64 `json:"usageNanoCores"`
-			} `json:"cpu"`
+			Name   string `json:"name"`
 			Memory struct {
 				WorkingSetBytes *uint64 `json:"workingSetBytes"`
 			} `json:"memory"`
@@ -73,8 +72,8 @@ type statsSummary struct {
 }
 
 // projectPodUsage picks one pod out of a kubelet stats summary and normalizes
-// its containers' usage to millicores/bytes. Defensive: absent/null sample
-// fields read as 0. Split from the fetch so tests cover it with canned JSON.
+// its containers' memory usage to bytes. Defensive: absent/null sample fields
+// read as 0. Split from the fetch so tests cover it with canned JSON.
 func projectPodUsage(raw []byte, namespace, pod string) (map[string]ContainerUsage, error) {
 	var sum statsSummary
 	if err := json.Unmarshal(raw, &sum); err != nil {
@@ -90,9 +89,6 @@ func projectPodUsage(raw []byte, namespace, pod string) (map[string]ContainerUsa
 				continue
 			}
 			u := ContainerUsage{}
-			if ctr.CPU.UsageNanoCores != nil {
-				u.CPUMillicores = clampInt64(*ctr.CPU.UsageNanoCores / 1_000_000)
-			}
 			if ctr.Memory.WorkingSetBytes != nil {
 				u.MemoryBytes = clampInt64(*ctr.Memory.WorkingSetBytes)
 			}

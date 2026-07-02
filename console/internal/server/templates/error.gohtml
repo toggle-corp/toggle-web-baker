@@ -1,7 +1,9 @@
 {{define "error.gohtml"}}
 {{template "head" (mkhead "Error")}}
+<main>
 <div class="banner banner-degraded">{{.Code}} — {{.Message}}</div>
 <p class="muted small"><code>{{.Detail}}</code></p>
 <p><a href="/">← back to apps</a></p>
+</main>
 {{template "foot"}}
 {{end}}

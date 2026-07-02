@@ -7,10 +7,10 @@ func TestStepIcon(t *testing.T) {
 		status string
 		want   string
 	}{
-		{"Succeeded", "✅"},
-		{"Running", "⏳"},
-		{"Failed", "❌"},
-		{"Aborted", "⏹️"},
+		{"Succeeded", "✓"},
+		{"Running", "●"},
+		{"Failed", "✕"},
+		{"Aborted", "◼"},
 		{"Pending", "·"},
 		{"", "·"},
 		{"weird", "·"},
