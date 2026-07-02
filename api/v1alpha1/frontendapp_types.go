@@ -666,9 +666,12 @@ type FrontendAppStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=fapp
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Result",type=string,JSONPath=`.status.build.result`
 // +kubebuilder:printcolumn:name="URL",type=string,JSONPath=`.status.url`
 // +kubebuilder:printcolumn:name="Stale",type=boolean,JSONPath=`.status.specStale`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="Storage",type=string,JSONPath=`.status.storage.thresholdState`,priority=1
+// +kubebuilder:printcolumn:name="Last-Success",type=date,JSONPath=`.status.lastSuccessfulBuildTime`,priority=1
 
 // FrontendApp is the Schema for the frontendapps API.
 type FrontendApp struct {
