@@ -518,8 +518,15 @@ func TestBuildJob_BuildOutputDirFlowsToCopier(t *testing.T) {
 	assertEnvVar(t, copier, "OUTPUT_DIR", "out")
 }
 
+// shimmed is the expected on-pod command for a phase: the peak-memory shim
+// prefix, then the user command verbatim (the shim execs it unchanged).
+func shimmed(cmd ...string) []string {
+	return append([]string{"/baker/shim", "--"}, cmd...)
+}
+
 // Bug fix: optional phases (setup/fetch) with no command no-op via ["true"]
-// instead of falling through to the base image's clone entrypoint.
+// instead of falling through to the base image's clone entrypoint. The no-op,
+// like every user phase command, runs behind the peak-memory shim.
 func TestBuildJob_OptionalPhasesNoOpWhenUnset(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
@@ -529,13 +536,14 @@ func TestBuildJob_OptionalPhasesNoOpWhenUnset(t *testing.T) {
 		if c == nil {
 			t.Fatalf("no %s container", name)
 		}
-		if len(c.Command) != 1 || c.Command[0] != "true" {
-			t.Fatalf("%s command must be [\"true\"] when unset, got %v", name, c.Command)
+		if !slices.Equal(c.Command, shimmed("true")) {
+			t.Fatalf("%s command must be the shimmed no-op %v when unset, got %v", name, shimmed("true"), c.Command)
 		}
 	}
 }
 
-// When setup/fetch DO specify a command, it is preserved (not replaced by no-op).
+// When setup/fetch DO specify a command, it is preserved verbatim after the
+// shim prefix (the shim execs it with identical argv).
 func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Setup.Command = []string{"sh", "-c", "yarn install"}
@@ -543,27 +551,70 @@ func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
-	if !slices.Equal(setup.Command, app.Spec.Pipeline.Phases.Setup.Command) {
-		t.Fatalf("setup command not preserved: got %v", setup.Command)
+	if !slices.Equal(setup.Command, shimmed(app.Spec.Pipeline.Phases.Setup.Command...)) {
+		t.Fatalf("setup command not preserved behind the shim: got %v", setup.Command)
 	}
 	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
-	if !slices.Equal(fetch.Command, app.Spec.Pipeline.Phases.Fetch.Command) {
-		t.Fatalf("fetch command not preserved: got %v", fetch.Command)
+	if !slices.Equal(fetch.Command, shimmed(app.Spec.Pipeline.Phases.Fetch.Command...)) {
+		t.Fatalf("fetch command not preserved behind the shim: got %v", fetch.Command)
 	}
 }
 
-// Build is mandatory: its command must be passed through as-is, never no-oped.
+// Build is mandatory: its command must be passed through verbatim behind the
+// shim, never no-oped.
 func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.Command = []string{"sh", "-c", "yarn build"}
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok")
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
-	if !slices.Equal(build.Command, app.Spec.Pipeline.Phases.Build.Command) {
-		t.Fatalf("build command must equal spec build command, got %v", build.Command)
+	if !slices.Equal(build.Command, shimmed(app.Spec.Pipeline.Phases.Build.Command...)) {
+		t.Fatalf("build command must be the shimmed spec build command, got %v", build.Command)
 	}
-	if len(build.Command) == 1 && build.Command[0] == "true" {
+	if slices.Contains(build.Command, "true") {
 		t.Fatalf("build command must NOT be no-oped to [\"true\"]")
+	}
+}
+
+// The shim-install init container runs FIRST (so the binary exists before any
+// user phase) and user phases mount the shim volume read-only.
+func TestBuildJob_ShimInstallFirstAndMountsReadOnly(t *testing.T) {
+	app := baseApp()
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok")
+	inits := job.Spec.Template.Spec.InitContainers
+	if len(inits) == 0 || inits[0].Name != "shim-install" {
+		names := make([]string, 0, len(inits))
+		for _, c := range inits {
+			names = append(names, c.Name)
+		}
+		t.Fatalf("shim-install must be the FIRST init container, got order %v", names)
+	}
+	for _, name := range []string{"setup", "fetch", "build"} {
+		c := containerByName(inits, name)
+		found := false
+		for _, m := range c.VolumeMounts {
+			if m.Name == "shim" {
+				found = true
+				if !m.ReadOnly {
+					t.Errorf("%s shim mount must be read-only", name)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s must mount the shim volume", name)
+		}
+	}
+	// clone and copier are platform entrypoints: no shim mount, no wrapping.
+	for _, c := range []*corev1.Container{
+		containerByName(inits, "clone"),
+		containerByName(job.Spec.Template.Spec.Containers, "copier"),
+	} {
+		for _, m := range c.VolumeMounts {
+			if m.Name == "shim" {
+				t.Errorf("%s must NOT mount the shim volume", c.Name)
+			}
+		}
 	}
 }
 

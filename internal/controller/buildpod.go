@@ -25,6 +25,13 @@ const (
 	volData   = "data"
 	volOutput = "output"
 	volTmp    = "tmp"
+	volShim   = "shim"
+
+	// shimMountPath is where the peak-memory wrapper binary lands (a tiny
+	// emptyDir shared from the shim-install init container into every user
+	// phase, mounted read-only there).
+	shimMountPath = "/baker"
+	shimBinary    = shimMountPath + "/shim"
 )
 
 // hardenedSecurityContext is the per-container securityContext baked onto every
@@ -106,6 +113,15 @@ func commandOrNoop(cmd []string) []string {
 		return []string{"true"}
 	}
 	return cmd
+}
+
+// shimWrap prefixes a phase command with the peak-memory shim: the shim execs
+// the command verbatim (argv/env/cwd/uid unchanged, signals forwarded), then
+// appends the container cgroup's memory.peak to the termination log so the
+// operator can record the phase's TRUE peak memory (sampling can never observe
+// a maximum). See images/shim.
+func shimWrap(cmd []string) []string {
+	return append([]string{shimBinary, "--"}, cmd...)
 }
 
 // toEnvVars converts public spec EnvVars to corev1.EnvVar. secretKeyRef is
@@ -210,12 +226,30 @@ func pkgManagerEnv(app *bakerv1alpha1.FrontendApp) []corev1.EnvVar {
 }
 
 // BuildJob is the SINGLE SOURCE OF TRUTH for the build pod. initContainers are
-// [clone, setup, fetch, build]; the MAIN container is the copier. The build
-// container NEVER mounts the output PVC; secrets go ONLY to fetch.
+// [shim-install, clone, setup, fetch, build]; the MAIN container is the copier.
+// The build container NEVER mounts the output PVC; secrets go ONLY to fetch.
+// User phases (setup/fetch/build) are wrapped by the peak-memory shim; clone
+// and copier are platform entrypoints and stay unwrapped.
 func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token string) *batchv1.Job {
 	volumes, cacheMount := buildVolumesAndMounts(app)
 	base := commonMounts()
 	pmEnv := pkgManagerEnv(app)
+
+	// shim-install: places the static wrapper binary on the shim emptyDir
+	// BEFORE any user phase runs (init containers are ordered). scratch image;
+	// the binary self-copies (`shim install`).
+	volumes = append(volumes, corev1.Volume{Name: volShim, VolumeSource: corev1.VolumeSource{
+		EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(16*1024*1024, resource.BinarySI)},
+	}})
+	shimInstall := corev1.Container{
+		Name:            "shim-install",
+		Image:           r.Config.Images.Shim,
+		Command:         []string{"/shim", "install", shimBinary},
+		VolumeMounts:    []corev1.VolumeMount{{Name: volShim, MountPath: shimMountPath}},
+		SecurityContext: hardenedSecurityContext(),
+	}
+	// User phases mount the binary read-only.
+	shimMount := corev1.VolumeMount{Name: volShim, MountPath: shimMountPath, ReadOnly: true}
 
 	// clone: platform image, no caches needed beyond work. SUBMODULES is set
 	// ONLY when the app opts in; the entrypoint defaults to no submodule
@@ -243,11 +277,11 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	buildR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Build.PhaseSpec)
 
 	// setup: install deps. Mounts cache (RW for pnpm store / yarn cache).
-	setupMounts := append(append([]corev1.VolumeMount{}, base...), cacheMount)
+	setupMounts := append(append([]corev1.VolumeMount{}, base...), cacheMount, shimMount)
 	setup := corev1.Container{
 		Name:            "setup",
 		Image:           setupR.Image,
-		Command:         commandOrNoop(app.Spec.Pipeline.Phases.Setup.Command),
+		Command:         shimWrap(commandOrNoop(app.Spec.Pipeline.Phases.Setup.Command)),
 		WorkingDir:      workMountPath,
 		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Pipeline.Phases.Setup.Env)...)),
 		VolumeMounts:    setupMounts,
@@ -259,11 +293,11 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	fetchEnv := append([]corev1.EnvVar{}, toEnvVars(app.Spec.Pipeline.Phases.Fetch.Env)...)
 	fetchEnv = append(fetchEnv, toSecretEnvVars(app.Spec.Pipeline.Phases.Fetch.Secrets)...)
 	fetchMounts := append(append([]corev1.VolumeMount{}, base...),
-		corev1.VolumeMount{Name: volData, MountPath: dataMountPath})
+		corev1.VolumeMount{Name: volData, MountPath: dataMountPath}, shimMount)
 	fetch := corev1.Container{
 		Name:            "fetch",
 		Image:           fetchR.Image,
-		Command:         commandOrNoop(app.Spec.Pipeline.Phases.Fetch.Command),
+		Command:         shimWrap(commandOrNoop(app.Spec.Pipeline.Phases.Fetch.Command)),
 		WorkingDir:      workMountPath,
 		Env:             withHome(fetchR, fetchEnv),
 		VolumeMounts:    fetchMounts,
@@ -277,11 +311,12 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	buildEnv = append(buildEnv, toEnvVars(app.Spec.Pipeline.Phases.Build.Env)...)
 	buildMounts := append(append([]corev1.VolumeMount{}, base...),
 		cacheMount,
-		corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true})
+		corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true},
+		shimMount)
 	build := corev1.Container{
 		Name:            "build",
 		Image:           buildR.Image,
-		Command:         app.Spec.Pipeline.Phases.Build.Command,
+		Command:         shimWrap(app.Spec.Pipeline.Phases.Build.Command),
 		WorkingDir:      workMountPath,
 		Env:             withHome(buildR, buildEnv),
 		VolumeMounts:    buildMounts,
@@ -323,7 +358,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 			RunAsNonRoot:   ptr.To(true),
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
-		InitContainers: []corev1.Container{clone, setup, fetch, build},
+		InitContainers: []corev1.Container{shimInstall, clone, setup, fetch, build},
 		Containers:     []corev1.Container{copier},
 		Volumes:        volumes,
 	}

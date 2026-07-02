@@ -457,6 +457,15 @@ type BuildStep struct {
 	Status StepStatus `json:"status"`
 	// +optional
 	Message string `json:"message,omitempty"`
+	// PeakMemoryBytes is the phase's TRUE peak memory: the kernel-tracked
+	// cgroup high-water mark (memory.peak — the max of memory.current, the
+	// value the OOM killer compares against the limit), recorded by the shim
+	// wrapper via the container termination message when the step ends. It is
+	// the number to tune spec.pipeline.phases.<p>.memoryLimit against. 0/absent
+	// when unmeasured (shim-less steps like clone/copier, pod reaped before
+	// terminal observe, or no cgroup v2 peak available).
+	// +optional
+	PeakMemoryBytes int64 `json:"peakMemoryBytes,omitempty"`
 }
 
 // BuildTrigger records why a build ran, for the history list.
@@ -508,13 +517,13 @@ type BuildStatus struct {
 	// +optional
 	// +listType=atomic
 	Steps []BuildStep `json:"steps,omitempty"`
-	// ResolvedImages maps each pipeline container (clone/setup/fetch/build/
-	// copier) to the exact image reference the build Job was created with —
-	// digest-pinned for operator-managed toolchains. Captured at Job CREATION
-	// (like SpecHashAnnotation) so it records the build that actually ran, not
-	// a later operator-config change. Bounded by the fixed pipeline shape:
-	// 5 containers today (clone/setup/fetch/build/copier), 8 leaves headroom
-	// for new pipeline steps without an API bump.
+	// ResolvedImages maps each pipeline container (shim-install/clone/setup/
+	// fetch/build/copier) to the exact image reference the build Job was
+	// created with — digest-pinned for operator-managed toolchains. Captured at
+	// Job CREATION (like SpecHashAnnotation) so it records the build that
+	// actually ran, not a later operator-config change. Bounded by the fixed
+	// pipeline shape: 6 containers today (shim-install/clone/setup/fetch/build/
+	// copier), 8 leaves headroom for new pipeline steps without an API bump.
 	// +optional
 	// +kubebuilder:validation:MaxProperties=8
 	ResolvedImages map[string]string `json:"resolvedImages,omitempty"`

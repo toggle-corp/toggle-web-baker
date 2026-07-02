@@ -46,6 +46,11 @@ type Step struct {
 	Name    string
 	Status  string
 	Message string
+	// PeakMemory is the humanized true peak memory of the phase (from
+	// status peakMemoryBytes, the shim-recorded cgroup high-water mark).
+	// Empty when unmeasured — shim-less steps (clone/copier/release) or a
+	// still-running phase.
+	PeakMemory string
 }
 
 // Build mirrors status.build and each element of status.buildHistory[] (same shape).
@@ -461,11 +466,15 @@ func stepsFrom(v any) []Step {
 		if !ok {
 			continue
 		}
-		out = append(out, Step{
+		st := Step{
 			Name:    asString(m["name"]),
 			Status:  asString(m["status"]),
 			Message: asString(m["message"]),
-		})
+		}
+		if b := asInt(m["peakMemoryBytes"]); b > 0 {
+			st.PeakMemory = HumanizeBytes(b)
+		}
+		out = append(out, st)
 	}
 	return out
 }

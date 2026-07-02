@@ -30,6 +30,7 @@ data:
       du: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.du "root" $) | quote }}
       cleanup: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.cleanup "root" $) | quote }}
       clock: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clock "root" $) | quote }}
+      shim: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.shim "root" $) | quote }}
       nginx: {{ .Values.platformImages.nginx | quote }}
     nodeImages: {{ include "toggle-web-baker.nodeImagesJSON" $ }}
     phaseResources:

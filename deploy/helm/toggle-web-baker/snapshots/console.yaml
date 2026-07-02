@@ -60,6 +60,7 @@ data:
       du: "ghcr.io/toggle-corp/toggle-web-baker-du:0.0.0"
       cleanup: "ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.0.0"
       clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.0.0"
+      shim: "ghcr.io/toggle-corp/toggle-web-baker-shim:0.0.0"
       nginx: "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
     nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:0.0.0","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:0.0.0","runAsUser":1000}}
     phaseResources:
@@ -658,13 +659,13 @@ spec:
                     additionalProperties:
                       type: string
                     description: |-
-                      ResolvedImages maps each pipeline container (clone/setup/fetch/build/
-                      copier) to the exact image reference the build Job was created with —
-                      digest-pinned for operator-managed toolchains. Captured at Job CREATION
-                      (like SpecHashAnnotation) so it records the build that actually ran, not
-                      a later operator-config change. Bounded by the fixed pipeline shape:
-                      5 containers today (clone/setup/fetch/build/copier), 8 leaves headroom
-                      for new pipeline steps without an API bump.
+                      ResolvedImages maps each pipeline container (shim-install/clone/setup/
+                      fetch/build/copier) to the exact image reference the build Job was
+                      created with — digest-pinned for operator-managed toolchains. Captured at
+                      Job CREATION (like SpecHashAnnotation) so it records the build that
+                      actually ran, not a later operator-config change. Bounded by the fixed
+                      pipeline shape: 6 containers today (shim-install/clone/setup/fetch/build/
+                      copier), 8 leaves headroom for new pipeline steps without an API bump.
                     maxProperties: 8
                     type: object
                   result:
@@ -685,6 +686,17 @@ spec:
                           type: string
                         name:
                           type: string
+                        peakMemoryBytes:
+                          description: |-
+                            PeakMemoryBytes is the phase's TRUE peak memory: the kernel-tracked
+                            cgroup high-water mark (memory.peak — the max of memory.current, the
+                            value the OOM killer compares against the limit), recorded by the shim
+                            wrapper via the container termination message when the step ends. It is
+                            the number to tune spec.pipeline.phases.<p>.memoryLimit against. 0/absent
+                            when unmeasured (shim-less steps like clone/copier, pod reaped before
+                            terminal observe, or no cgroup v2 peak available).
+                          format: int64
+                          type: integer
                         status:
                           description: |-
                             StepStatus is the state of one ordered step in a build's pipeline. Pending
@@ -775,13 +787,13 @@ spec:
                       additionalProperties:
                         type: string
                       description: |-
-                        ResolvedImages maps each pipeline container (clone/setup/fetch/build/
-                        copier) to the exact image reference the build Job was created with —
-                        digest-pinned for operator-managed toolchains. Captured at Job CREATION
-                        (like SpecHashAnnotation) so it records the build that actually ran, not
-                        a later operator-config change. Bounded by the fixed pipeline shape:
-                        5 containers today (clone/setup/fetch/build/copier), 8 leaves headroom
-                        for new pipeline steps without an API bump.
+                        ResolvedImages maps each pipeline container (shim-install/clone/setup/
+                        fetch/build/copier) to the exact image reference the build Job was
+                        created with — digest-pinned for operator-managed toolchains. Captured at
+                        Job CREATION (like SpecHashAnnotation) so it records the build that
+                        actually ran, not a later operator-config change. Bounded by the fixed
+                        pipeline shape: 6 containers today (shim-install/clone/setup/fetch/build/
+                        copier), 8 leaves headroom for new pipeline steps without an API bump.
                       maxProperties: 8
                       type: object
                     result:
@@ -803,6 +815,17 @@ spec:
                             type: string
                           name:
                             type: string
+                          peakMemoryBytes:
+                            description: |-
+                              PeakMemoryBytes is the phase's TRUE peak memory: the kernel-tracked
+                              cgroup high-water mark (memory.peak — the max of memory.current, the
+                              value the OOM killer compares against the limit), recorded by the shim
+                              wrapper via the container termination message when the step ends. It is
+                              the number to tune spec.pipeline.phases.<p>.memoryLimit against. 0/absent
+                              when unmeasured (shim-less steps like clone/copier, pod reaped before
+                              terminal observe, or no cgroup v2 peak available).
+                            format: int64
+                            type: integer
                           status:
                             description: |-
                               StepStatus is the state of one ordered step in a build's pipeline. Pending
@@ -1552,7 +1575,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 93502792c802e65897992b5729f4f5a61e0682b4d09fa8a08943564489ea1159
+        checksum/config: 4ed7d791d7f5fe343d7adf77f4db80ffcebd9e105d9947d177cdab3176a01d15
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"strconv"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -120,11 +123,14 @@ func failedStep(steps []bakerv1alpha1.BuildStep) string {
 // the main container; release is SYNTHETIC — Succeeded iff releaseDone (copier
 // succeeded AND the release pointer flipped), otherwise Pending. A step whose
 // container never ran is left Pending (we never invent a status for a container
-// the kubelet didn't reach). A nil/absent pod yields all-Pending.
+// the kubelet didn't reach). A nil/absent pod yields all-Pending. For shim-
+// wrapped steps (setup/fetch/build) the terminated container's message carries
+// the phase's peak memory, harvested into PeakMemoryBytes.
 func deriveBuildSteps(applicable []string, pod *corev1.Pod, releaseDone bool) []bakerv1alpha1.BuildStep {
 	out := make([]bakerv1alpha1.BuildStep, 0, len(applicable))
 	for _, name := range applicable {
 		status := bakerv1alpha1.StepStatusPending
+		peak := int64(0)
 		switch name {
 		case bakerv1alpha1.StepRelease:
 			if releaseDone {
@@ -136,10 +142,37 @@ func deriveBuildSteps(applicable []string, pod *corev1.Pod, releaseDone bool) []
 			}
 		default: // clone / setup / fetch / build are init containers
 			if pod != nil {
-				status = containerStepStatus(findContainerStatus(pod.Status.InitContainerStatuses, name))
+				cs := findContainerStatus(pod.Status.InitContainerStatuses, name)
+				status = containerStepStatus(cs)
+				if cs != nil && cs.State.Terminated != nil {
+					peak = parsePeakMemory(cs.State.Terminated.Message)
+				}
 			}
 		}
-		out = append(out, bakerv1alpha1.BuildStep{Name: name, Status: status})
+		out = append(out, bakerv1alpha1.BuildStep{Name: name, Status: status, PeakMemoryBytes: peak})
 	}
 	return out
+}
+
+// peakMemoryKey is the termination-message key the shim wrapper emits (one
+// `peakMemoryBytes=<n>` line). See images/shim.
+const peakMemoryKey = "peakMemoryBytes="
+
+// parsePeakMemory extracts the shim's peak-memory line from a container
+// termination message. Defensive: absent key, garbage, or a negative value
+// read as 0 (unmeasured) — the measurement is best-effort and must never fail
+// a status write.
+func parsePeakMemory(msg string) int64 {
+	for _, line := range strings.Split(msg, "\n") {
+		val, found := strings.CutPrefix(strings.TrimSpace(line), peakMemoryKey)
+		if !found {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+		if err != nil || n < 0 {
+			return 0
+		}
+		return n
+	}
+	return 0
 }

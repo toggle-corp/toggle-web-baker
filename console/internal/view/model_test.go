@@ -45,7 +45,7 @@ func fullStatusObj() *unstructured.Unstructured {
 				"logsRef":        "mapswipe/pod/mapswipe-uat-build-7",
 				"steps": []any{
 					map[string]any{"name": "clone", "status": "Succeeded"},
-					map[string]any{"name": "build", "status": "Failed", "message": "yarn build exited 1"},
+					map[string]any{"name": "build", "status": "Failed", "message": "yarn build exited 1", "peakMemoryBytes": int64(3555555555)},
 				},
 			},
 			"buildHistory": []any{
@@ -111,6 +111,13 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	}
 	if a.Build.Steps[1].Status != "Failed" || a.Build.Steps[1].Message != "yarn build exited 1" {
 		t.Errorf("step[1] wrong: %+v", a.Build.Steps[1])
+	}
+	// peakMemoryBytes humanizes into Step.PeakMemory; unmeasured steps stay empty.
+	if a.Build.Steps[1].PeakMemory != "3.3 GiB" {
+		t.Errorf("step[1] peak wrong: %q, want 3.3 GiB", a.Build.Steps[1].PeakMemory)
+	}
+	if a.Build.Steps[0].PeakMemory != "" {
+		t.Errorf("unmeasured step must have empty PeakMemory, got %q", a.Build.Steps[0].PeakMemory)
 	}
 	if len(a.BuildHistory) != 2 {
 		t.Fatalf("want 2 history entries, got %d", len(a.BuildHistory))

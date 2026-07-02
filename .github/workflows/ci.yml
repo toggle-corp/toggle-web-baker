@@ -98,6 +98,7 @@ jobs:
           - { name: du, context: images/du, file: images/du/Dockerfile }
           - { name: cleanup, context: images/cleanup, file: images/cleanup/Dockerfile }
           - { name: clock, context: images/clock, file: images/clock/Dockerfile }
+          - { name: shim, context: images/shim, file: images/shim/Dockerfile }
           - { name: node18, context: images/node18, file: images/node18/Dockerfile, content_tag: true }
           - { name: node24, context: images/node24, file: images/node24/Dockerfile, content_tag: true }
     steps:

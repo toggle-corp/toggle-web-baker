@@ -77,7 +77,7 @@ jobs:
             # Tool images ship at the release tag; node images ship at a content
             # hash of their Dockerfile (images/content-tag.sh), so list each at
             # the tag it is actually published under.
-            for img in operator console clone copier du cleanup clock node18 node24; do
+            for img in operator console clone copier du cleanup clock shim node18 node24; do
               case "$img" in
                 node18 | node24) tag="$(bash images/content-tag.sh "$img")" ;;
                 *) tag="${{ github.ref_name }}" ;;

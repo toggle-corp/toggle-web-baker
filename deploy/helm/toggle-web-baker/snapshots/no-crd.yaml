@@ -44,6 +44,7 @@ data:
       du: "ghcr.io/toggle-corp/toggle-web-baker-du:0.0.0"
       cleanup: "ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.0.0"
       clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.0.0"
+      shim: "ghcr.io/toggle-corp/toggle-web-baker-shim:0.0.0"
       nginx: "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
     nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:0.0.0","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:0.0.0","runAsUser":1000}}
     phaseResources:
@@ -306,7 +307,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 93502792c802e65897992b5729f4f5a61e0682b4d09fa8a08943564489ea1159
+        checksum/config: 4ed7d791d7f5fe343d7adf77f4db80ffcebd9e105d9947d177cdab3176a01d15
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

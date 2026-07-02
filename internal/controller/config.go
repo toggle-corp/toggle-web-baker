@@ -27,6 +27,7 @@ type PlatformImages struct {
 	Du      string // measurement Jobs (du over a mounted PVC)
 	Cleanup string // (reserved) cache cleanup helper
 	Clock   string // CronJob clock that patches the rebuild annotation
+	Shim    string // phase wrapper that records per-phase peak memory
 	Nginx   string // serving Deployment
 }
 
@@ -144,6 +145,7 @@ type fileImages struct {
 	Du      string `json:"du,omitempty"`
 	Cleanup string `json:"cleanup,omitempty"`
 	Clock   string `json:"clock,omitempty"`
+	Shim    string `json:"shim,omitempty"`
 	Nginx   string `json:"nginx,omitempty"`
 }
 
@@ -225,6 +227,7 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 			Du:      fc.Images.Du,
 			Cleanup: fc.Images.Cleanup,
 			Clock:   fc.Images.Clock,
+			Shim:    fc.Images.Shim,
 			Nginx:   fc.Images.Nginx,
 		},
 		NodeImages:            fc.NodeImages,
@@ -350,6 +353,9 @@ func (c *OperatorConfig) Defaults() {
 	}
 	if c.Images.Clock == "" {
 		c.Images.Clock = "ghcr.io/toggle-corp/toggle-web-baker-clock@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	}
+	if c.Images.Shim == "" {
+		c.Images.Shim = "ghcr.io/toggle-corp/toggle-web-baker-shim@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
 	if c.Images.Nginx == "" {
 		// nginx-unprivileged listens on 8080 and runs as UID/GID 101, so the pod's

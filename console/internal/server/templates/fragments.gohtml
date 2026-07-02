@@ -3,8 +3,8 @@
 <div class="flow">
   {{range $i, $s := .Steps}}
     {{if $i}}<span class="flow-sep" aria-hidden="true">→</span>{{end}}
-    <span class="step {{$s.CSSClass}}" title="{{$s.AriaLabel}}{{if $s.Message}} — {{$s.Message}}{{end}}" aria-label="{{$s.AriaLabel}}">
-      <span aria-hidden="true">{{$s.Icon}}</span> {{$s.Name}}
+    <span class="step {{$s.CSSClass}}" title="{{$s.AriaLabel}}{{if $s.Message}} — {{$s.Message}}{{end}}{{if $s.PeakMemory}} — peak {{$s.PeakMemory}}{{end}}" aria-label="{{$s.AriaLabel}}">
+      <span aria-hidden="true">{{$s.Icon}}</span> {{$s.Name}}{{if $s.PeakMemory}} <span class="muted small">{{$s.PeakMemory}}</span>{{end}}
     </span>
   {{else}}
     <span class="muted small">no steps</span>

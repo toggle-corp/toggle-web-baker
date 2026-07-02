@@ -105,6 +105,9 @@ platformImages:
   clock:
     repository: ghcr.io/toggle-corp/toggle-web-baker-clock
     tag: ""
+  shim:
+    repository: ghcr.io/toggle-corp/toggle-web-baker-shim
+    tag: ""
   # External images — pinned independently of the chart version.
   nginx: docker.io/nginxinc/nginx-unprivileged:1.27-alpine
 

@@ -17,7 +17,7 @@
 REGISTRY ?= ghcr.io/toggle-corp/toggle-web-baker
 TAG      ?= dev
 
-IMAGES := clone copier du cleanup clock node18 node24
+IMAGES := clone copier du cleanup clock shim node18 node24
 
 # ---- pinned base image digests (mirror of the FROM lines) -------------------
 CLONE_BASE   := alpine/git@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26
@@ -47,6 +47,11 @@ cleanup:
 clock:
 	docker build -t $(REGISTRY)-clock:$(TAG) ./clock
 
+# shim runs FROM scratch (no runtime base to pin); the golang builder stage is
+# pinned by the toolchain version in its Dockerfile.
+shim:
+	docker build -t $(REGISTRY)-shim:$(TAG) ./shim
+
 node18:
 	docker build -t $(REGISTRY)-node18:$(TAG) ./node18
 
@@ -59,6 +64,7 @@ test:
 	bash ./test/cleanup_test.sh
 	bash ./test/clock_test.sh
 	bash ./test/node_test.sh
+	bash ./test/shim_test.sh
 	bash ./test/content_tag_test.sh
 	bash ./test/check_images_test.sh
 

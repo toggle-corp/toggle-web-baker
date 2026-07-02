@@ -300,3 +300,66 @@ func TestDeriveBuildSteps_ReleaseDone(t *testing.T) {
 		t.Fatalf("release = %s, want Succeeded when releaseDone", got)
 	}
 }
+
+// termMsg is term() with a termination message (what the shim wrapper writes).
+func termMsg(name string, exit int32, msg string) corev1.ContainerStatus {
+	cs := term(name, exit)
+	cs.State.Terminated.Message = msg
+	return cs
+}
+
+// parsePeakMemory: extracts the shim's line, defensively zeroing everything else.
+func TestParsePeakMemory(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want int64
+	}{
+		{"plain", "peakMemoryBytes=634040320\n", 634040320},
+		{"among other lines", "something else\npeakMemoryBytes=42\n", 42},
+		{"absent", "no key here", 0},
+		{"empty", "", 0},
+		{"garbage value", "peakMemoryBytes=abc", 0},
+		{"negative", "peakMemoryBytes=-5", 0},
+		{"whitespace tolerated", "  peakMemoryBytes=7  \n", 7},
+	}
+	for _, c := range cases {
+		if got := parsePeakMemory(c.msg); got != c.want {
+			t.Errorf("%s: parsePeakMemory(%q) = %d, want %d", c.name, c.msg, got, c.want)
+		}
+	}
+}
+
+// deriveBuildSteps: a terminated shim-wrapped step's termination message yields
+// PeakMemoryBytes — on success AND on failure (the shim reports before exiting
+// either way); running/pending steps and the copier read 0.
+func TestDeriveBuildSteps_HarvestsPeakMemory(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"true"}
+	pod := &corev1.Pod{
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{
+				term("clone", 0),
+				termMsg("setup", 0, "peakMemoryBytes=111\n"),
+				termMsg("build", 1, "peakMemoryBytes=3555555555\n"),
+			},
+			ContainerStatuses: []corev1.ContainerStatus{waiting("copier")},
+		},
+	}
+	steps := deriveBuildSteps(applicableSteps(app), pod, false)
+	peaks := map[string]int64{}
+	for _, s := range steps {
+		peaks[s.Name] = s.PeakMemoryBytes
+	}
+	if peaks[bakerv1alpha1.StepSetup] != 111 {
+		t.Errorf("setup peak = %d, want 111", peaks[bakerv1alpha1.StepSetup])
+	}
+	if peaks[bakerv1alpha1.StepBuild] != 3555555555 {
+		t.Errorf("FAILED build step must still record its peak, got %d", peaks[bakerv1alpha1.StepBuild])
+	}
+	for _, name := range []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease} {
+		if peaks[name] != 0 {
+			t.Errorf("%s peak = %d, want 0 (unmeasured)", name, peaks[name])
+		}
+	}
+}

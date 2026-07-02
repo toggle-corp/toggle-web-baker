@@ -149,10 +149,11 @@ func TestReconcile_StartsBuildAndRecordsToken(t *testing.T) {
 	if got.Status.LastProcessedRebuild != "tok-1" {
 		t.Fatalf("expected lastProcessedRebuild=tok-1, got %q", got.Status.LastProcessedRebuild)
 	}
-	// Build pod = one pod: initContainers [clone setup fetch build] + copier main.
+	// Build pod = one pod: initContainers [shim-install clone setup fetch build]
+	// + copier main.
 	j := jobs.Items[0]
-	if n := len(j.Spec.Template.Spec.InitContainers); n != 4 {
-		t.Fatalf("expected 4 initContainers, got %d", n)
+	if n := len(j.Spec.Template.Spec.InitContainers); n != 5 {
+		t.Fatalf("expected 5 initContainers, got %d", n)
 	}
 	if n := len(j.Spec.Template.Spec.Containers); n != 1 || j.Spec.Template.Spec.Containers[0].Name != "copier" {
 		t.Fatalf("expected single copier main container, got %+v", j.Spec.Template.Spec.Containers)
