@@ -79,6 +79,13 @@ spec:
                 - message: auth requires exactly one of passwordHash or secretRef
                   rule: '(has(self.passwordHash) ? 1 : 0) + (has(self.secretRef) ?
                     1 : 0) == 1'
+              group:
+                description: |-
+                  Group is an optional, purely-informational project label used by the
+                  console to group and filter apps (e.g. all instances of one site).
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               ingress:
                 description: IngressConfig describes the public ingress for the served
                   bundle.

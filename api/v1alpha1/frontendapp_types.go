@@ -359,6 +359,13 @@ type FrontendAppSpec struct {
 	// +optional
 	Ref string `json:"ref,omitempty"`
 
+	// Group is an optional, purely-informational project label used by the
+	// console to group and filter apps (e.g. all instances of one site).
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +optional
+	Group string `json:"group,omitempty"`
+
 	// +kubebuilder:default="0 */12 * * *"
 	// +optional
 	Schedule string `json:"schedule,omitempty"`
