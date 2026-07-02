@@ -6,7 +6,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// The operator maps a user-selected node MAJOR (spec.nodeVersion) to a managed,
+// The operator maps a user-selected node MAJOR (spec.pipeline.nodeVersion) to a managed,
 // digest-pinned image plus the numeric UID and writable HOME that image needs.
 // ResolvePhase is the single chokepoint the build pod consults per phase; it
 // encodes the composition rule: an explicit per-phase image opts fully out of

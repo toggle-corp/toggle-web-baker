@@ -23,7 +23,7 @@ RUN chmod 0755 /usr/local/bin/cleanup-entrypoint.sh
 #
 # Caveat for the pod wiring: a non-root pruner can only delete cache entries it
 # can unlink, i.e. those under directories it owns. If a build phase ran as a
-# DIFFERENT UID (e.g. cimg/node's 3434 via spec.build.runAsUser) and wrote into
+# DIFFERENT UID (e.g. cimg/node's 3434 via spec.pipeline.phases.build.runAsUser) and wrote into
 # the shared cache, run cleanup as that same UID (or set an fsGroup) so the prune
 # does not fail with EPERM on foreign-owned subtrees.
 ENV HOME=/tmp

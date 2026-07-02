@@ -42,7 +42,7 @@ type BuildSpec struct {
 	Fetch       PhaseSpec `json:"fetch"`
 	Build       PhaseSpec `json:"build"`
 	// OutputDir is the subdir of the workspace the copier publishes. It moved
-	// out of the top-level spec under spec.pipeline.phases.build; changing it changes what gets
+	// nested under spec.pipeline.phases.build; changing it changes what gets
 	// served, so it is hashed. omitempty keeps an empty value out of the payload
 	// (the "dist" fallback is a runtime concern, not normalized here).
 	OutputDir  string   `json:"outputDir,omitempty"`

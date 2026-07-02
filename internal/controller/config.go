@@ -65,7 +65,7 @@ type OperatorConfig struct {
 	// PhaseResourceDefaults are the operator-owned resource defaults applied to
 	// every phase container (setup/fetch/build). CPU request/limit are global
 	// (same for all phases); the memory ceiling is per-phase, used when an app's
-	// spec.<phase>.memoryLimit is unset (or malformed — see phaseResourceRequirements).
+	// spec.pipeline.phases.<phase>.memoryLimit is unset (or malformed — see phaseResourceRequirements).
 	PhaseResourceDefaults PhaseResourceDefaults
 
 	// ActiveDeadlineSeconds is the operator default deadline bounding the whole

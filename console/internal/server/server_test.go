@@ -552,7 +552,7 @@ func TestBuildCard_RendersOOMCalloutAndHistoryBadge(t *testing.T) {
 	if !strings.Contains(body, "OOM Killed — the build step exceeded its 256Mi memory limit.") {
 		t.Errorf("should render the OOM callout summary; body=%s", body)
 	}
-	if !strings.Contains(body, "spec.build.memoryLimit") {
+	if !strings.Contains(body, "spec.pipeline.phases.build.memoryLimit") {
 		t.Errorf("should render the memoryLimit remediation hint; body=%s", body)
 	}
 	if !strings.Contains(body, "banner-degraded") {

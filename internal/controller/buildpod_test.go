@@ -170,7 +170,7 @@ func TestBuildJob_HardenedSecurity(t *testing.T) {
 	}
 }
 
-// spec.build.runAsUser pins the build container's numeric UID (needed for images
+// spec.pipeline.phases.build.runAsUser pins the build container's numeric UID (needed for images
 // whose USER is a non-numeric name, e.g. cimg/node's `circleci`). Phases without
 // runAsUser keep the default hardened context (RunAsUser nil).
 // BYO path: a phase with its own image pins its own runAsUser; an image-less
@@ -358,7 +358,7 @@ func TestBuildJob_UserMemoryLimitOverridesDefault(t *testing.T) {
 	}
 }
 
-// The Job deadline comes from spec.activeDeadlineSeconds when set, else from the
+// The Job deadline comes from spec.pipeline.timeout when set, else from the
 // operator config default.
 func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	r := reconcilerForPod()
@@ -376,13 +376,24 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 		t.Fatalf("spec deadline 42 must win, got %v", cj.Spec.ActiveDeadlineSeconds)
 	}
 
-	// A sub-second duration would truncate to 0 and spuriously fall back to the
-	// operator default; a duration string like "1h30m" must map to whole seconds.
+	// A duration string like "1h30m" must map to whole seconds.
 	dur := baseApp()
 	dur.Spec.Pipeline.Timeout = metav1.Duration{Duration: time.Hour + 30*time.Minute}
 	durJob := r.BuildJob(dur, "tok")
 	if durJob.Spec.ActiveDeadlineSeconds == nil || *durJob.Spec.ActiveDeadlineSeconds != 5400 {
 		t.Fatalf("timeout 1h30m must map to 5400s, got %v", durJob.Spec.ActiveDeadlineSeconds)
+	}
+
+	// Non-positive durations (sub-second truncating to 0, or negative) must fall
+	// back to the operator default — never a <0 or absent deadline the apiserver
+	// would reject.
+	for _, bad := range []time.Duration{500 * time.Millisecond, -time.Hour} {
+		np := baseApp()
+		np.Spec.Pipeline.Timeout = metav1.Duration{Duration: bad}
+		npJob := r.BuildJob(np, "tok")
+		if npJob.Spec.ActiveDeadlineSeconds == nil || *npJob.Spec.ActiveDeadlineSeconds != r.Config.ActiveDeadlineSeconds {
+			t.Fatalf("timeout %v must fall back to operator default %d, got %v", bad, r.Config.ActiveDeadlineSeconds, npJob.Spec.ActiveDeadlineSeconds)
+		}
 	}
 }
 
@@ -494,7 +505,7 @@ func TestBuildJob_BuildEnvReachesBuildContainer(t *testing.T) {
 	assertEnvVar(t, build, "NEXT_PUBLIC_API", "https://api")
 }
 
-// build.outputDir flows to the copier's OUTPUT_DIR (moved out of top-level spec).
+// pipeline.phases.build.outputDir flows to the copier's OUTPUT_DIR.
 func TestBuildJob_BuildOutputDirFlowsToCopier(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.OutputDir = "out"

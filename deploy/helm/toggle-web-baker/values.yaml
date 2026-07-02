@@ -60,13 +60,13 @@ operator:
   measureInterval: "1h"
 
   # Per-phase build-pod resource defaults (operator-owned). memory is per-phase
-  # (a phase's spec.<phase>.memoryLimit overrides its ceiling; request is pinned
+  # (a phase's spec.pipeline.phases.<phase>.memoryLimit overrides its ceiling; request is pinned
   # == limit); cpu request/limit are global (same for every phase container).
   phaseResources:
     cpu: { request: "0.1", limit: "4" }
     memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }   # fetch may be raised if it downloads large data
 
-  # Default deadline bounding the whole build Job when spec.activeDeadlineSeconds is unset.
+  # Default deadline bounding the whole build Job when spec.pipeline.timeout is unset.
   activeDeadlineSeconds: 1800
 
   # WaitForFirstConsumer StorageClass backing all PVCs. Empty => cluster default.

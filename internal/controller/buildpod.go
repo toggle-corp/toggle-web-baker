@@ -331,10 +331,12 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}
 	}
 
-	// pipeline.timeout is a duration; the k8s Job wants whole seconds. Zero
-	// (unset) falls back to the operator-config default.
+	// pipeline.timeout is a duration; the k8s Job wants whole seconds. Anything
+	// non-positive — unset (0), a sub-second value that truncates to 0, or a
+	// negative duration — falls back to the operator-config default rather than
+	// producing an invalid (<0) or absent deadline the apiserver would reject.
 	deadline := int64(app.Spec.Pipeline.Timeout.Duration.Seconds())
-	if deadline == 0 {
+	if deadline <= 0 {
 		deadline = r.Config.ActiveDeadlineSeconds
 	}
 

@@ -185,13 +185,14 @@ type PhaseSpec struct {
 // BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
 // copier publishes. build carries more than setup/fetch, so it has its own type
 // (setup/fetch stay plain PhaseSpec).
+// +kubebuilder:validation:XValidation:rule="has(self.command) && size(self.command) > 0",message="pipeline.phases.build.command is required"
 // +kubebuilder:validation:XValidation:rule="!has(self.outputDir) || self.outputDir.split('/').all(s, s != '' && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
 type BuildPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// OutputDir is the subdir of the workspace holding the built bundle (the
 	// copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
 	// path. Two layers: the RE2 pattern restricts the character set (rejecting
-	// spaces/shell metachars and a leading "/"), and a CEL rule on the spec
+	// spaces/shell metachars and a leading "/"), and a CEL rule on this type
 	// rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
 	// do a per-segment check). The segment rule also blocks the "." whole-dir
 	// footgun (which would publish the entire workspace) and trailing/duplicate
@@ -231,7 +232,6 @@ type PhasesSpec struct {
 // packageManager / submodules), the whole-pipeline timeout, and the ordered
 // phases. It deliberately excludes source identity (repo/ref) and scheduling,
 // which stay top-level on the spec.
-// +kubebuilder:validation:XValidation:rule="has(self.phases.build.command) && size(self.phases.build.command) > 0",message="pipeline.phases.build.command is required"
 // +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || has(self.phases.build.image)",message="build needs an image: set nodeVersion or build.image under pipeline"
 type PipelineSpec struct {
 	// NodeVersion selects an operator-managed node toolchain by MAJOR version

@@ -195,7 +195,7 @@ spec:
                               OutputDir is the subdir of the workspace holding the built bundle (the
                               copier's OUTPUT_DIR; defaults to "dist" when empty). Must be a safe relative
                               path. Two layers: the RE2 pattern restricts the character set (rejecting
-                              spaces/shell metachars and a leading "/"), and a CEL rule on the spec
+                              spaces/shell metachars and a leading "/"), and a CEL rule on this type
                               rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
                               do a per-segment check). The segment rule also blocks the "." whole-dir
                               footgun (which would publish the entire workspace) and trailing/duplicate
@@ -216,6 +216,8 @@ spec:
                             type: integer
                         type: object
                         x-kubernetes-validations:
+                        - message: pipeline.phases.build.command is required
+                          rule: has(self.command) && size(self.command) > 0
                         - message: build.outputDir must be a relative path with no
                             empty, '.' or '..' segments
                           rule: '!has(self.outputDir) || self.outputDir.split(''/'').all(s,
@@ -409,9 +411,6 @@ spec:
                 - phases
                 type: object
                 x-kubernetes-validations:
-                - message: pipeline.phases.build.command is required
-                  rule: has(self.phases.build.command) && size(self.phases.build.command)
-                    > 0
                 - message: 'build needs an image: set nodeVersion or build.image under
                     pipeline'
                   rule: has(self.nodeVersion) || has(self.phases.build.image)
