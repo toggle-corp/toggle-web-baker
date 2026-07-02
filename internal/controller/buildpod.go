@@ -332,10 +332,15 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	}
 
 	// pipeline.timeout is a duration; the k8s Job wants whole seconds. Anything
-	// non-positive — unset (0), a sub-second value that truncates to 0, or a
+	// non-positive — unset (nil), a sub-second value that truncates to 0, or a
 	// negative duration — falls back to the operator-config default rather than
 	// producing an invalid (<0) or absent deadline the apiserver would reject.
-	deadline := int64(app.Spec.Pipeline.Timeout.Seconds())
+	// CEL rejects non-positive values at admission; this guards objects admitted
+	// before that rule existed.
+	deadline := int64(0)
+	if t := app.Spec.Pipeline.Timeout; t != nil {
+		deadline = int64(t.Seconds())
+	}
 	if deadline <= 0 {
 		deadline = r.Config.ActiveDeadlineSeconds
 	}

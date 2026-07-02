@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -320,6 +321,50 @@ func TestValidation_RejectsOverlongGroup(t *testing.T) {
 	if err := testClient.Create(testCtx, app); err == nil {
 		t.Fatalf("expected rejection for group label longer than 63 chars")
 	}
+}
+
+func TestValidation_RejectsZeroTimeout(t *testing.T) {
+	// An explicit "0s" is rejected: unset (nil) is the way to ask for the
+	// operator default, and a zero deadline is never a sane pipeline bound.
+	app := validApp("reject-zero-timeout")
+	app.Spec.Pipeline.Timeout = &metav1.Duration{Duration: 0}
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected rejection for explicit zero pipeline.timeout")
+	}
+	if !strings.Contains(err.Error(), "positive duration") {
+		t.Fatalf("expected error mentioning positive duration, got: %v", err)
+	}
+}
+
+func TestValidation_RejectsNegativeTimeout(t *testing.T) {
+	app := validApp("reject-negative-timeout")
+	app.Spec.Pipeline.Timeout = &metav1.Duration{Duration: -5 * time.Minute}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for negative pipeline.timeout")
+	}
+}
+
+func TestValidation_AcceptsPositiveTimeout(t *testing.T) {
+	app := validApp("accept-positive-timeout")
+	app.Spec.Pipeline.Timeout = &metav1.Duration{Duration: 90 * time.Minute}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected 90m pipeline.timeout to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsAbsentTimeout(t *testing.T) {
+	// validApp sets no timeout: nil must stay valid (operator default applies).
+	app := validApp("accept-absent-timeout")
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected absent pipeline.timeout to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
 func TestValidation_DefaultsRefToHEAD(t *testing.T) {

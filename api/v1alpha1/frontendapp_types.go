@@ -233,6 +233,7 @@ type PhasesSpec struct {
 // phases. It deliberately excludes source identity (repo/ref) and scheduling,
 // which stay top-level on the spec.
 // +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || has(self.phases.build.image)",message="build needs an image: set nodeVersion or build.image under pipeline"
+// +kubebuilder:validation:XValidation:rule="!has(self.timeout) || duration(self.timeout) > duration('0s')",message="pipeline.timeout must be a positive duration; omit it to use the operator default"
 type PipelineSpec struct {
 	// NodeVersion selects an operator-managed node toolchain by MAJOR version
 	// (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
@@ -251,10 +252,12 @@ type PipelineSpec struct {
 
 	// Timeout bounds the WHOLE build pipeline (all phases) as a Go duration
 	// string (e.g. "1h", "90m", "1h30m"; max unit is hours — no days). When unset
-	// or zero the operator supplies the default from its config (NO kubebuilder
-	// default here — operator config owns it).
+	// the operator supplies the default from its config (NO kubebuilder default
+	// here — operator config owns it). A pointer so unset is truly absent: a
+	// value type would always serialize as "0s", defeating the has() guard in
+	// the positive-duration CEL rule on PipelineSpec.
 	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
 
 	// +kubebuilder:validation:Required
 	Phases PhasesSpec `json:"phases"`

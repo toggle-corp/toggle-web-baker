@@ -370,7 +370,7 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	}
 
 	custom := baseApp()
-	custom.Spec.Pipeline.Timeout = metav1.Duration{Duration: 42 * time.Second}
+	custom.Spec.Pipeline.Timeout = &metav1.Duration{Duration: 42 * time.Second}
 	cj := r.BuildJob(custom, "tok")
 	if cj.Spec.ActiveDeadlineSeconds == nil || *cj.Spec.ActiveDeadlineSeconds != 42 {
 		t.Fatalf("spec deadline 42 must win, got %v", cj.Spec.ActiveDeadlineSeconds)
@@ -378,7 +378,7 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 
 	// A duration string like "1h30m" must map to whole seconds.
 	dur := baseApp()
-	dur.Spec.Pipeline.Timeout = metav1.Duration{Duration: time.Hour + 30*time.Minute}
+	dur.Spec.Pipeline.Timeout = &metav1.Duration{Duration: time.Hour + 30*time.Minute}
 	durJob := r.BuildJob(dur, "tok")
 	if durJob.Spec.ActiveDeadlineSeconds == nil || *durJob.Spec.ActiveDeadlineSeconds != 5400 {
 		t.Fatalf("timeout 1h30m must map to 5400s, got %v", durJob.Spec.ActiveDeadlineSeconds)
@@ -389,7 +389,7 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	// would reject.
 	for _, bad := range []time.Duration{500 * time.Millisecond, -time.Hour} {
 		np := baseApp()
-		np.Spec.Pipeline.Timeout = metav1.Duration{Duration: bad}
+		np.Spec.Pipeline.Timeout = &metav1.Duration{Duration: bad}
 		npJob := r.BuildJob(np, "tok")
 		if npJob.Spec.ActiveDeadlineSeconds == nil || *npJob.Spec.ActiveDeadlineSeconds != r.Config.ActiveDeadlineSeconds {
 			t.Fatalf("timeout %v must fall back to operator default %d, got %v", bad, r.Config.ActiveDeadlineSeconds, npJob.Spec.ActiveDeadlineSeconds)
