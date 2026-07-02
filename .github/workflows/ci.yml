@@ -77,6 +77,10 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-go${{ env.GO_VERSION }}-${{ hashFiles('.pre-commit-config.yaml') }}
       - name: Run pre-commit on all files
+        env:
+          # Release tags bump the chart version, so drift against the 0.0.0
+          # golden snapshots is expected — skip only that hook on tags.
+          SKIP: ${{ github.ref_type == 'tag' && 'helm-snapshots' || '' }}
         run: pre-commit run --all-files --show-diff-on-failure
 
   docker_build:
@@ -161,13 +165,8 @@ jobs:
         run: helm lint ${{ env.CHART_DIR }}
       - name: Template chart
         run: helm template ${{ env.CHART_DIR }} >/dev/null
-      - name: Check helm snapshots
-        # Snapshots guard against template drift. On a release tag the chart
-        # version/appVersion (and the image tags + helm.sh/chart label derived
-        # from them) are bumped, so a diff against the 0.0.0 golden snapshots is
-        # expected — skip the check on tags rather than fail every release.
-        if: ${{ github.ref_type != 'tag' }}
-        run: ./${{ env.CHART_DIR }}/update-snapshots.sh --check-diff-only
+      # Snapshot drift is checked by the pre-commit job (helm-snapshots hook,
+      # pinned helm/yq); it is skipped there on release tags — see above.
       - name: Verify chart version matches tag
         if: ${{ inputs.helm_push && github.ref_type == 'tag' }}
         run: |

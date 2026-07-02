@@ -37,10 +37,10 @@ absent in fresh clones. Read it if present.
 
 `just lint` runs `pre-commit run --all-files`: golangci-lint on BOTH Go modules
 (operator root AND `console/` — a separate module), shellcheck on every tracked
-shell script, and file-hygiene checks (whitespace/EOF fixers, YAML syntax,
-merge markers). CI's `pre-commit` job runs the exact same thing, and tool
-versions are pinned in ONE place: `.pre-commit-config.yaml`. A lint failure in
-EITHER Go module is a CI failure.
+shell script, the Helm snapshot drift check, and file-hygiene checks
+(whitespace/EOF fixers, YAML syntax, merge markers). CI's `pre-commit` job runs
+the exact same thing, and tool versions are pinned in ONE place:
+`.pre-commit-config.yaml`. A lint failure in EITHER Go module is a CI failure.
 
 pre-commit here is a manually-run check runner, NOT a git hook — do NOT run
 `pre-commit install`. One-time setup: `pipx install pre-commit` (or pip). The
@@ -51,11 +51,12 @@ re-run until clean.
 ## ALWAYS check Helm snapshots before committing
 
 Any change to `api/v1alpha1/` or the CRD flows into the chart (`just manifests`
-re-syncs `templates/crd.yaml`), which changes the rendered Helm output. BEFORE
-every commit run `just helm-snapshots --check-diff-only`; if it reports outdated
-snapshots, run `just helm-snapshots` to regenerate and COMMIT the updated
-`deploy/helm/toggle-web-baker/snapshots/*.yaml` alongside your change. A stale
-snapshot is a CI failure, so never commit a CRD/chart change without it.
+re-syncs `templates/crd.yaml`), which changes the rendered Helm output. `just
+lint` catches drift (the `helm-snapshots` pre-commit hook); if it reports
+outdated snapshots, run `just helm-snapshots` to regenerate and COMMIT the
+updated `deploy/helm/toggle-web-baker/snapshots/*.yaml` alongside your change.
+A stale snapshot is a CI failure, so never commit a CRD/chart change without
+it.
 
 ## After operator / API / image changes: ask the user to run `just e2e-local`
 
