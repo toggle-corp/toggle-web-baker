@@ -51,19 +51,21 @@ repos:
         types: [go]
         pass_filenames: false
 
-      # Helm snapshot drift check. helm + yq are plain Go programs, so they
-      # are pinned and built into the hook env like golangci-lint above —
-      # this also pins the helm version snapshots are rendered with (system
-      # helm versions can differ and change the rendered output). CI skips
-      # this hook on release tags via SKIP=helm-snapshots: the tag bumps the
-      # chart version, so drift against the 0.0.0 golden snapshots is
-      # expected there.
+      # Helm snapshot sync: a FIXER, like the whitespace hooks — it rewrites
+      # snapshots/ from a fresh render, and pre-commit fails the hook when
+      # that changed anything (re-stage the regenerated snapshots and re-run).
+      # helm + yq are plain Go programs, so they are pinned and built into
+      # the hook env like golangci-lint above — this also pins the helm
+      # version snapshots are rendered with (system helm versions can differ
+      # and change the rendered output). CI skips this hook on release tags
+      # via SKIP=helm-snapshots: the tag bumps the chart version, so drift
+      # against the 0.0.0 golden snapshots is expected there.
       - id: helm-snapshots
-        name: helm snapshot drift check
+        name: helm snapshot sync (regenerates on drift)
         language: golang
         additional_dependencies:
           - helm.sh/helm/v4/cmd/helm@v4.2.2
           - github.com/mikefarah/yq/v4@v4.53.3
-        entry: deploy/helm/toggle-web-baker/update-snapshots.sh --check-diff-only
+        entry: deploy/helm/toggle-web-baker/update-snapshots.sh
         files: ^(deploy/helm/|config/crd/)
         pass_filenames: false

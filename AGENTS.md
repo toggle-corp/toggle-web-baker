@@ -52,11 +52,11 @@ re-run until clean.
 
 Any change to `api/v1alpha1/` or the CRD flows into the chart (`just manifests`
 re-syncs `templates/crd.yaml`), which changes the rendered Helm output. `just
-lint` catches drift (the `helm-snapshots` pre-commit hook); if it reports
-outdated snapshots, run `just helm-snapshots` to regenerate and COMMIT the
-updated `deploy/helm/toggle-web-baker/snapshots/*.yaml` alongside your change.
-A stale snapshot is a CI failure, so never commit a CRD/chart change without
-it.
+lint` catches drift AND fixes it: the `helm-snapshots` pre-commit hook
+regenerates `deploy/helm/toggle-web-baker/snapshots/*.yaml` (with the pinned
+helm) and fails when that changed anything — re-stage the regenerated
+snapshots, re-run, and COMMIT them alongside your change. A stale snapshot is
+a CI failure, so never commit a CRD/chart change without it.
 
 ## After operator / API / image changes: ask the user to run `just e2e-local`
 
