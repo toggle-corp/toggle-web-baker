@@ -177,7 +177,12 @@ type PhaseSpec struct {
 	// config owns the defaults, NOT the CRD — no kubebuilder default here). The
 	// memory REQUEST is always pinned equal to the limit (incompressible ⇒
 	// Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-	// Shared by setup/fetch/build via PhaseSpec.
+	// Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+	// quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+	// than resource.Quantity (no exponents, no milli), which is nonsensical for
+	// a memory ceiling. The operator still falls back to its default on any
+	// value that fails to parse (defense for pre-rule objects).
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$`
 	// +optional
 	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
@@ -306,28 +311,38 @@ type AuthConfig struct {
 	SecretRef *AuthSecretRef `json:"secretRef,omitempty"`
 }
 
-// CacheThresholds are absolute-byte thresholds for the regenerable cache volume.
+// CacheThresholds are absolute-byte thresholds for the regenerable cache
+// volume. All byte fields are non-negative; 0 means unset/disabled.
 type CacheThresholds struct {
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	CleanupBytes int64 `json:"cleanupBytes,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	AlertBytes int64 `json:"alertBytes,omitempty"`
 }
 
 // DataCacheThresholds adds a per-run delta budget on top of cache thresholds.
+// All byte fields are non-negative; 0 means unset/disabled.
 type DataCacheThresholds struct {
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	CleanupBytes int64 `json:"cleanupBytes,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	AlertBytes int64 `json:"alertBytes,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	RunDeltaBytes int64 `json:"runDeltaBytes,omitempty"`
 }
 
-// OutputThresholds bound the served-bundle volume.
+// OutputThresholds bound the served-bundle volume. All byte fields are
+// non-negative; 0 means unset/disabled.
 type OutputThresholds struct {
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	AlertBytes int64 `json:"alertBytes,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	CapBytes int64 `json:"capBytes,omitempty"`
 }
@@ -348,7 +363,13 @@ type StorageConfig struct {
 
 // FrontendAppSpec is the desired state: operational tunables for one app.
 type FrontendAppSpec struct {
+	// Repo is the clone URL, handed verbatim to `git clone`. The pattern is a
+	// loose shape check (https / ssh / scp-style) that catches garbage at
+	// admission instead of minutes later at clone time — it must stay wide
+	// enough to never reject a URL git can clone.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^(https?://|git@|ssh://)[^\s]+$`
 	Repo string `json:"repo"`
 	// +kubebuilder:default="HEAD"
 	// +optional
@@ -370,6 +391,12 @@ type FrontendAppSpec struct {
 	// +kubebuilder:validation:Required
 	Pipeline PipelineSpec `json:"pipeline"`
 
+	// KeepReleases is the total number of releases retained on the output
+	// volume, newest first; the copier prunes after each publish and the manual
+	// release-prune uses the same budget. The current and previous release are
+	// ALWAYS protected (and count toward the budget), so 0 — the default —
+	// means "keep only the protected releases".
+	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:default=0
 	// +optional
 	KeepReleases int `json:"keepReleases,omitempty"`

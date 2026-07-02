@@ -367,6 +367,89 @@ func TestValidation_AcceptsAbsentTimeout(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
+func TestValidation_RejectsMalformedMemoryLimit(t *testing.T) {
+	// A memoryLimit that is not a k8s memory quantity used to be silently
+	// ignored (operator default applied). It must now fail at admission.
+	for _, bad := range []string{"banana", "2 Gi", "-1Gi", "2Gib"} {
+		app := validApp("reject-memlimit")
+		app.Spec.Pipeline.Phases.Build.MemoryLimit = bad
+
+		if err := testClient.Create(testCtx, app); err == nil {
+			t.Fatalf("expected rejection for memoryLimit %q", bad)
+		}
+	}
+}
+
+func TestValidation_AcceptsQuantityMemoryLimit(t *testing.T) {
+	for i, good := range []string{"2Gi", "512Mi", "1.5Gi", "2G"} {
+		app := validApp("accept-memlimit-" + string(rune('a'+i)))
+		app.Spec.Pipeline.Phases.Build.MemoryLimit = good
+
+		if err := testClient.Create(testCtx, app); err != nil {
+			t.Fatalf("expected memoryLimit %q to be accepted, got: %v", good, err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+	}
+}
+
+func TestValidation_RejectsNegativeStorageBytes(t *testing.T) {
+	// Byte thresholds are absolute sizes; negatives are meaningless. Zero keeps
+	// its "unset/disabled" meaning (omitempty), so the bound is Minimum=0.
+	app := validApp("reject-negative-cleanup-bytes")
+	app.Spec.Storage.Cache.CleanupBytes = -1
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for negative cache.cleanupBytes")
+	}
+
+	app = validApp("reject-negative-rundelta-bytes")
+	app.Spec.Storage.DataCache.RunDeltaBytes = -1
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for negative dataCache.runDeltaBytes")
+	}
+}
+
+func TestValidation_RejectsNegativeKeepReleases(t *testing.T) {
+	app := validApp("reject-negative-keep-releases")
+	app.Spec.KeepReleases = -1
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for negative keepReleases")
+	}
+}
+
+func TestValidation_RejectsMalformedRepo(t *testing.T) {
+	// A garbage repo used to only fail minutes later at clone time. The shape
+	// check is deliberately loose (https/ssh/scp-style) — it must never reject
+	// a URL git can clone.
+	for _, bad := range []string{"not a url", "example.com/repo.git", ""} {
+		app := validApp("reject-repo")
+		app.Spec.Repo = bad
+
+		if err := testClient.Create(testCtx, app); err == nil {
+			t.Fatalf("expected rejection for repo %q", bad)
+		}
+	}
+}
+
+func TestValidation_AcceptsGitTransportRepos(t *testing.T) {
+	for i, good := range []string{
+		"https://github.com/mapswipe/website",
+		"http://gitea.local/org/repo.git",
+		"git@github.com:org/repo.git",
+		"ssh://git@github.com/org/repo.git",
+	} {
+		app := validApp("accept-repo-" + string(rune('a'+i)))
+		app.Spec.Repo = good
+
+		if err := testClient.Create(testCtx, app); err != nil {
+			t.Fatalf("expected repo %q to be accepted, got: %v", good, err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+	}
+}
+
 func TestValidation_DefaultsRefToHEAD(t *testing.T) {
 	app := validApp("defaults-ref-to-head")
 	app.Spec.Ref = "" // omit so the apiserver applies the default

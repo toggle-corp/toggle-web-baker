@@ -171,6 +171,13 @@ spec:
                 type: object
               keepReleases:
                 default: 0
+                description: |-
+                  KeepReleases is the total number of releases retained on the output
+                  volume, newest first; the copier prunes after each publish and the manual
+                  release-prune uses the same budget. The current and previous release are
+                  ALWAYS protected (and count toward the budget), so 0 — the default —
+                  means "keep only the protected releases".
+                minimum: 0
                 type: integer
               pipeline:
                 description: |-
@@ -255,7 +262,12 @@ spec:
                               config owns the defaults, NOT the CRD — no kubebuilder default here). The
                               memory REQUEST is always pinned equal to the limit (incompressible ⇒
                               Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-                              Shared by setup/fetch/build via PhaseSpec.
+                              Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+                              quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+                              than resource.Quantity (no exponents, no milli), which is nonsensical for
+                              a memory ceiling. The operator still falls back to its default on any
+                              value that fails to parse (defense for pre-rule objects).
+                            pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
                             type: string
                           outputDir:
                             description: |-
@@ -342,7 +354,12 @@ spec:
                               config owns the defaults, NOT the CRD — no kubebuilder default here). The
                               memory REQUEST is always pinned equal to the limit (incompressible ⇒
                               Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-                              Shared by setup/fetch/build via PhaseSpec.
+                              Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+                              quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+                              than resource.Quantity (no exponents, no milli), which is nonsensical for
+                              a memory ceiling. The operator still falls back to its default on any
+                              value that fails to parse (defense for pre-rule objects).
+                            pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
                             type: string
                           runAsUser:
                             description: |-
@@ -448,7 +465,12 @@ spec:
                               config owns the defaults, NOT the CRD — no kubebuilder default here). The
                               memory REQUEST is always pinned equal to the limit (incompressible ⇒
                               Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
-                              Shared by setup/fetch/build via PhaseSpec.
+                              Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+                              quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+                              than resource.Quantity (no exponents, no milli), which is nonsensical for
+                              a memory ceiling. The operator still falls back to its default on any
+                              value that fails to parse (defense for pre-rule objects).
+                            pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
                             type: string
                           runAsUser:
                             description: |-
@@ -490,6 +512,13 @@ spec:
                 default: HEAD
                 type: string
               repo:
+                description: |-
+                  Repo is the clone URL, handed verbatim to `git clone`. The pattern is a
+                  loose shape check (https / ssh / scp-style) that catches garbage at
+                  admission instead of minutes later at clone time — it must stay wide
+                  enough to never reject a URL git can clone.
+                minLength: 1
+                pattern: ^(https?://|git@|ssh://)[^\s]+$
                 type: string
               schedule:
                 default: 0 */12 * * *
@@ -500,38 +529,49 @@ spec:
                   also calls domain.ValidateStorage at reconcile time (cleanup < alert < cap).
                 properties:
                   cache:
-                    description: CacheThresholds are absolute-byte thresholds for
-                      the regenerable cache volume.
+                    description: |-
+                      CacheThresholds are absolute-byte thresholds for the regenerable cache
+                      volume. All byte fields are non-negative; 0 means unset/disabled.
                     properties:
                       alertBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                       cleanupBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                     type: object
                   dataCache:
-                    description: DataCacheThresholds adds a per-run delta budget on
-                      top of cache thresholds.
+                    description: |-
+                      DataCacheThresholds adds a per-run delta budget on top of cache thresholds.
+                      All byte fields are non-negative; 0 means unset/disabled.
                     properties:
                       alertBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                       cleanupBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                       runDeltaBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                     type: object
                   output:
-                    description: OutputThresholds bound the served-bundle volume.
+                    description: |-
+                      OutputThresholds bound the served-bundle volume. All byte fields are
+                      non-negative; 0 means unset/disabled.
                     properties:
                       alertBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                       capBytes:
                         format: int64
+                        minimum: 0
                         type: integer
                     type: object
                 type: object
