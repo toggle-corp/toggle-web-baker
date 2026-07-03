@@ -6,7 +6,9 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -187,13 +189,121 @@ func TestTriggers_DisableAfterEnable_ChildrenDeleted(t *testing.T) {
 }
 
 // An interval the CRD pattern admits but a CronJob cannot express (e.g. 90m)
-// must fail the reconcile loudly, not render a surprising schedule.
-func TestTriggers_UnexpressibleInterval_ReconcileErrors(t *testing.T) {
+// must surface as a Degraded condition the app owner can see — not a bare
+// reconcile error that silently wedges the app.
+func TestTriggers_UnexpressibleInterval_DegradesApp(t *testing.T) {
+	for name, mutate := range map[string]func(*bakerv1alpha1.FrontendApp){
+		"90m interval": func(app *bakerv1alpha1.FrontendApp) {
+			app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "90m"}
+		},
+		"48h interval": func(app *bakerv1alpha1.FrontendApp) {
+			app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "48h"}
+		},
+		"pinned SHA ref": func(app *bakerv1alpha1.FrontendApp) {
+			app.Spec.Ref = "cafebabecafebabecafebabecafebabecafebabe"
+			app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := baseApp()
+			mutate(app)
+			r, cl := newReconciler(t, app, wffc())
+			_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace}})
+			if err != nil {
+				t.Fatalf("reconcile must not error (it must degrade): %v", err)
+			}
+			got := getApp(t, cl, app.Name, app.Namespace)
+			if got.Status.Phase != bakerv1alpha1.PhaseDegraded {
+				t.Fatalf("phase = %s, want Degraded", got.Status.Phase)
+			}
+			for _, c := range got.Status.Conditions {
+				if c.Type == string(bakerv1alpha1.ConditionReady) {
+					if c.Status != metav1.ConditionFalse || c.Reason != bakerv1alpha1.ReasonInvalidSpec {
+						t.Fatalf("Ready condition = %s/%s, want False/InvalidSpec", c.Status, c.Reason)
+					}
+					return
+				}
+			}
+			t.Fatal("no Ready condition found")
+		})
+	}
+}
+
+// A same-named CronJob the operator does NOT own must survive the
+// disabled-trigger sweep — the operator only deletes what it created.
+func TestTriggers_UnownedSameNamedCronJobSurvives(t *testing.T) {
 	app := baseApp()
-	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "90m"}
-	r, _ := newReconciler(t, app, wffc())
-	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace}})
-	if err == nil {
-		t.Fatal("reconcile with 90m interval succeeded; want error")
+	squatter := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{
+		Name: watchCronJobName(app), Namespace: app.Namespace,
+	}}
+	r, cl := newReconciler(t, app, wffc(), squatter)
+	reconcile(t, r, app)
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: watchCronJobName(app), Namespace: app.Namespace}, &batchv1.CronJob{}); err != nil {
+		t.Fatalf("unowned CronJob was deleted by the trigger sweep: %v", err)
+	}
+}
+
+// The bootstrap seed clears stale by/commit annotations in the same patch, so
+// a manifest re-applied with trigger leftovers can't misclassify build #1.
+func TestSeedRebuild_ClearsStaleTriggerProvenance(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildByAnnotation:     "octocat",
+		bakerv1alpha1.RebuildCommitAnnotation: "cafebabe",
+	}
+	r, cl := newReconciler(t, app, wffc())
+	if err := r.seedRebuild(context.Background(), app); err != nil {
+		t.Fatalf("seedRebuild: %v", err)
+	}
+	got := getApp(t, cl, app.Name, app.Namespace)
+	if got.Annotations[bakerv1alpha1.RebuildAnnotation] == "" {
+		t.Fatal("seed did not set the rebuild token")
+	}
+	if v, ok := got.Annotations[bakerv1alpha1.RebuildByAnnotation]; ok {
+		t.Fatalf("stale by annotation survived the seed: %q", v)
+	}
+	if v, ok := got.Annotations[bakerv1alpha1.RebuildCommitAnnotation]; ok {
+		t.Fatalf("stale commit annotation survived the seed: %q", v)
+	}
+}
+
+// Trigger pods carry the role=trigger label and a NetworkPolicy fences them —
+// the watcher fetches the user-controlled repo URL, so it gets the same
+// egress discipline as build pods (DNS + public internet minus cluster CIDRs
+// and the metadata IP).
+func TestTriggers_NetworkPolicyFencesTriggerPods(t *testing.T) {
+	app := baseApp()
+	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true}
+	r, cl := newReconciler(t, app, wffc())
+	reconcile(t, r, app)
+
+	cj := getCronJob(t, cl, watchCronJobName(app), app.Namespace)
+	if cj.Spec.JobTemplate.Spec.Template.Labels["baker.toggle-corp.com/role"] != "trigger" {
+		t.Fatalf("watcher pod labels = %v, want role=trigger", cj.Spec.JobTemplate.Spec.Template.Labels)
+	}
+
+	np := &networkingv1.NetworkPolicy{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: triggerNetPolName(app), Namespace: app.Namespace}, np); err != nil {
+		t.Fatalf("trigger NetworkPolicy absent: %v", err)
+	}
+	if np.Spec.PodSelector.MatchLabels["baker.toggle-corp.com/role"] != "trigger" {
+		t.Fatalf("policy selector = %v, want role=trigger", np.Spec.PodSelector.MatchLabels)
+	}
+	var except []string
+	for _, rule := range np.Spec.Egress {
+		for _, to := range rule.To {
+			if to.IPBlock != nil {
+				except = to.IPBlock.Except
+			}
+		}
+	}
+	found := false
+	for _, e := range except {
+		if e == MetadataIP {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("trigger policy egress except = %v, want metadata IP excluded", except)
 	}
 }

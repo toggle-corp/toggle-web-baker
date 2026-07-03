@@ -334,6 +334,34 @@ type WatchCommits struct {
 	LastSeenSHA string
 }
 
+// Label renders the scheduled-builds config state ("Disabled" / "operator
+// default" / the cron expression). Kept in Go — not the template — so the
+// enabled/tuned/disabled precedence stays logic-free in templates and
+// unit-tested once (same rationale as Build.TriggerLabel).
+func (s ScheduledBuilds) Label() string {
+	switch {
+	case !s.Enabled:
+		return "Disabled"
+	case s.Schedule == "":
+		return "operator default"
+	default:
+		return s.Schedule
+	}
+}
+
+// Label renders the watch-commits config state ("Disabled" / "operator
+// default" / "every <interval>").
+func (w WatchCommits) Label() string {
+	switch {
+	case !w.Enabled:
+		return "Disabled"
+	case w.Interval == "":
+		return "operator default"
+	default:
+		return "every " + w.Interval
+	}
+}
+
 // App is the full per-app view model rendered by the detail template; the list
 // template uses only the identity + summary fields.
 type App struct {

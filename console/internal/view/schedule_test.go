@@ -121,3 +121,27 @@ func TestWatchCommits_AbsentDisabled(t *testing.T) {
 		t.Errorf("WatchCommits = %+v, want zero value", a.WatchCommits)
 	}
 }
+
+// Label renders the trigger-config display state; kept in Go — not the
+// template — so the enabled/tuned/disabled precedence is unit-tested once.
+func TestTriggerLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"scheduled disabled", ScheduledBuilds{}.Label(), "Disabled"},
+		{"scheduled operator default", ScheduledBuilds{Enabled: true}.Label(), "operator default"},
+		{"scheduled explicit", ScheduledBuilds{Enabled: true, Schedule: "0 9 * * *"}.Label(), "0 9 * * *"},
+		{"watch disabled", WatchCommits{}.Label(), "Disabled"},
+		{"watch operator default", WatchCommits{Enabled: true}.Label(), "operator default"},
+		{"watch explicit", WatchCommits{Enabled: true, Interval: "5m"}.Label(), "every 5m"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("Label() = %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}

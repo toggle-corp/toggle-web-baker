@@ -61,9 +61,12 @@ type OperatorConfig struct {
 	DefaultSchedule string
 
 	// DefaultWatchInterval is the commit watcher's poll interval when an app
-	// enables watchCommits without an interval. Must be expressible as a CronJob
-	// schedule (whole minutes/hours — see domain.WatchCron). Defaults to 10m.
-	DefaultWatchInterval time.Duration
+	// enables watchCommits without an interval. Kept as the raw config string
+	// (validated at startup via domain.WatchCron) so the reconciler feeds the
+	// SAME value through the same parser — a time.Duration round-trip would
+	// re-render "10m" as "10m0s" and quietly depend on two grammars agreeing.
+	// Defaults to "10m".
+	DefaultWatchInterval string
 
 	Images PlatformImages
 
@@ -208,12 +211,9 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 	if _, err := cron.ParseStandard(defaultSchedule); err != nil {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("defaultSchedule %q is not a valid cron expression: %w", fc.DefaultSchedule, err)
 	}
-	defaultWatch := 10 * time.Minute
-	if fc.DefaultWatchInterval != "" {
-		if _, err := domain.WatchCron(fc.DefaultWatchInterval); err != nil {
-			return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("defaultWatchInterval: %w", err)
-		}
-		defaultWatch, _ = time.ParseDuration(fc.DefaultWatchInterval)
+	defaultWatch := defaultStr(fc.DefaultWatchInterval, "10m")
+	if _, err := domain.WatchCron(defaultWatch); err != nil {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("defaultWatchInterval: %w", err)
 	}
 
 	// Every resource quantity MUST parse (they are load-bearing: the per-phase
@@ -371,8 +371,8 @@ func (c *OperatorConfig) Defaults() {
 	if c.DefaultSchedule == "" {
 		c.DefaultSchedule = "0 */12 * * *"
 	}
-	if c.DefaultWatchInterval <= 0 {
-		c.DefaultWatchInterval = 10 * time.Minute
+	if c.DefaultWatchInterval == "" {
+		c.DefaultWatchInterval = "10m"
 	}
 	if c.Images.Clone == "" {
 		c.Images.Clone = "ghcr.io/toggle-corp/toggle-web-baker-clone@sha256:0000000000000000000000000000000000000000000000000000000000000000"

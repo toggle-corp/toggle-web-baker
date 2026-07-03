@@ -524,10 +524,7 @@ func TestClockCronJob_PassesAnnotationEnvContract(t *testing.T) {
 	if len(c.Command) != 0 {
 		t.Fatalf("clock must NOT embed a shell command (tick logic lives in the image), got %v", c.Command)
 	}
-	env := map[string]string{}
-	for _, e := range c.Env {
-		env[e.Name] = e.Value
-	}
+	env := cronEnvMap(t, cron)
 	if env["APP"] != app.Name {
 		t.Fatalf("clock APP env = %q, want %q", env["APP"], app.Name)
 	}

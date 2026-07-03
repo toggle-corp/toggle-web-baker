@@ -31,5 +31,11 @@ func WatchCron(interval string) (string, error) {
 	if d%time.Hour != 0 {
 		return "", fmt.Errorf("watch interval %q above 59m must be whole hours", interval)
 	}
-	return fmt.Sprintf("0 */%d * * *", int(d/time.Hour)), nil
+	hours := int(d / time.Hour)
+	// The cron hour field is 0-23: "*/48" only ever matches hour 0, silently
+	// degrading a 48h request to daily — reject instead of surprising.
+	if hours > 23 {
+		return "", fmt.Errorf("watch interval %q must be at most 23h (cron cannot express longer periods)", interval)
+	}
+	return fmt.Sprintf("0 */%d * * *", hours), nil
 }

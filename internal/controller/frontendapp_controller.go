@@ -127,6 +127,14 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return r.fail(ctx, app, bakerv1alpha1.ReasonUnknownNodeVersion, err.Error())
 	}
 
+	// 2c. watchCommits tuning: the interval must be cron-expressible (the CRD
+	// pattern is a shape check only) and the watched ref must be watchable —
+	// failing here surfaces a Degraded condition instead of wedging the whole
+	// reconcile on a bare error the app owner can't see.
+	if err := validateWatchCommits(app); err != nil {
+		return r.fail(ctx, app, bakerv1alpha1.ReasonInvalidSpec, err.Error())
+	}
+
 	// 3. Storage threshold ordering (operator-side, mirrors the CEL markers).
 	if err := domain.ValidateStorage(storageConfigFrom(app)); err != nil {
 		return r.fail(ctx, app, bakerv1alpha1.ReasonInvalidStorage, err.Error())
@@ -452,6 +460,12 @@ func (r *FrontendAppReconciler) seedRebuild(ctx context.Context, app *bakerv1alp
 		app.Annotations = map[string]string{}
 	}
 	app.Annotations[bakerv1alpha1.RebuildAnnotation] = token
+	// Clear the other trigger sources' keys in the same patch (the shared
+	// discipline every writer follows): a manifest re-applied with stale
+	// "by"/"commit" annotations baked in must not classify the bootstrap build
+	// as Manual or Commit.
+	delete(app.Annotations, bakerv1alpha1.RebuildByAnnotation)
+	delete(app.Annotations, bakerv1alpha1.RebuildCommitAnnotation)
 	return r.Patch(ctx, app, patch)
 }
 

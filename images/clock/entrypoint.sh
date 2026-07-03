@@ -51,11 +51,24 @@ fi
 # Anonymous only: never prompt for credentials — fail fast on private repos.
 export GIT_TERMINAL_PROMPT=0
 
-# First matching line's first column is the SHA. ls-remote failure (network,
-# bad repo) aborts via set -o pipefail WITHOUT patching anything.
-sha="$(git ls-remote "${REPO}" "${REF:-HEAD}" | head -n1 | cut -f1)"
+# ls-remote patterns TAIL-match path components: asking for "main" also returns
+# refs/heads/feature/main and refs/tags/main — and sorted output can put those
+# BEFORE refs/heads/main. Select the exact ref by priority: the ref verbatim
+# (HEAD or fully-qualified), then the branch, then the tag. ls-remote failure
+# (network, bad repo) aborts via set -e WITHOUT patching anything.
+ref="${REF:-HEAD}"
+ls_out="$(git ls-remote "${REPO}" "${ref}")"
+sha="$(printf '%s\n' "${ls_out}" | awk -v r="${ref}" '
+	$2 == r { exact = $1 }
+	$2 == "refs/heads/" r { head = $1 }
+	$2 == "refs/tags/" r { tag = $1 }
+	END {
+		if (exact != "") print exact
+		else if (head != "") print head
+		else if (tag != "") print tag
+	}')"
 if [ -z "${sha}" ]; then
-	echo "watch: ls-remote returned no SHA for ${REPO} ${REF:-HEAD}" >&2
+	echo "watch: ls-remote returned no SHA for ${REPO} ${ref}" >&2
 	exit 1
 fi
 

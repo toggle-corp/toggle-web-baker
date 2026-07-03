@@ -44,6 +44,8 @@ var funcMap = template.FuncMap{
 	"loghl": highlightLogLine,
 	// shortSHA abbreviates a commit SHA to the conventional 7 characters.
 	"shortSHA": view.ShortSHA,
+	// linkctx bundles a URL + visible text for the commitlink sub-template.
+	"linkctx": func(url, text string) linkView { return linkView{URL: url, Text: text} },
 	// cleanupCtx bundles the App, the action kind, and the action status into one
 	// value so the cleanupaction sub-template can render a prune row + button.
 	"cleanupCtx": func(app view.App, kind string, action view.CleanupAction) cleanupView {
@@ -56,6 +58,12 @@ type cleanupView struct {
 	App    view.App
 	Kind   string // "cache" | "releases"
 	Action view.CleanupAction
+}
+
+// linkView is the input to the commitlink sub-template.
+type linkView struct {
+	URL  string
+	Text string
 }
 
 // timeTag renders a <time> element carrying an RFC3339-UTC instant as both the

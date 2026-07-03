@@ -43,17 +43,18 @@ func TestReconcile_SteadyStateDoesNotRewriteChildren(t *testing.T) {
 	middleware := &unstructured.Unstructured{}
 	middleware.SetGroupVersionKind(r.traefikMiddlewareGVK())
 	children := map[string]client.Object{
-		clockSAName(app):      &corev1.ServiceAccount{},
-		clockRoleName(app):    &rbacv1.Role{},
-		clockBindingName(app): &rbacv1.RoleBinding{},
-		clockCronJobName(app): &batchv1.CronJob{},
-		watchCronJobName(app): &batchv1.CronJob{},
-		buildNetPolName(app):  &networkingv1.NetworkPolicy{},
-		nginxConfigName(app):  &corev1.ConfigMap{},
-		nginxDeployName(app):  &appsv1.Deployment{},
-		ingressName(app):      &networkingv1.Ingress{},
-		nginxNetPolName(app):  &networkingv1.NetworkPolicy{},
-		middlewareName(app):   middleware,
+		clockSAName(app):       &corev1.ServiceAccount{},
+		clockRoleName(app):     &rbacv1.Role{},
+		clockBindingName(app):  &rbacv1.RoleBinding{},
+		clockCronJobName(app):  &batchv1.CronJob{},
+		watchCronJobName(app):  &batchv1.CronJob{},
+		triggerNetPolName(app): &networkingv1.NetworkPolicy{},
+		buildNetPolName(app):   &networkingv1.NetworkPolicy{},
+		nginxConfigName(app):   &corev1.ConfigMap{},
+		nginxDeployName(app):   &appsv1.Deployment{},
+		ingressName(app):       &networkingv1.Ingress{},
+		nginxNetPolName(app):   &networkingv1.NetworkPolicy{},
+		middlewareName(app):    middleware,
 	}
 
 	type revision struct {

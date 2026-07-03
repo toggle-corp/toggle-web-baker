@@ -207,7 +207,7 @@ func TestLoadConfig_ValidPopulatesOperatorConfig(t *testing.T) {
 	if cfg.DefaultSchedule != "30 */6 * * *" {
 		t.Fatalf("defaultSchedule = %q, want 30 */6 * * *", cfg.DefaultSchedule)
 	}
-	if cfg.DefaultWatchInterval.String() != "15m0s" {
+	if cfg.DefaultWatchInterval != "15m" {
 		t.Fatalf("defaultWatchInterval = %v, want 15m", cfg.DefaultWatchInterval)
 	}
 }
@@ -229,7 +229,7 @@ activeDeadlineSeconds: 1800
 	if cfg.DefaultSchedule != "0 */12 * * *" {
 		t.Fatalf("defaultSchedule = %q, want 0 */12 * * *", cfg.DefaultSchedule)
 	}
-	if cfg.DefaultWatchInterval.String() != "10m0s" {
+	if cfg.DefaultWatchInterval != "10m" {
 		t.Fatalf("defaultWatchInterval = %v, want 10m", cfg.DefaultWatchInterval)
 	}
 }

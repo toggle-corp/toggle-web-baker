@@ -93,7 +93,7 @@ func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *ba
 func (r *FrontendAppReconciler) watchCronJob(app *bakerv1alpha1.FrontendApp) (*batchv1.CronJob, error) {
 	interval := app.Spec.WatchCommits.Interval
 	if interval == "" {
-		interval = r.Config.DefaultWatchInterval.String()
+		interval = r.Config.DefaultWatchInterval
 	}
 	schedule, err := domain.WatchCron(interval)
 	if err != nil {
@@ -156,7 +156,53 @@ func (r *FrontendAppReconciler) triggerCronJob(app *bakerv1alpha1.FrontendApp, n
 			JobTemplate: batchv1.JobTemplateSpec{
 				Spec: batchv1.JobSpec{
 					BackoffLimit: ptr.To(int32(2)),
-					Template:     corev1.PodTemplateSpec{Spec: podSpec},
+					Template: corev1.PodTemplateSpec{
+						// The role=trigger label is what triggerNetworkPolicy selects.
+						ObjectMeta: metav1.ObjectMeta{Labels: triggerLabelsFor(app)},
+						Spec:       podSpec,
+					},
+				},
+			},
+		},
+	}
+}
+
+// triggerNetworkPolicy fences the trigger (clock/watcher) pods the same way
+// buildNetworkPolicy fences build pods: default-deny ingress; egress = DNS +
+// 0.0.0.0/0 EXCEPT the cluster pod/service CIDRs and the metadata IP. The
+// watcher runs `git ls-remote` against the USER-controlled spec.repo URL, so it
+// needs the same SSRF fencing as the clone container that fetches the same URL.
+// kubectl still reaches the apiserver: the service VIP is resolved to the
+// control-plane endpoint (a node IP outside the excluded pod/service CIDRs)
+// before policy evaluation.
+func (r *FrontendAppReconciler) triggerNetworkPolicy(app *bakerv1alpha1.FrontendApp) *networkingv1.NetworkPolicy {
+	except := append([]string{}, r.Config.ClusterCIDRs...)
+	except = append(except, MetadataIP)
+	dnsPort := intstr.FromInt32(53)
+	udp := corev1.ProtocolUDP
+	tcp := corev1.ProtocolTCP
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: triggerNetPolName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"baker.toggle-corp.com/role": "trigger", "app.kubernetes.io/instance": app.Name}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+			// No Ingress rules => default-deny ingress.
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{ // DNS to the cluster resolver ONLY (kube-system / k8s-app=kube-dns).
+					To: []networkingv1.NetworkPolicyPeer{{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+						},
+						PodSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+						},
+					}},
+					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: &dnsPort}, {Protocol: &tcp, Port: &dnsPort}},
+				},
+				{ // public internet + apiserver endpoint, minus cluster CIDRs + metadata
+					To: []networkingv1.NetworkPolicyPeer{{
+						IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: except},
+					}},
 				},
 			},
 		},

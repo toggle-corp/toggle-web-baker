@@ -1,12 +1,15 @@
 package controller
 
 import (
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
+	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
 // phaseConfigured reports whether an optional phase (setup/fetch) is in play,
@@ -71,6 +74,31 @@ func findContainerStatus(statuses []corev1.ContainerStatus, name string) *corev1
 		if statuses[i].Name == name {
 			return &statuses[i]
 		}
+	}
+	return nil
+}
+
+// shaRefPattern matches a full 40-hex git object name — a pinned ref the
+// watcher cannot poll (`git ls-remote <repo> <sha>` matches no ref).
+var shaRefPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// validateWatchCommits rejects a watchCommits config the watcher CronJob could
+// not honor: an interval the cron grid can't express (the CRD pattern is only a
+// shape check — "90m" passes it but has no cron equivalent) or a ref pinned to
+// a commit SHA (immutable, so watching it is meaningless and every poll would
+// fail). Nil/disabled configs are always valid.
+func validateWatchCommits(app *bakerv1alpha1.FrontendApp) error {
+	wc := app.Spec.WatchCommits
+	if wc == nil || !wc.Enabled {
+		return nil
+	}
+	if wc.Interval != "" {
+		if _, err := domain.WatchCron(wc.Interval); err != nil {
+			return fmt.Errorf("watchCommits: %w", err)
+		}
+	}
+	if shaRefPattern.MatchString(app.Spec.Ref) {
+		return fmt.Errorf("watchCommits: ref %q is a pinned commit SHA — an immutable ref cannot be watched for new commits", app.Spec.Ref)
 	}
 	return nil
 }

@@ -173,6 +173,28 @@ annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
 if [ -z "$annotates" ]; then ok "watch ls-remote failure: patches nothing"; else no "watch ls-remote failure: patches nothing (got [$annotates])"; fi
 unset LS_REMOTE_RC
 
+# ---- 7b. watch mode: exact ref wins over tail-matched lookalikes ----------------
+# ls-remote patterns tail-match path components: asking for "main" also returns
+# refs/heads/feature/main and refs/tags/main, sorted BEFORE refs/heads/main.
+# The watcher must select the exact branch, not the first line.
+SHA_C="3333333333333333333333333333333333333333"
+export LS_REMOTE_STUB="$SHA_B	refs/heads/feature/main
+$SHA_C	refs/heads/main
+$SHA_A	refs/tags/main"
+export LAST_SEEN_STUB="$SHA_A"
+run_clock
+assert_rc 0 "watch exact ref: exits 0"
+annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
+assert_contains "$annotates" "${CM}=${SHA_C}" "watch exact ref: picks refs/heads/main, not feature/main or the tag"
+
+# a tag is selected when no branch matches
+export LS_REMOTE_STUB="$SHA_A	refs/tags/main"
+export LAST_SEEN_STUB="$SHA_A"
+run_clock
+assert_rc 0 "watch tag fallback: exits 0"
+annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
+if [ -z "$annotates" ]; then ok "watch tag fallback: matching tag SHA is a no-op"; else no "watch tag fallback: matching tag SHA is a no-op (got [$annotates])"; fi
+
 # ---- 8. watch mode: empty REF defaults to HEAD ---------------------------------
 unset REF
 export LS_REMOTE_STUB="$SHA_A	HEAD"

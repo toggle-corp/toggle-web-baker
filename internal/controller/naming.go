@@ -19,8 +19,9 @@ func nginxConfigName(app *bakerv1alpha1.FrontendApp) string  { return app.Name +
 func serviceName(app *bakerv1alpha1.FrontendApp) string      { return app.Name }
 func ingressName(app *bakerv1alpha1.FrontendApp) string      { return app.Name }
 func middlewareName(app *bakerv1alpha1.FrontendApp) string   { return app.Name + "-auth" }
-func buildNetPolName(app *bakerv1alpha1.FrontendApp) string  { return app.Name + "-build" }
-func nginxNetPolName(app *bakerv1alpha1.FrontendApp) string  { return app.Name + "-nginx" }
+func buildNetPolName(app *bakerv1alpha1.FrontendApp) string   { return app.Name + "-build" }
+func nginxNetPolName(app *bakerv1alpha1.FrontendApp) string   { return app.Name + "-nginx" }
+func triggerNetPolName(app *bakerv1alpha1.FrontendApp) string { return app.Name + "-trigger" }
 // managedBy is the value of app.kubernetes.io/managed-by on every child.
 const managedBy = "toggle-web-baker"
 
@@ -44,5 +45,13 @@ func buildLabelsFor(app *bakerv1alpha1.FrontendApp) map[string]string {
 func nginxLabelsFor(app *bakerv1alpha1.FrontendApp) map[string]string {
 	l := labelsFor(app)
 	l["baker.toggle-corp.com/role"] = "nginx"
+	return l
+}
+
+// triggerLabelsFor labels the trigger (clock/watcher) CronJob pods so the
+// trigger NetworkPolicy can select them.
+func triggerLabelsFor(app *bakerv1alpha1.FrontendApp) map[string]string {
+	l := labelsFor(app)
+	l["baker.toggle-corp.com/role"] = "trigger"
 	return l
 }

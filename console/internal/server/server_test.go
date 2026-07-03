@@ -559,7 +559,9 @@ func TestList_RowBadgesColumnsAndFlow(t *testing.T) {
 	if !strings.Contains(body, "alpha · grp-a") {
 		t.Errorf("Name cell should show namespace · group; body=%s", body)
 	}
-	// Next build column renders for every row (from spec.schedule / default).
+	// Next build column renders for every row (from spec.scheduledBuilds when
+	// enabled with an explicit schedule; em-dash otherwise — the console never
+	// guesses the operator's default).
 	if !strings.Contains(body, "Next build") {
 		t.Errorf("list should have a Next build column; body=%s", body)
 	}

@@ -398,11 +398,13 @@ type WatchCommitsSpec struct {
 	// around while pausing the watcher CronJob.
 	// +kubebuilder:validation:Required
 	Enabled bool `json:"enabled"`
-	// Interval is how often the watcher polls the remote, as a Go duration in
-	// whole minutes or whole hours (e.g. "5m", "1h") — CronJob schedules cannot
-	// express anything finer, and the pattern rejects sub-minute units at
-	// admission. Empty means the operator default (config defaultWatchInterval).
-	// +kubebuilder:validation:Pattern=`^([0-9]+[mh])+$`
+	// Interval is how often the watcher polls the remote, as a single-unit Go
+	// duration in whole minutes (1m–59m) or whole hours (1h–23h) — CronJob
+	// schedules cannot express anything else. The pattern is a shape check
+	// (single [0-9]+m or [0-9]+h term); range checks live in domain.WatchCron
+	// and surface as a Degraded condition. Empty means the operator default
+	// (config defaultWatchInterval).
+	// +kubebuilder:validation:Pattern=`^[0-9]+[mh]$`
 	// +optional
 	Interval string `json:"interval,omitempty"`
 }
