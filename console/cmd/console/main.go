@@ -34,9 +34,11 @@ func main() {
 		addr = ":8080"
 	}
 
+	// Sentry is optional telemetry: a malformed DSN must not crash-loop the
+	// console. Log loudly and continue with reporting disabled (nil hub).
 	hub, err := sentryhttp.InitFromEnv()
 	if err != nil {
-		log.Fatalf("console: sentry: %v", err)
+		log.Printf("console: sentry disabled: %v", err)
 	}
 
 	client, err := k8s.New()

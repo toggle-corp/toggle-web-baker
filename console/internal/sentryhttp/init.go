@@ -9,7 +9,10 @@ import (
 
 // InitFromEnv builds a Sentry hub from SENTRY_DSN, SENTRY_ENVIRONMENT and
 // SENTRY_RELEASE. An empty or unset SENTRY_DSN returns (nil, nil): a nil hub
-// is the fully disabled mode and safe to pass to Wrap.
+// is the fully disabled mode and safe to pass to Wrap. On error (e.g. a
+// malformed DSN) the hub is nil too — callers should log and continue with
+// reporting disabled rather than exit; telemetry must not take the console
+// down.
 func InitFromEnv() (*sentry.Hub, error) {
 	dsn := os.Getenv("SENTRY_DSN")
 	if dsn == "" {

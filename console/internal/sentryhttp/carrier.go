@@ -11,16 +11,17 @@ type carrier struct {
 
 type carrierKey struct{}
 
-// WithCarrier returns a context with an empty error carrier planted. The
-// middleware calls this for every request; handlers never need to.
-func WithCarrier(ctx context.Context) context.Context {
+// withCarrier returns a context with an empty error carrier planted. The
+// middleware calls this only when reporting is enabled (non-nil hub);
+// handlers never need to.
+func withCarrier(ctx context.Context) context.Context {
 	return context.WithValue(ctx, carrierKey{}, &carrier{})
 }
 
 // AttachError records msg and err (err may be nil for message-only detail)
 // on the request's carrier so the middleware can include them in a 5xx
-// event. It is a no-op when ctx has no carrier, so handlers may call it
-// unconditionally.
+// event. It is a no-op when ctx has no carrier (e.g. Sentry disabled), so
+// handlers may call it unconditionally.
 func AttachError(ctx context.Context, msg string, err error) {
 	c, ok := ctx.Value(carrierKey{}).(*carrier)
 	if !ok {
@@ -30,7 +31,7 @@ func AttachError(ctx context.Context, msg string, err error) {
 	c.err = err
 }
 
-// carrierFrom retrieves the carrier planted by WithCarrier, or nil.
+// carrierFrom retrieves the carrier planted by withCarrier, or nil.
 func carrierFrom(ctx context.Context) *carrier {
 	c, _ := ctx.Value(carrierKey{}).(*carrier)
 	return c

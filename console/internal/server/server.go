@@ -130,7 +130,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	})
 
 	render(w, "list", listData{
-		Head:         head{Title: "Apps", User: userFrom(r)},
+		Head:         head{Title: "Apps", User: sentryhttp.UserFrom(r)},
 		Apps:         filtered,
 		Total:        len(apps),
 		StatusFacets: facets,
@@ -300,7 +300,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	render(w, "detail", detailData{
 		// Bare: the detail page has no standard header — its sticky status bar
 		// carries the breadcrumb, actions, and theme select instead.
-		Head:             head{Title: name, User: userFrom(r), Bare: true},
+		Head:             head{Title: name, User: sentryhttp.UserFrom(r), Bare: true},
 		App:              app,
 		Requested:        r.URL.Query().Get("rebuild") == "requested",
 		CleanupRequested: r.URL.Query().Get("cleanup"),
@@ -603,7 +603,7 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")
 
-	user := userFrom(r)
+	user := sentryhttp.UserFrom(r)
 	if user == "" {
 		s.renderError(w, r, http.StatusUnauthorized,
 			"No authenticated user", ErrNoUser)
@@ -625,7 +625,7 @@ func (s *Server) handleCleanupCache(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")
 
-	user := userFrom(r)
+	user := sentryhttp.UserFrom(r)
 	if user == "" {
 		s.renderError(w, r, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
 		return
@@ -642,7 +642,7 @@ func (s *Server) handleCleanupReleases(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")
 
-	user := userFrom(r)
+	user := sentryhttp.UserFrom(r)
 	if user == "" {
 		s.renderError(w, r, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
 		return
@@ -652,17 +652,6 @@ func (s *Server) handleCleanupReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?cleanup=releases", http.StatusSeeOther)
-}
-
-// userFrom reads the GitHub username oauth2-proxy injects into the upstream
-// request. In reverse-proxy mode oauth2-proxy passes X-Forwarded-User (via
-// --pass-user-headers) — that is the live source. X-Auth-Request-User is only
-// emitted in nginx auth_request mode, kept here as a harmless fallback.
-func userFrom(r *http.Request) string {
-	if u := r.Header.Get("X-Forwarded-User"); u != "" {
-		return u
-	}
-	return r.Header.Get("X-Auth-Request-User")
 }
 
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, code int, msg string, err error) {
