@@ -29,6 +29,7 @@ import (
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
+	"github.com/toggle-corp/toggle-web-baker/internal/observability"
 )
 
 // +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=frontendapps,verbs=get;list;watch;create;update;patch;delete
@@ -61,6 +62,10 @@ type FrontendAppReconciler struct {
 
 	// Clock is injected for testability (defaults to time.Now).
 	Clock func() time.Time
+
+	// Sentry reports platform-fault terminal failures. A nil Reporter is a
+	// fully disabled reporter (all methods are nil-receiver-safe).
+	Sentry *observability.Reporter
 }
 
 func (r *FrontendAppReconciler) now() time.Time {
@@ -380,6 +385,15 @@ func (r *FrontendAppReconciler) fail(ctx context.Context, app *bakerv1alpha1.Fro
 	r.setCondition(app, bakerv1alpha1.ConditionReady, metav1.ConditionFalse, reason, msg)
 	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	app.Status.Phase = bakerv1alpha1.PhaseDegraded
+	if isPlatformFault(reason, "") {
+		r.Sentry.CaptureTerminalFailure(observability.TerminalFailure{
+			App:       app.Name,
+			Namespace: app.Namespace,
+			Phase:     string(bakerv1alpha1.PhaseDegraded),
+			Reason:    reason,
+			Message:   msg,
+		})
+	}
 	if err := r.Status().Update(ctx, app); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -598,6 +612,18 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		}
 		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionFalse, reason, message)
 		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, message)
+		// Classified AFTER the OOM promotion above so the FINAL reason decides:
+		// an OOMKilled build is the user's memory limit, never a platform fault.
+		if isPlatformFault(reason, app.Status.Build.FailedStep) {
+			r.Sentry.CaptureTerminalFailure(observability.TerminalFailure{
+				App:       app.Name,
+				Namespace: app.Namespace,
+				Phase:     string(app.Status.Phase),
+				Step:      app.Status.Build.FailedStep,
+				Reason:    reason,
+				Message:   message,
+			})
+		}
 	}
 
 	// Append a COPY of the finalized record to the newest-first history ring
