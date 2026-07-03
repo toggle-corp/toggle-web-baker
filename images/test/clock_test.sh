@@ -50,32 +50,52 @@ trap 'rm -rf "$TMP"' EXIT
 
 # ---- stub kubectl -----------------------------------------------------------
 # A fake `kubectl` that logs its full invocation to $KUBECTL_LOG and succeeds.
+# `kubectl get` answers with $LAST_SEEN_STUB (the watcher's jsonpath read of the
+# last-seen annotation) so watch-mode state is scriptable per test.
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
 cat >"$STUB_BIN/kubectl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$KUBECTL_LOG"
+if [ "${1:-}" = "get" ]; then printf '%s' "${LAST_SEEN_STUB:-}"; fi
 exit 0
 STUB
 chmod +x "$STUB_BIN/kubectl"
+
+# ---- stub git ----------------------------------------------------------------
+# A fake `git` that logs to $GIT_LOG; `ls-remote` prints $LS_REMOTE_STUB and
+# exits $LS_REMOTE_RC (default 0) so remote SHAs and failures are scriptable.
+cat >"$STUB_BIN/git" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GIT_LOG"
+if [ "${1:-}" = "ls-remote" ]; then
+	printf '%s\n' "${LS_REMOTE_STUB:-}"
+	exit "${LS_REMOTE_RC:-0}"
+fi
+exit 0
+STUB
+chmod +x "$STUB_BIN/git"
 export PATH="$STUB_BIN:$PATH"
 
 ENTRY="$HERE/../clock/entrypoint.sh"
 KUBECTL_LOG="$TMP/kubectl.log"
-export KUBECTL_LOG
+GIT_LOG="$TMP/git.log"
+export KUBECTL_LOG GIT_LOG
 
 RA="rebuild.baker.toggle-corp.com/requested-at"
 BY="rebuild.baker.toggle-corp.com/by"
+CM="rebuild.baker.toggle-corp.com/commit"
 
 run_clock() {
 	: >"$KUBECTL_LOG"
+	: >"$GIT_LOG"
 	rc=0
 	err="$(bash "$ENTRY" 2>&1 1>/dev/null)" || rc=$?
 }
 
 # ---- 1. missing APP fails ---------------------------------------------------
-unset APP REQUESTED_AT_ANNOTATION BY_ANNOTATION 2>/dev/null || true
-export REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY"
+unset APP REQUESTED_AT_ANNOTATION BY_ANNOTATION COMMIT_ANNOTATION 2>/dev/null || true
+export REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
 run_clock
 assert_rc 1 "missing APP: exits 1"
 assert_contains "$err" "APP" "missing APP: reports APP required"
@@ -83,23 +103,84 @@ assert_contains "$err" "APP" "missing APP: reports APP required"
 # ---- 2. missing annotation keys fail ----------------------------------------
 export APP=demo
 unset REQUESTED_AT_ANNOTATION
-export BY_ANNOTATION="$BY"
+export BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
 run_clock
 assert_rc 1 "missing REQUESTED_AT_ANNOTATION: exits 1"
 
+export REQUESTED_AT_ANNOTATION="$RA"
+unset COMMIT_ANNOTATION
+run_clock
+assert_rc 1 "missing COMMIT_ANNOTATION: exits 1"
+
 # ---- 3. valid env: exact annotate contract ----------------------------------
-export APP=demo REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY"
+export APP=demo REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
 run_clock
 assert_rc 0 "valid env: exits 0"
 line="$(cat "$KUBECTL_LOG")"
 assert_contains "$line" "annotate frontendapp demo" "targets the named FrontendApp"
 assert_contains "$line" "${RA}=" "sets requested-at"
 assert_contains "$line" "${BY}-" "CLEARS the by annotation (${BY}-)"
+assert_contains "$line" "${CM}-" "CLEARS the commit annotation (${CM}-)"
 assert_contains "$line" "--overwrite" "uses --overwrite"
 # requested-at value must be a fresh integer epoch (digits), never a literal.
 ra_val="$(printf '%s\n' "$line" | grep -oE "${RA}=[0-9]+" | head -n1)"
 assert_contains "$ra_val" "${RA}=" "requested-at value is numeric epoch"
 assert_not_contains "$line" 'date +%s' "requested-at is EXPANDED, not a literal command"
+
+# ---- 4. watch mode: first tick seeds last-seen, does NOT trigger -------------
+LS="watch.baker.toggle-corp.com/last-seen-sha"
+SHA_A="1111111111111111111111111111111111111111"
+export MODE=watch REPO="https://github.com/acme/site.git" REF="main" \
+	LAST_SEEN_ANNOTATION="$LS"
+export LS_REMOTE_STUB="$SHA_A	refs/heads/main"
+export LAST_SEEN_STUB=""
+run_clock
+assert_rc 0 "watch seed: exits 0"
+gitline="$(cat "$GIT_LOG")"
+assert_contains "$gitline" "ls-remote https://github.com/acme/site.git main" "watch seed: ls-remote repo+ref"
+annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
+assert_contains "$annotates" "${LS}=${SHA_A}" "watch seed: records last-seen"
+assert_not_contains "$annotates" "${RA}=" "watch seed: does NOT set requested-at"
+assert_not_contains "$annotates" "${CM}=" "watch seed: does NOT set commit"
+
+# ---- 5. watch mode: unchanged SHA is a no-op ---------------------------------
+export LAST_SEEN_STUB="$SHA_A"
+run_clock
+assert_rc 0 "watch same SHA: exits 0"
+annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
+if [ -z "$annotates" ]; then ok "watch same SHA: no annotate at all"; else no "watch same SHA: no annotate at all (got [$annotates])"; fi
+
+# ---- 6. watch mode: new SHA triggers atomically -------------------------------
+SHA_B="2222222222222222222222222222222222222222"
+export LS_REMOTE_STUB="$SHA_B	refs/heads/main"
+export LAST_SEEN_STUB="$SHA_A"
+run_clock
+assert_rc 0 "watch new SHA: exits 0"
+annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
+n_annotates="$(grep -c '^annotate' "$KUBECTL_LOG" || true)"
+if [ "$n_annotates" -eq 1 ]; then ok "watch new SHA: exactly ONE annotate call"; else no "watch new SHA: exactly ONE annotate call (got $n_annotates)"; fi
+assert_contains "$annotates" "${RA}=" "watch new SHA: sets requested-at"
+assert_contains "$annotates" "${CM}=${SHA_B}" "watch new SHA: sets commit SHA"
+assert_contains "$annotates" "${LS}=${SHA_B}" "watch new SHA: advances last-seen"
+assert_contains "$annotates" "${BY}-" "watch new SHA: clears by"
+assert_contains "$annotates" "--overwrite" "watch new SHA: uses --overwrite"
+
+# ---- 7. watch mode: ls-remote failure patches nothing --------------------------
+export LS_REMOTE_RC=128
+run_clock
+if [ "$rc" -ne 0 ]; then ok "watch ls-remote failure: exits nonzero"; else no "watch ls-remote failure: exits nonzero (rc=0)"; fi
+annotates="$(grep '^annotate' "$KUBECTL_LOG" || true)"
+if [ -z "$annotates" ]; then ok "watch ls-remote failure: patches nothing"; else no "watch ls-remote failure: patches nothing (got [$annotates])"; fi
+unset LS_REMOTE_RC
+
+# ---- 8. watch mode: empty REF defaults to HEAD ---------------------------------
+unset REF
+export LS_REMOTE_STUB="$SHA_A	HEAD"
+export LAST_SEEN_STUB="$SHA_A"
+run_clock
+assert_rc 0 "watch default ref: exits 0"
+gitline="$(cat "$GIT_LOG")"
+assert_contains "$gitline" "ls-remote https://github.com/acme/site.git HEAD" "watch default ref: ls-remote uses HEAD"
 
 # ---- summary ----------------------------------------------------------------
 printf '\n# %s passed, %s failed\n' "$PASS" "$FAIL"

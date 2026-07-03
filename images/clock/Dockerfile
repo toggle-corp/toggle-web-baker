@@ -8,9 +8,10 @@
 # platform images and satisfies the pod's runAsNonRoot gate.
 FROM alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
-# kubectl for the annotate; bash for the entrypoint. busybox `date` (already in
-# alpine) provides the +%s epoch value, so no coreutils is needed.
-RUN apk add --no-cache bash kubectl
+# kubectl for the annotate; bash for the entrypoint; git for watch mode's
+# `ls-remote` commit poll. busybox `date` (already in alpine) provides the +%s
+# epoch value, so no coreutils is needed.
+RUN apk add --no-cache bash git kubectl
 
 COPY entrypoint.sh /usr/local/bin/clock-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/clock-entrypoint.sh
