@@ -8,9 +8,11 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -719,5 +721,48 @@ func TestReconcile_OnlyOneCleanupStartsPerReconcile(t *testing.T) {
 	}
 	if running != 1 || pending != 1 {
 		t.Fatalf("want exactly one Running + one Pending, got cache=%q releases=%q", cache, rel)
+	}
+}
+
+// Same delete-before-persist race as the du Jobs: a cleanup result must
+// survive a failed status write. A Job deleted before its result is durable
+// can never be re-observed, which would leave the action Running forever; the
+// Job is GC'd only after the following reconcile persists the result.
+func TestReconcile_CleanupResultSurvivesStatusConflict(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.CleanupCacheRequestedAtAnnotation: "c-1",
+	}
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	// The action is already Running for c-1 (started on a prior reconcile).
+	app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{
+		Cache: &bakerv1alpha1.CleanupActionStatus{RequestedAt: "c-1", Phase: "Running"},
+	}
+	r, cl := newReconcilerWithFuncs(t, statusConflictOnce(), app, wffc())
+	job := completeCleanupJob(t, cl, app, cleanupModeCache,
+		`{"action":"prune","before":2000,"after":800,"reclaimed":1200,"threshold":0}`)
+
+	// First reconcile: the result is read, but the status write conflicts.
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace}})
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("first reconcile must surface the status conflict, got %v", err)
+	}
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(job), &batchv1.Job{}); err != nil {
+		t.Fatalf("cleanup Job must survive the failed status write: %v", err)
+	}
+	if got := getApp(t, cl, "demo", "apps"); got.Status.Cleanup.Cache.Phase != "Running" {
+		t.Fatalf("conflicted write must not persist the result, phase = %q", got.Status.Cleanup.Cache.Phase)
+	}
+
+	// Second reconcile: re-observes the surviving Job, persists, then GCs it.
+	reconcile(t, r, app)
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Cleanup.Cache.Phase != "Succeeded" || got.Status.Cleanup.Cache.ReclaimedBytes != 1200 {
+		t.Fatalf("cleanup result must land after the retry, got phase=%q reclaimed=%d",
+			got.Status.Cleanup.Cache.Phase, got.Status.Cleanup.Cache.ReclaimedBytes)
+	}
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(job), &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("cleanup Job must be GC'd once its result is persisted, got err=%v", err)
 	}
 }

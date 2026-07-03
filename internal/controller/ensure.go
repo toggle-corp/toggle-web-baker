@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -35,23 +36,34 @@ func parseCopierMessage(s string) (CopierMessage, bool) {
 	return m, true
 }
 
-// upsert creates obj if absent, else patches it toward the desired state. It
-// always stamps an owner reference for cascade GC.
+// fieldOwner is the fixed Server-Side Apply field manager for every child the
+// operator converges via upsert.
+const fieldOwner = "toggle-web-baker-operator"
+
+// upsert converges obj toward the desired state via Server-Side Apply (which
+// also creates it if absent). SSA — not a full-object Update — is load-bearing:
+// the desired object lacks server-populated defaults, so a blind PUT always
+// differed from the stored object, bumping generation/resourceVersion on every
+// reconcile; the owned-child watch then re-enqueued the reconcile that issued
+// the next PUT — a self-feeding hot loop. Applying an unchanged desired state
+// is a server-side no-op (no write, no bump, no watch event), so steady state
+// converges. It always stamps an owner reference for cascade GC.
 func (r *FrontendAppReconciler) upsert(ctx context.Context, app *bakerv1alpha1.FrontendApp, obj client.Object, mutate func()) error {
 	mutate()
 	if err := controllerutil.SetControllerReference(app, obj, r.Scheme); err != nil {
 		return err
 	}
-	existing := obj.DeepCopyObject().(client.Object)
-	err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing)
+	// SSA requires apiVersion/kind on the wire; typed objects carry an empty
+	// TypeMeta, so resolve the GVK from the scheme (the unstructured Traefik
+	// Middleware already carries its own, which GVKForObject returns as-is).
+	gvk, err := apiutil.GVKForObject(obj, r.Scheme)
 	if err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return err
-		}
-		return r.Create(ctx, obj)
+		return err
 	}
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	return r.Update(ctx, obj)
+	obj.GetObjectKind().SetGroupVersionKind(gvk)
+	// An apply is not compare-and-swap: never send a resourceVersion.
+	obj.SetResourceVersion("")
+	return r.Patch(ctx, obj, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership)
 }
 
 // ensureExists creates obj if absent and otherwise leaves its (effectively

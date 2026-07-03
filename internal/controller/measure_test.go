@@ -2,18 +2,41 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
+
+// statusConflictOnce builds interceptor funcs that fail the FIRST FrontendApp
+// status Update with a Conflict (simulating a concurrent status writer) and
+// pass everything else through.
+func statusConflictOnce() interceptor.Funcs {
+	conflicts := 1
+	return interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			if _, isApp := obj.(*bakerv1alpha1.FrontendApp); isApp && subResourceName == "status" && conflicts > 0 {
+				conflicts--
+				return apierrors.NewConflict(
+					schema.GroupResource{Group: bakerv1alpha1.GroupVersion.Group, Resource: "frontendapps"},
+					obj.GetName(), errors.New("simulated concurrent status writer"))
+			}
+			return cl.SubResource(subResourceName).Update(ctx, obj, opts...)
+		},
+	}
+}
 
 // MeasureJob mounts the target PVC read-only at /target, runs the du image, and
 // carries the measure role + volume labels (distinct from the build role so it
@@ -243,7 +266,8 @@ func completeMeasureJob(t *testing.T, cl client.Client, app *bakerv1alpha1.Front
 
 // observeMeasurement parses the bare integer from a finished du pod and MERGES
 // it into status.storage.sizes WITHOUT clobbering the copier's output/source
-// keys, then deletes the processed Job.
+// keys. The processed Job is RETURNED (not deleted): the caller GCs it only
+// after the status write persists the result.
 func TestObserveMeasurement_MergesSizesPreservingCopierKeys(t *testing.T) {
 	app := baseApp()
 	r, cl := newReconciler(t, app, wffc())
@@ -251,7 +275,8 @@ func TestObserveMeasurement_MergesSizesPreservingCopierKeys(t *testing.T) {
 	app.Status.Storage.Sizes = map[string]int64{"output": 1000, "source": 2000}
 	job := completeMeasureJob(t, cl, app, "cache", "123456", 0)
 
-	if err := r.observeMeasurement(context.Background(), app); err != nil {
+	harvested, err := r.observeMeasurement(context.Background(), app)
+	if err != nil {
 		t.Fatalf("observeMeasurement: %v", err)
 	}
 	if app.Status.Storage.Sizes["cache"] != 123456 {
@@ -263,10 +288,14 @@ func TestObserveMeasurement_MergesSizesPreservingCopierKeys(t *testing.T) {
 	if app.Status.Storage.MeasuredAt == nil {
 		t.Fatalf("MeasuredAt must be refreshed")
 	}
-	// The processed Job is deleted (recorded once).
+	// The processed Job is handed to the caller for post-persist GC — it must
+	// still exist here (the recorded size is not durable yet).
+	if len(harvested) != 1 || harvested[0].Name != job.Name {
+		t.Fatalf("expected the processed Job to be returned for deferred GC, got %+v", harvested)
+	}
 	got := &batchv1.Job{}
-	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(job), got); err == nil {
-		t.Fatalf("processed measure job must be deleted")
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(job), got); err != nil {
+		t.Fatalf("processed measure job must survive until the status write: %v", err)
 	}
 }
 
@@ -277,7 +306,7 @@ func TestObserveMeasurement_RecordsDelta(t *testing.T) {
 	app.Status.Storage.Sizes = map[string]int64{"dataCache": 100}
 	completeMeasureJob(t, cl, app, "dataCache", "150", 0)
 
-	if err := r.observeMeasurement(context.Background(), app); err != nil {
+	if _, err := r.observeMeasurement(context.Background(), app); err != nil {
 		t.Fatalf("observeMeasurement: %v", err)
 	}
 	if app.Status.Storage.Sizes["dataCache"] != 150 {
@@ -304,10 +333,50 @@ func TestObserveMeasurement_IgnoresFailedJob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.observeMeasurement(context.Background(), app); err != nil {
+	if _, err := r.observeMeasurement(context.Background(), app); err != nil {
 		t.Fatalf("observeMeasurement: %v", err)
 	}
 	if _, ok := app.Status.Storage.Sizes["cache"]; ok {
 		t.Fatalf("failed measurement must not record a size")
+	}
+}
+
+// The delete-before-persist race: a du result reaches status only at the END
+// of Reconcile, so deleting the harvested Job during observation lost the
+// measurement whenever the status write conflicted — and the measure debounce
+// blocked a retry for a whole interval. The Job must survive a failed status
+// write; the size lands on the following reconcile, and only THEN is the Job
+// GC'd.
+func TestReconcile_MeasureResultSurvivesStatusConflict(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{bakerv1alpha1.RebuildAnnotation: "tok-1"}
+	app.Status.LastProcessedRebuild = "tok-1"
+	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
+	app.Status.LastBuiltSpecHash = buildSpecFrom(app).Hash()
+	r, cl := newReconcilerWithFuncs(t, statusConflictOnce(), app, wffc())
+	job := completeMeasureJob(t, cl, app, "cache", "123456", 0)
+
+	// First reconcile: the du result is read, but the status write conflicts.
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace}})
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("first reconcile must surface the status conflict, got %v", err)
+	}
+	// The harvested Job survives (its result is not durable yet)...
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(job), &batchv1.Job{}); err != nil {
+		t.Fatalf("measure Job must survive the failed status write: %v", err)
+	}
+	// ...and the conflicted write really did persist nothing.
+	if got := getApp(t, cl, "demo", "apps"); got.Status.Storage.Sizes["cache"] != 0 {
+		t.Fatalf("conflicted write must not persist a size, got %d", got.Status.Storage.Sizes["cache"])
+	}
+
+	// Second reconcile: re-observes the surviving Job, persists, then GCs it.
+	reconcile(t, r, app)
+	got := getApp(t, cl, "demo", "apps")
+	if got.Status.Storage.Sizes["cache"] != 123456 {
+		t.Fatalf(`sizes["cache"] = %d, want 123456 after the retry`, got.Status.Storage.Sizes["cache"])
+	}
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(job), &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("measure Job must be GC'd once its result is persisted, got err=%v", err)
 	}
 }

@@ -99,8 +99,8 @@ func (r *FrontendAppReconciler) MeasureJob(app *bakerv1alpha1.FrontendApp, m mea
 		Spec: batchv1.JobSpec{
 			BackoffLimit:          ptr.To(int32(0)),
 			ActiveDeadlineSeconds: ptr.To(int64(600)),
-			// Short TTL is a backstop; observeMeasurement deletes the Job once it
-			// has read the result.
+			// Short TTL is a backstop; the operator GCs the Job once its result
+			// has been persisted to status.
 			TTLSecondsAfterFinished: ptr.To(int32(300)),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
@@ -144,14 +144,18 @@ func (r *FrontendAppReconciler) maybeStartMeasurement(ctx context.Context, app *
 
 // observeMeasurement reads finished du Jobs and MERGES their byte counts into
 // status.storage.sizes (keyed cache / dataCache), preserving the copier's
-// output/source entries. A read Job is deleted so the result is recorded exactly
-// once (a re-read would needlessly re-stamp MeasuredAt). Failed Jobs are skipped
-// (left for their TTL).
-func (r *FrontendAppReconciler) observeMeasurement(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+// output/source entries. Harvested Jobs are returned, NOT deleted: the caller
+// GCs them only after the status write persists the recorded sizes — deleting
+// first would lose the result forever on a status-write conflict (the measure
+// debounce blocks a retry for a whole interval). recordSize keeps the recording
+// idempotent should a harvested Job be re-read before its GC lands. Failed Jobs
+// are skipped (left for their TTL).
+func (r *FrontendAppReconciler) observeMeasurement(ctx context.Context, app *bakerv1alpha1.FrontendApp) ([]*batchv1.Job, error) {
 	jobs := &batchv1.JobList{}
 	if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(measureLabelsFor(app))); err != nil {
-		return err
+		return nil, err
 	}
+	var harvested []*batchv1.Job
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
 		if cond := jobFinished(job); cond == nil || cond.Type != batchv1.JobComplete {
@@ -166,10 +170,9 @@ func (r *FrontendAppReconciler) observeMeasurement(ctx context.Context, app *bak
 			continue
 		}
 		r.recordSize(app, key, bytes)
-		policy := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &policy})
+		harvested = append(harvested, job)
 	}
-	return nil
+	return harvested, nil
 }
 
 // readMeasurement parses the bare integer byte count from the du pod's
@@ -239,12 +242,18 @@ func (r *FrontendAppReconciler) recordPVCCapacities(ctx context.Context, app *ba
 
 // recordSize merges one measured size into status.storage.sizes, records the
 // delta from the prior measurement (so the console can show growth), and
-// refreshes MeasuredAt. It never clobbers other keys.
+// refreshes MeasuredAt. It never clobbers other keys. An identical re-read is a
+// no-op: a harvested Job outlives the status write until the deferred GC lands,
+// so the same result can be observed twice — that must not zero the recorded
+// delta or re-stamp MeasuredAt (the copier keeps MeasuredAt fresh per build).
 func (r *FrontendAppReconciler) recordSize(app *bakerv1alpha1.FrontendApp, key string, bytes int64) {
 	if app.Status.Storage.Sizes == nil {
 		app.Status.Storage.Sizes = map[string]int64{}
 	}
 	if prev, ok := app.Status.Storage.Sizes[key]; ok {
+		if prev == bytes {
+			return
+		}
 		if app.Status.Storage.LastRunDeltas == nil {
 			app.Status.Storage.LastRunDeltas = map[string]int64{}
 		}

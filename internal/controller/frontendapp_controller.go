@@ -168,8 +168,11 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// 9b. Observe finished du measurement Jobs and merge cache/dataCache sizes
-	// into status.storage.sizes (alongside the copier's output/outputTotal entries).
-	if err := r.observeMeasurement(ctx, app); err != nil {
+	// into status.storage.sizes (alongside the copier's output/outputTotal
+	// entries). The harvested Jobs are GC'd only after step 11 persists the
+	// recorded sizes.
+	measured, err := r.observeMeasurement(ctx, app)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -180,7 +183,9 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// 9c. On-demand cleanup (cache prune / release prune). Observe finished
 	// cleanup Jobs, then start any fresh request — serialized against the build
 	// (which takes precedence) and against each other via domain.DecideCleanup.
-	if err := r.reconcileCleanup(ctx, app, active); err != nil {
+	// Harvested Jobs are GC'd with the measure Jobs after step 11.
+	cleaned, err := r.reconcileCleanup(ctx, app, active)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -201,7 +206,31 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.Status().Update(ctx, app); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// 12. GC the harvested measure/cleanup Jobs ONLY now that their results are
+	// durably in status. Deleting before the write lost the result with the Job
+	// whenever the status Update conflicted: the measure debounce then blocked a
+	// re-measure for a whole interval, and a cleanup action could never be
+	// re-observed. Best-effort: a failed delete leaves the Job to be re-observed
+	// idempotently (recordSize skips identical re-reads) and re-deleted next
+	// reconcile.
+	r.deleteJobs(ctx, append(measured, cleaned...))
 	return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
+}
+
+// deleteJobs background-deletes the given Jobs. Best-effort — a failure never
+// fails the reconcile (each caller has a re-observe path that converges on the
+// next reconcile) — but non-NotFound errors are logged for visibility: while a
+// harvested Job lingers, maybeStartMeasurement's Create is a silent
+// AlreadyExists no-op and the cleanup same-mode hold stays engaged, so a
+// persistently failing delete quietly stalls both without any other signal.
+func (r *FrontendAppReconciler) deleteJobs(ctx context.Context, jobs []*batchv1.Job) {
+	policy := metav1.DeletePropagationBackground
+	for _, j := range jobs {
+		if err := r.Delete(ctx, j, &client.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
+			log.FromContext(ctx).Error(err, "failed to delete harvested job (will retry next reconcile)", "job", j.Name)
+		}
+	}
 }
 
 // ---- decision helpers (factored for fake-client unit tests) ----

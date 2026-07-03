@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,9 +13,13 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -22,6 +27,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
@@ -68,13 +74,85 @@ func baseApp() *bakerv1alpha1.FrontendApp {
 	}
 }
 
+// emulateApplyPatch emulates Server-Side Apply on the fake client, which
+// rejects Apply patches outright in controller-runtime v0.20 (see
+// kubernetes/kubernetes#115598). The fake apiserver never defaults fields, so
+// the stored object is exactly the last applied state plus bookkeeping
+// (resourceVersion, uid, generation, creationTimestamp, TypeMeta); an
+// unchanged apply is detected by normalizing that bookkeeping on BOTH sides
+// and deep-comparing — mirroring the real apiserver's SSA no-op (no write, no
+// resourceVersion/generation bump, no watch event). Note this emulation is a
+// replace-not-merge approximation: it overwrites the stored object instead of
+// merging per-field ownership, which is valid only because these tests have a
+// single writer (the operator). Real SSA merge semantics are covered by e2e.
+func emulateApplyPatch(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if patch.Type() != types.ApplyPatchType {
+		return cl.Patch(ctx, obj, patch, opts...)
+	}
+	existing := newObjectLike(obj)
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		return cl.Create(ctx, obj)
+	}
+	if equality.Semantic.DeepEqual(normalizeForApply(obj), normalizeForApply(existing)) {
+		return nil
+	}
+	merged := obj.DeepCopyObject().(client.Object)
+	merged.SetResourceVersion(existing.GetResourceVersion())
+	return cl.Update(ctx, merged)
+}
+
+// normalizeForApply strips the server-side bookkeeping the applied desired
+// object never carries, symmetrically on a copy. It also strips .status: SSA
+// to the main resource never writes the status subresource, so a test that
+// seeds a child's status must not defeat the no-op detection (the desired
+// object's empty status would forever differ from the seeded one, turning
+// every apply into a spurious Update).
+func normalizeForApply(obj client.Object) client.Object {
+	c := obj.DeepCopyObject().(client.Object)
+	c.SetResourceVersion("")
+	c.SetUID("")
+	c.SetGeneration(0)
+	c.SetCreationTimestamp(metav1.Time{})
+	c.SetManagedFields(nil)
+	c.GetObjectKind().SetGroupVersionKind(schema.GroupVersionKind{})
+	if u, ok := c.(*unstructured.Unstructured); ok {
+		unstructured.RemoveNestedField(u.Object, "status")
+	} else if f := reflect.ValueOf(c).Elem().FieldByName("Status"); f.IsValid() && f.CanSet() {
+		f.Set(reflect.Zero(f.Type()))
+	}
+	return c
+}
+
+// newObjectLike returns an empty instance of obj's concrete type, carrying the
+// GVK over (unstructured objects need it to round-trip a Get).
+func newObjectLike(obj client.Object) client.Object {
+	out := reflect.New(reflect.TypeOf(obj).Elem()).Interface().(client.Object)
+	out.GetObjectKind().SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
+	return out
+}
+
 func newReconciler(t *testing.T, objs ...client.Object) (*FrontendAppReconciler, client.Client) {
 	t.Helper()
+	return newReconcilerWithFuncs(t, interceptor.Funcs{}, objs...)
+}
+
+// newReconcilerWithFuncs is newReconciler with extra fake-client interceptors
+// (e.g. injected status-write conflicts). The Apply-patch emulation is always
+// installed unless the caller overrides Patch itself.
+func newReconcilerWithFuncs(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) (*FrontendAppReconciler, client.Client) {
+	t.Helper()
 	s := testScheme(t)
+	if funcs.Patch == nil {
+		funcs.Patch = emulateApplyPatch
+	}
 	cl := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(objs...).
 		WithStatusSubresource(&bakerv1alpha1.FrontendApp{}).
+		WithInterceptorFuncs(funcs).
 		Build()
 	r := &FrontendAppReconciler{
 		Client:           cl,

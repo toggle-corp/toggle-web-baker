@@ -286,12 +286,23 @@ func (r *FrontendAppReconciler) cleanupActive(ctx context.Context, app *bakerv1a
 // reconcileCleanup is the cleanup chokepoint: for each action it first observes
 // any finished Job (recording the result + advancing the processed marker), then
 // decides whether to start a new Job. Serialization (against builds + each
-// other) goes through domain.DecideCleanup; build requests take precedence.
-func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp, buildActive bool) error {
+// other) goes through domain.DecideCleanup; build requests take precedence. It
+// returns the harvested finished Jobs for the caller to GC after the status
+// write persists their results.
+func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp, buildActive bool) ([]*batchv1.Job, error) {
 	// Observe finished cleanup Jobs first, so a just-completed action frees the
-	// serialization slot for the other action in this same reconcile.
-	if err := r.observeCleanup(ctx, app); err != nil {
-		return err
+	// serialization slot for the OTHER action in this same reconcile.
+	harvested, err := r.observeCleanup(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	// A harvested Job still exists until the status write persists its result;
+	// its deterministic per-mode name would turn a same-mode Create into a
+	// silent AlreadyExists no-op whose STALE result would later be read as the
+	// new run's. Hold same-mode starts until the Job is GC'd (next reconcile).
+	harvestedMode := map[string]bool{}
+	for _, j := range harvested {
+		harvestedMode[j.Labels[cleanupModeLabel]] = true
 	}
 	// startedThisPass guards the second action: a cleanup Job Created for the
 	// first action is not yet visible to the cached List in cleanupActive within
@@ -302,12 +313,12 @@ func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *baker
 		st := actionStatus(app, a.mode)
 		active, err := r.cleanupActive(ctx, app)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		switch domain.DecideCleanup(a.requestedAt, st.RequestedAt, buildActive, active || startedThisPass) {
+		switch domain.DecideCleanup(a.requestedAt, st.RequestedAt, buildActive, active || startedThisPass || harvestedMode[a.mode]) {
 		case domain.StartCleanup:
 			if err := r.startCleanup(ctx, app, a); err != nil {
-				return err
+				return nil, err
 			}
 			startedThisPass = true
 		case domain.WaitCleanup:
@@ -321,7 +332,7 @@ func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *baker
 			// nothing to do
 		}
 	}
-	return nil
+	return harvested, nil
 }
 
 // startCleanup creates the cleanup Job and marks the action Running, recording
@@ -345,15 +356,19 @@ func (r *FrontendAppReconciler) startCleanup(ctx context.Context, app *bakerv1al
 	return nil
 }
 
-// observeCleanup reads finished cleanup Jobs, writes the per-action terminal
-// status from the termination-log JSON, and GCs the processed Job (mirroring the
-// du Job lifecycle). The processed marker is already at the requested token
-// (stamped at start), so this only flips Phase Running->Succeeded/Failed.
-func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+// observeCleanup reads finished cleanup Jobs and writes the per-action terminal
+// status from the termination-log JSON. The processed marker is already at the
+// requested token (stamped at start), so this only flips Phase
+// Running->Succeeded/Failed. Harvested Jobs are returned, NOT deleted
+// (mirroring the du Job lifecycle): the caller GCs them only after the status
+// write persists the result — deleting first would lose it on a status-write
+// conflict, and a deleted Job can never be re-observed, stranding the action.
+func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp) ([]*batchv1.Job, error) {
 	jobs := &batchv1.JobList{}
 	if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(cleanupLabelsFor(app))); err != nil {
-		return err
+		return nil, err
 	}
+	var harvested []*batchv1.Job
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
 		cond := jobFinished(job)
@@ -365,6 +380,24 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 			continue
 		}
 		st := actionStatus(app, mode)
+		// Idempotency short-circuit (mirroring observeBuild): a terminal phase
+		// here means a PRIOR reconcile already persisted THIS Job's result and
+		// only its step-12 delete failed transiently. Skip every status mutation
+		// — no CompletedAt re-stamp (churn on every reconcile while the delete
+		// keeps failing) and no recordSize/ReleaseCount writeback (the stale
+		// Job's numbers must not overwrite fresher sizes/releaseCount written by
+		// a build that completed in between) — but STILL return the Job so the
+		// GC delete is retried. Keying on the terminal phase is safe: the phase
+		// only turns terminal here, after the result is read; startCleanup
+		// resets it to "Running" (and WaitCleanup to "Pending") when a new run
+		// is recorded; and the same-mode hold in reconcileCleanup guarantees a
+		// NEW Job under this deterministic name is only Created after this one
+		// is GC'd. So terminal + a finished Job still present can only mean
+		// "this very Job's result is already durable".
+		if st.Phase == "Succeeded" || st.Phase == "Failed" {
+			harvested = append(harvested, job)
+			continue
+		}
 		st.CompletedAt = ptr.To(metav1.NewTime(r.now()))
 		if cond.Type == batchv1.JobComplete {
 			res, msg := r.readCleanupResult(ctx, app, job)
@@ -398,10 +431,9 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 			st.ReclaimedBytes = 0
 			st.Message = "cleanup failed: " + cond.Message
 		}
-		policy := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &policy})
+		harvested = append(harvested, job)
 	}
-	return nil
+	return harvested, nil
 }
 
 // readCleanupResult parses the cleanup container's termination-message JSON
