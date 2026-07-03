@@ -119,12 +119,14 @@ func run(configPath string, reporter *observability.Reporter) error {
 	}
 
 	r := &controller.AppReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Config:           cfg,
-		StorageClassName: mgrOpts.StorageClass,
-		TraefikNamespace: mgrOpts.TraefikNamespace,
-		Sentry:           reporter,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Config:            cfg,
+		StorageClassName:  mgrOpts.StorageClass,
+		TraefikNamespace:  mgrOpts.TraefikNamespace,
+		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
+		Sentry:            reporter,
+		Recorder:          mgr.GetEventRecorderFor("toggle-web-baker"),
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "App")

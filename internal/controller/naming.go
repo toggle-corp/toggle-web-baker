@@ -23,6 +23,13 @@ func buildNetPolName(app *bakerv1alpha1.App) string   { return app.Name + "-buil
 func nginxNetPolName(app *bakerv1alpha1.App) string   { return app.Name + "-nginx" }
 func triggerNetPolName(app *bakerv1alpha1.App) string { return app.Name + "-trigger" }
 
+// gitCredentialSecretName is the per-app SYNCED COPY of the operator-global git
+// credential (design Q3). The operator creates it as an owned, labeled child in
+// the app's namespace; the short-lived build/watch pods mount it. Only used for
+// the global path — a per-app repoAuth override mounts the user's Secret directly
+// (no copy), so it never takes this name.
+func gitCredentialSecretName(app *bakerv1alpha1.App) string { return app.Name + "-git-credential" }
+
 // managedBy is the value of app.kubernetes.io/managed-by on every child.
 const managedBy = "toggle-web-baker"
 

@@ -473,6 +473,38 @@ spec:
                 minLength: 1
                 pattern: ^(https?://|git@|ssh://)[^\s]+$
                 type: string
+              repoAuth:
+                description: |-
+                  RepoAuth is the optional per-App git credential for spec.repo. When set it
+                  FULLY replaces the operator-global credential (clone AND commit-watch) and
+                  the operator mounts the user's Secret directly with NO host allowlist check
+                  (the user's own credential for their own repo — design Q4/Q6). Absent means
+                  the operator-global credential applies when the repo host is allowlisted,
+                  else anonymous git.
+                properties:
+                  secretRef:
+                    description: |-
+                      RepoAuthSecretRef names the Secret holding the git credential. It has NO key
+                      selectors: the keys are the well-known basic-auth pair (username/password),
+                      matching kubernetes.io/basic-auth and the GIT_CREDENTIAL_DIR mount convention
+                      the clone/watch images consume. Fixing the keys keeps the CRD, the mount, and
+                      the operator-global source Secret on one shape — no per-app key wiring to drift.
+                    properties:
+                      name:
+                        description: |-
+                          Name is the Secret in the App's OWN namespace. The operator mounts it
+                          directly (no copy) into the clone initContainer and the watch CronJob; the
+                          host allowlist is NOT applied (it is the user's own credential for their own
+                          repo — see design Q4). The reconciler validates it exists with non-empty
+                          username/password and surfaces a Degraded condition otherwise (naming the
+                          Secret only, never its values).
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - secretRef
+                type: object
               scheduledBuilds:
                 description: |-
                   ScheduledBuilds enables time-based rebuilds (the clock CronJob). Absent

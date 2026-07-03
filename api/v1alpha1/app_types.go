@@ -107,6 +107,10 @@ const (
 	ReasonInvalidSpec         = "InvalidSpec"
 	ReasonMissingTLSSecret    = "MissingTLSSecret"
 	ReasonConfigError         = "ConfigError"
+	// ReasonInvalidRepoAuth is set on the Ready/Degraded conditions when
+	// spec.repoAuth references a Secret that is missing or lacks a non-empty
+	// username/password. Messages name the Secret only, never its values.
+	ReasonInvalidRepoAuth = "InvalidRepoAuth"
 	// ReasonBuildFailed is the generic failure reason on the BuildSucceeded /
 	// Degraded conditions when a build fails for a non-OOM reason.
 	ReasonBuildFailed = "BuildFailed"
@@ -338,6 +342,32 @@ type AuthConfig struct {
 	SecretRef *AuthSecretRef `json:"secretRef,omitempty"`
 }
 
+// RepoAuthSecretRef names the Secret holding the git credential. It has NO key
+// selectors: the keys are the well-known basic-auth pair (username/password),
+// matching kubernetes.io/basic-auth and the GIT_CREDENTIAL_DIR mount convention
+// the clone/watch images consume. Fixing the keys keeps the CRD, the mount, and
+// the operator-global source Secret on one shape — no per-app key wiring to drift.
+type RepoAuthSecretRef struct {
+	// Name is the Secret in the App's OWN namespace. The operator mounts it
+	// directly (no copy) into the clone initContainer and the watch CronJob; the
+	// host allowlist is NOT applied (it is the user's own credential for their own
+	// repo — see design Q4). The reconciler validates it exists with non-empty
+	// username/password and surfaces a Degraded condition otherwise (naming the
+	// Secret only, never its values).
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+}
+
+// RepoAuthConfig is the per-App git credential override. When set it FULLY
+// replaces the operator-global credential for BOTH the clone (build) and the
+// commit-watch phases: one credential, both mount points. Named repoAuth (it
+// authenticates spec.repo) because plain "auth" is already the site basic-auth
+// on the served bundle.
+type RepoAuthConfig struct {
+	// +kubebuilder:validation:Required
+	SecretRef RepoAuthSecretRef `json:"secretRef"`
+}
+
 // CacheThresholds are absolute-byte thresholds for the regenerable cache
 // volume. All byte fields are non-negative; 0 means unset/disabled.
 type CacheThresholds struct {
@@ -467,6 +497,15 @@ type AppSpec struct {
 	// +kubebuilder:default=0
 	// +optional
 	KeepReleases int `json:"keepReleases,omitempty"`
+
+	// RepoAuth is the optional per-App git credential for spec.repo. When set it
+	// FULLY replaces the operator-global credential (clone AND commit-watch) and
+	// the operator mounts the user's Secret directly with NO host allowlist check
+	// (the user's own credential for their own repo — design Q4/Q6). Absent means
+	// the operator-global credential applies when the repo host is allowlisted,
+	// else anonymous git.
+	// +optional
+	RepoAuth *RepoAuthConfig `json:"repoAuth,omitempty"`
 
 	// +kubebuilder:validation:Required
 	Ingress IngressConfig `json:"ingress"`

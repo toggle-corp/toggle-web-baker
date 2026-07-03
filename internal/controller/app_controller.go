@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -39,7 +40,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims;services;configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses;networkpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -60,6 +61,12 @@ type AppReconciler struct {
 	// NetworkPolicy ingress rule).
 	TraefikNamespace string
 
+	// OperatorNamespace is the operator's own namespace (POD_NAMESPACE via the
+	// downward API), where the operator-global git-credential source Secret lives.
+	// The reconciler reads it to sync per-app copies (design Q3). Empty unless
+	// gitAuth is enabled (the startup check requires it then).
+	OperatorNamespace string
+
 	// Clock is injected for testability (defaults to time.Now).
 	Clock func() time.Time
 
@@ -70,6 +77,12 @@ type AppReconciler struct {
 	// Metrics records the App metric set. The Recorder's zero value is
 	// fully usable (it lazily initializes its state under its own mutex).
 	Metrics Recorder
+
+	// Recorder emits Kubernetes Events on the App. Used to surface the fail-static
+	// gitAuth-source-deleted case (design Q9-3) an operator can see via
+	// `kubectl describe`. Nil-safe: the reconciler guards every use (unit tests
+	// run without one).
+	Recorder record.EventRecorder
 }
 
 func (r *AppReconciler) now() time.Time {
@@ -133,6 +146,23 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// reconcile on a bare error the app owner can't see.
 	if err := validateWatchCommits(app); err != nil {
 		return r.fail(ctx, app, bakerv1alpha1.ReasonInvalidSpec, err.Error())
+	}
+
+	// 2d. repoAuth override validation: the referenced Secret must exist with
+	// non-empty username/password, else Degraded (message names the Secret only).
+	// Short-circuits before any build pod/CronJob so a broken auth config never
+	// spawns a pod that would fail to clone. No-op when spec.repoAuth is absent.
+	if err := r.validateRepoAuthSecret(ctx, app); err != nil {
+		return r.fail(ctx, app, bakerv1alpha1.ReasonInvalidRepoAuth, err.Error())
+	}
+
+	// 2e. Converge the per-app git credential: sync the operator-global copy (or
+	// reclaim a stale copy) so the credential Secret the build pod + watch CronJob
+	// mount is present. The mount wiring re-derives the same decision statelessly
+	// via decideGitCredential. Fail-static on a runtime source deletion (design
+	// Q9-3): keeps existing copies, never degrades.
+	if _, err := r.reconcileGitCredential(ctx, app); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// 3. Storage threshold ordering (operator-side, mirrors the CEL markers).
@@ -866,5 +896,12 @@ func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// the reconciler.
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(mapBuildPodToApp),
 			builder.WithPredicates(predicate.NewPredicateFuncs(isBuildPod))).
+		// Rotation informer (design Q7): a change to the operator-global source
+		// Secret re-syncs every App's copy immediately (bounded stale-token
+		// window), and a change to an app-namespace Secret an App references via
+		// repoAuth (or a synced-copy child) drift-corrects that App and recovers a
+		// previously-Degraded broken override. mapSecretToApps filters; unrelated
+		// Secret churn maps to nothing.
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapSecretToApps)).
 		Complete(r)
 }

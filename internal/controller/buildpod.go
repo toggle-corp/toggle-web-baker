@@ -280,11 +280,21 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string) *batchv1.
 	// (BYO image without runAsUser) clone keeps its image default (nil == no
 	// override). This deliberately drops the older "checkout is read-only input
 	// to the toolchain" posture in favour of supporting in-tree codegen.
+	// Git credential (design Q3/Q4/Q6): mount the effective credential Secret
+	// read-only into clone so its GIT_ASKPASS helper can authenticate the fetch of
+	// the user-controlled spec.repo. Anonymous (empty decision) adds nothing.
+	cloneMounts := base
+	gitCred := decideGitCredential(app, r.Config.GitAuth)
+	if gitCred.mount {
+		cloneEnv = append(cloneEnv, gitCredentialEnv())
+		cloneMounts = append(append([]corev1.VolumeMount{}, base...), gitCredentialMount())
+		volumes = append(volumes, gitCredentialVolume(gitCred.secretName))
+	}
 	clone := corev1.Container{
 		Name:            "clone",
 		Image:           r.Config.Images.Clone,
 		Env:             cloneEnv,
-		VolumeMounts:    base,
+		VolumeMounts:    cloneMounts,
 		SecurityContext: resolvedSecurityContext(buildR),
 	}
 

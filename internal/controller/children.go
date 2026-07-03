@@ -103,12 +103,34 @@ func (r *AppReconciler) watchCronJob(app *bakerv1alpha1.App) (*batchv1.CronJob, 
 	if ref == "" {
 		ref = "HEAD"
 	}
-	return r.triggerCronJob(app, watchCronJobName(app), schedule, []corev1.EnvVar{
+	watchEnv := []corev1.EnvVar{
 		{Name: "MODE", Value: "watch"},
 		{Name: "REPO", Value: app.Spec.Repo},
 		{Name: "REF", Value: ref},
 		{Name: "LAST_SEEN_ANNOTATION", Value: bakerv1alpha1.WatchLastSeenAnnotation},
-	}), nil
+	}
+	// Git credential (design Q3/Q4/Q6): the watcher runs `git ls-remote` against
+	// the user-controlled spec.repo, so it authenticates with the SAME effective
+	// credential as the clone phase. Only the WATCH CronJob mounts it — the clock
+	// (scheduled-builds) CronJob never touches the repo, so it stays credential-free.
+	gitCred := decideGitCredential(app, r.Config.GitAuth)
+	if gitCred.mount {
+		watchEnv = append(watchEnv, gitCredentialEnv())
+	}
+	cj := r.triggerCronJob(app, watchCronJobName(app), schedule, watchEnv)
+	if gitCred.mount {
+		mountGitCredential(&cj.Spec.JobTemplate.Spec.Template.Spec, gitCred.secretName)
+	}
+	return cj, nil
+}
+
+// mountGitCredential adds the read-only credential Secret volume + mount to the
+// (single-container) trigger pod so its git-askpass helper finds the credential.
+func mountGitCredential(pod *corev1.PodSpec, secretName string) {
+	pod.Volumes = append(pod.Volumes, gitCredentialVolume(secretName))
+	for i := range pod.Containers {
+		pod.Containers[i].VolumeMounts = append(pod.Containers[i].VolumeMounts, gitCredentialMount())
+	}
 }
 
 // triggerCronJob renders one trigger CronJob (clock tick or commit watcher):
