@@ -6,13 +6,18 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/toggle-corp/toggle-web-baker/internal/sentrytest"
 )
 
 func failure(app, reason string) TerminalFailure {
+	return failureInNamespace("team-x", app, reason)
+}
+
+func failureInNamespace(ns, app, reason string) TerminalFailure {
 	return TerminalFailure{
 		App:       app,
-		Namespace: "team-x",
-		Phase:     "Building",
+		Namespace: ns,
 		Step:      "copier",
 		Reason:    reason,
 		Message:   "boom",
@@ -42,15 +47,14 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 // CaptureTerminalFailure: emits one error-level event carrying the failure
-// message, identifying tags, and a fingerprint of [app, reason].
+// message, identifying tags, and a fingerprint of [namespace, app, reason].
 func TestReporter_CaptureTerminalFailure(t *testing.T) {
-	transport := &recordingTransport{}
-	r := NewReporterForTest(newTestHub(t, transport), time.Now)
+	transport := &sentrytest.RecordingTransport{}
+	r := NewReporterForTest(sentrytest.NewHub(t, transport), time.Now)
 
 	r.CaptureTerminalFailure(TerminalFailure{
 		App:       "web-a",
 		Namespace: "team-x",
-		Phase:     "Building",
 		Step:      "copier",
 		Reason:    "BuildFailed",
 		Message:   "copier exited 1",
@@ -70,7 +74,6 @@ func TestReporter_CaptureTerminalFailure(t *testing.T) {
 	wantTags := map[string]string{
 		"app":       "web-a",
 		"namespace": "team-x",
-		"phase":     "Building",
 		"step":      "copier",
 		"reason":    "BuildFailed",
 	}
@@ -79,17 +82,17 @@ func TestReporter_CaptureTerminalFailure(t *testing.T) {
 			t.Errorf("Tags[%q] = %q, want %q", k, got, want)
 		}
 	}
-	if len(ev.Fingerprint) != 2 || ev.Fingerprint[0] != "web-a" || ev.Fingerprint[1] != "BuildFailed" {
-		t.Errorf("Fingerprint = %v, want [web-a BuildFailed]", ev.Fingerprint)
+	if len(ev.Fingerprint) != 3 || ev.Fingerprint[0] != "team-x" || ev.Fingerprint[1] != "web-a" || ev.Fingerprint[2] != "BuildFailed" {
+		t.Errorf("Fingerprint = %v, want [team-x web-a BuildFailed]", ev.Fingerprint)
 	}
 }
 
 // Rate limit: the same app+reason fires at most once per hour — the
 // controller re-fails every minute, so this gate is load-bearing.
 func TestReporter_RateLimitsSameFingerprintWithinAnHour(t *testing.T) {
-	transport := &recordingTransport{}
+	transport := &sentrytest.RecordingTransport{}
 	clock := newFakeClock()
-	r := NewReporterForTest(newTestHub(t, transport), clock.Now)
+	r := NewReporterForTest(sentrytest.NewHub(t, transport), clock.Now)
 
 	r.CaptureTerminalFailure(failure("web-a", "ConfigError"))
 	clock.Advance(59 * time.Minute)
@@ -102,9 +105,9 @@ func TestReporter_RateLimitsSameFingerprintWithinAnHour(t *testing.T) {
 
 // Rate limit: once the hour has elapsed the same fingerprint is allowed again.
 func TestReporter_AllowsSameFingerprintAfterAnHour(t *testing.T) {
-	transport := &recordingTransport{}
+	transport := &sentrytest.RecordingTransport{}
 	clock := newFakeClock()
-	r := NewReporterForTest(newTestHub(t, transport), clock.Now)
+	r := NewReporterForTest(sentrytest.NewHub(t, transport), clock.Now)
 
 	r.CaptureTerminalFailure(failure("web-a", "ConfigError"))
 	clock.Advance(61 * time.Minute)
@@ -118,9 +121,9 @@ func TestReporter_AllowsSameFingerprintAfterAnHour(t *testing.T) {
 // Rate limit: distinct fingerprints (different app or reason) do not share
 // a bucket — each fires independently.
 func TestReporter_DistinctFingerprintsRateLimitedIndependently(t *testing.T) {
-	transport := &recordingTransport{}
+	transport := &sentrytest.RecordingTransport{}
 	clock := newFakeClock()
-	r := NewReporterForTest(newTestHub(t, transport), clock.Now)
+	r := NewReporterForTest(sentrytest.NewHub(t, transport), clock.Now)
 
 	r.CaptureTerminalFailure(failure("web-a", "ConfigError"))
 	r.CaptureTerminalFailure(failure("web-b", "ConfigError"))
@@ -128,6 +131,21 @@ func TestReporter_DistinctFingerprintsRateLimitedIndependently(t *testing.T) {
 
 	if got := len(transport.Events()); got != 3 {
 		t.Fatalf("got %d events for 3 distinct fingerprints, want 3", got)
+	}
+}
+
+// Rate limit: apps are namespace-scoped — the same app name + reason in two
+// different namespaces are two distinct failures, never one shared bucket.
+func TestReporter_SameAppAndReasonInDifferentNamespacesAreDistinct(t *testing.T) {
+	transport := &sentrytest.RecordingTransport{}
+	clock := newFakeClock()
+	r := NewReporterForTest(sentrytest.NewHub(t, transport), clock.Now)
+
+	r.CaptureTerminalFailure(failureInNamespace("team-a", "web", "ConfigError"))
+	r.CaptureTerminalFailure(failureInNamespace("team-b", "web", "ConfigError"))
+
+	if got := len(transport.Events()); got != 2 {
+		t.Fatalf("got %d events for the same app+reason in two namespaces, want 2", got)
 	}
 }
 

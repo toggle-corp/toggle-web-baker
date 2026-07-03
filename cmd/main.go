@@ -44,15 +44,20 @@ func main() {
 
 	// Sentry must exist before the logger: the zap core below tees into it.
 	// A nil reporter (SENTRY_DSN unset) is the fully disabled no-op mode.
+	// A malformed DSN must NOT crash-loop the operator over optional
+	// telemetry: complain loudly and run with Sentry disabled.
 	reporter, err := observability.InitFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "unable to init sentry: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "ERROR: unable to init sentry, continuing with Sentry DISABLED: %v\n", err)
+		reporter = nil
 	}
 
-	opts.ZapOpts = append(opts.ZapOpts, zaplib.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return zapcore.NewTee(c, observability.NewZapCore(reporter))
-	}))
+	// Only pay the tee's per-log dispatch when Sentry is actually on.
+	if reporter != nil {
+		opts.ZapOpts = append(opts.ZapOpts, zaplib.WrapCore(func(c zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(c, observability.NewZapCore(reporter))
+		}))
+	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	if err := run(configPath, reporter); err != nil {

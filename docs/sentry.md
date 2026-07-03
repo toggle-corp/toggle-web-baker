@@ -29,10 +29,11 @@ Operator (`internal/observability`):
   wrapped `context.Canceled`, and leader-election churn. Repeats of the same
   fingerprint are limited to ~1 event/hour.
 - Terminal build failures that are the **platform's fault**
-  (`internal/controller/platformfault.go`): `ConfigError`, and `BuildFailed`
+  (`internal/controller/platformfault.go`): `ConfigError`, `BuildFailed`
   in platform-owned steps — `copier`, `release`, or an unattributed step
-  (e.g. the shim-install init container). Events carry app, namespace, phase,
-  step, and reason tags, fingerprinted by `[app, reason]`.
+  (e.g. the shim-install init container) — and `OOMKilled` in the copier
+  (which has no user-settable memory limit). Events carry app, namespace,
+  step, and reason tags, fingerprinted by `[namespace, app, reason]`.
 
 Console (`console/internal/sentryhttp`):
 
@@ -46,7 +47,7 @@ Console (`console/internal/sentryhttp`):
 User-caused failures stay in the console and FrontendApp conditions only:
 
 - `BuildFailed` in the user-owned steps (`clone`, `setup`, `fetch`, `build`)
-- `OOMKilled` builds
+- `OOMKilled` in user-owned steps (the user's own memory limit)
 - Spec rejections: `InvalidSpec`, `ImageNotAllowed`, `UnknownNodeVersion`,
   `InvalidStorage`, `InvalidStorageClass`, `MissingTLSSecret`
 

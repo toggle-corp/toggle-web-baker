@@ -389,7 +389,6 @@ func (r *FrontendAppReconciler) fail(ctx context.Context, app *bakerv1alpha1.Fro
 		r.Sentry.CaptureTerminalFailure(observability.TerminalFailure{
 			App:       app.Name,
 			Namespace: app.Namespace,
-			Phase:     string(bakerv1alpha1.PhaseDegraded),
 			Reason:    reason,
 			Message:   msg,
 		})
@@ -613,12 +612,12 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		r.setCondition(app, bakerv1alpha1.ConditionBuildSucceeded, metav1.ConditionFalse, reason, message)
 		r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, message)
 		// Classified AFTER the OOM promotion above so the FINAL reason decides:
-		// an OOMKilled build is the user's memory limit, never a platform fault.
+		// an OOMKilled user step is the user's memory limit, while an OOMKilled
+		// copier (no user-settable limit) is still a platform fault.
 		if isPlatformFault(reason, app.Status.Build.FailedStep) {
 			r.Sentry.CaptureTerminalFailure(observability.TerminalFailure{
 				App:       app.Name,
 				Namespace: app.Namespace,
-				Phase:     string(app.Status.Phase),
 				Step:      app.Status.Build.FailedStep,
 				Reason:    reason,
 				Message:   message,

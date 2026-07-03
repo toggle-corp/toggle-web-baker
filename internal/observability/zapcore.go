@@ -9,6 +9,18 @@ import (
 // (mirrors sentry-go's own internal default).
 const maxErrorDepth = 10
 
+// maxFingerprintErrLen caps the error-text fingerprint component so
+// unbounded error strings cannot bloat events or the limiter's keys.
+const maxFingerprintErrLen = 200
+
+// truncate clips s to at most n bytes.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
 // NewZapCore returns a zapcore.Core that tees Error+ log entries to Sentry
 // through the reporter. A nil reporter yields a no-op core, so callers can
 // wire the tee unconditionally.
@@ -58,7 +70,16 @@ func (c *sentryCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		return nil
 	}
 
+	// controller-runtime logs every reconcile failure under the constant
+	// message "Reconciler error" (the controller identity is a field, not
+	// the logger name), so [LoggerName, Message] alone would collapse all
+	// reconcile failures into one fingerprint. Fold the error text in —
+	// the noisy repeat offenders (conflicts, context.Canceled) were already
+	// dropped above, so this cannot explode the limiter's keyspace.
 	fingerprint := []string{entry.LoggerName, entry.Message}
+	if err != nil {
+		fingerprint = append(fingerprint, truncate(err.Error(), maxFingerprintErrLen))
+	}
 	if !c.reporter.limiter.allow(fingerprint) {
 		return nil
 	}

@@ -67,9 +67,27 @@ func TestIsPlatformFault_BuildFailedUnattributedIsPlatformFault(t *testing.T) {
 	}
 }
 
-// OOMKilled means the user's build exceeded THEIR memory limit — user fault.
+// OOMKilled in a user-owned step means the user's pipeline exceeded THEIR
+// memory limit — user fault. Unattributed OOMs also stay quiet.
 func TestIsPlatformFault_OOMKilledIsUserFault(t *testing.T) {
-	if isPlatformFault(bakerv1alpha1.ReasonOOMKilled, bakerv1alpha1.StepBuild) {
-		t.Fatal("isPlatformFault(OOMKilled) = true, want false")
+	for _, step := range []string{
+		bakerv1alpha1.StepClone,
+		bakerv1alpha1.StepSetup,
+		bakerv1alpha1.StepFetch,
+		bakerv1alpha1.StepBuild,
+		"", // unattributed
+	} {
+		if isPlatformFault(bakerv1alpha1.ReasonOOMKilled, step) {
+			t.Errorf("isPlatformFault(OOMKilled, %q) = true, want false", step)
+		}
+	}
+}
+
+// OOMKilled in the COPIER is a platform fault: the copier container carries
+// no user-settable memory limit (phaseResources covers setup/fetch/build
+// only), so a copier OOM is the platform's sizing — not the user's.
+func TestIsPlatformFault_OOMKilledCopierIsPlatformFault(t *testing.T) {
+	if !isPlatformFault(bakerv1alpha1.ReasonOOMKilled, bakerv1alpha1.StepCopier) {
+		t.Fatal("isPlatformFault(OOMKilled, copier) = false, want true")
 	}
 }

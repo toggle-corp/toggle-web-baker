@@ -11,6 +11,13 @@ func isPlatformFault(reason, failedStep string) bool {
 	if reason == bakerv1alpha1.ReasonConfigError {
 		return true
 	}
+	if reason == bakerv1alpha1.ReasonOOMKilled {
+		// A user-step OOM is the user's memory limit. The copier has NO
+		// user-settable limit (phaseResources covers setup/fetch/build only),
+		// so a copier OOM is the platform's sizing. Unattributed OOMs stay
+		// quiet: without a step there is no basis to blame the platform.
+		return failedStep == bakerv1alpha1.StepCopier
+	}
 	if reason != bakerv1alpha1.ReasonBuildFailed {
 		return false
 	}

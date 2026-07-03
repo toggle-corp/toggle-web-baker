@@ -22,7 +22,6 @@ type Reporter struct {
 type TerminalFailure struct {
 	App       string
 	Namespace string
-	Phase     string
 	Step      string
 	Reason    string
 	Message   string
@@ -36,12 +35,14 @@ func NewReporterForTest(hub *sentry.Hub, now func() time.Time) *Reporter {
 }
 
 // CaptureTerminalFailure emits one error event for a platform-fault terminal
-// failure, fingerprinted by [app, reason].
+// failure, fingerprinted by [namespace, app, reason] — apps are
+// namespace-scoped, so the same app name in two namespaces must not share
+// a bucket.
 func (r *Reporter) CaptureTerminalFailure(f TerminalFailure) {
 	if r == nil {
 		return
 	}
-	fingerprint := []string{f.App, f.Reason}
+	fingerprint := []string{f.Namespace, f.App, f.Reason}
 	if !r.limiter.allow(fingerprint) {
 		return
 	}
@@ -52,7 +53,6 @@ func (r *Reporter) CaptureTerminalFailure(f TerminalFailure) {
 	event.Tags = map[string]string{
 		"app":       f.App,
 		"namespace": f.Namespace,
-		"phase":     f.Phase,
 		"step":      f.Step,
 		"reason":    f.Reason,
 	}

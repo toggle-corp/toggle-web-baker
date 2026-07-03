@@ -2,11 +2,9 @@ package controller
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/getsentry/sentry-go"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,57 +13,21 @@ import (
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 	"github.com/toggle-corp/toggle-web-baker/internal/observability"
+	"github.com/toggle-corp/toggle-web-baker/internal/sentrytest"
 )
-
-// recordingTransport implements sentry.Transport and records every event sent
-// through it so tests can assert on the decoded *sentry.Event. Duplicated from
-// internal/observability's transport_test.go (test files aren't importable).
-type recordingTransport struct {
-	mu     sync.Mutex
-	events []*sentry.Event
-}
-
-func (tr *recordingTransport) Configure(sentry.ClientOptions) {}
-
-func (tr *recordingTransport) SendEvent(event *sentry.Event) {
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-	tr.events = append(tr.events, event)
-}
-
-func (tr *recordingTransport) Flush(time.Duration) bool { return true }
-
-func (tr *recordingTransport) FlushWithContext(context.Context) bool { return true }
-
-func (tr *recordingTransport) Close() {}
-
-func (tr *recordingTransport) Events() []*sentry.Event {
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-	out := make([]*sentry.Event, len(tr.events))
-	copy(out, tr.events)
-	return out
-}
 
 // newRecordingReporter builds a Reporter around an isolated hub (never
 // sentry.CurrentHub()) whose transport records events for assertions.
-func newRecordingReporter(t *testing.T) (*observability.Reporter, *recordingTransport) {
+func newRecordingReporter(t *testing.T) (*observability.Reporter, *sentrytest.RecordingTransport) {
 	t.Helper()
-	transport := &recordingTransport{}
-	client, err := sentry.NewClient(sentry.ClientOptions{
-		Dsn:       "https://key@example.ingest.sentry.io/1",
-		Transport: transport,
-	})
-	if err != nil {
-		t.Fatalf("sentry.NewClient: %v", err)
-	}
-	hub := sentry.NewHub(client, sentry.NewScope())
+	transport := &sentrytest.RecordingTransport{}
+	hub := sentrytest.NewHub(t, transport)
 	return observability.NewReporterForTest(hub, func() time.Time { return time.Unix(1000, 0) }), transport
 }
 
 // A reconcile-time ConfigError (operator misconfiguration) is a platform fault:
 // fail() must emit exactly one Sentry event tagged with the reason and
-// fingerprinted [app, reason].
+// fingerprinted [namespace, app, reason].
 func TestSentryEmission_ConfigErrorEmitsOneEvent(t *testing.T) {
 	app := baseApp()
 	r, _ := newReconciler(t, app, wffc())
@@ -84,8 +46,8 @@ func TestSentryEmission_ConfigErrorEmitsOneEvent(t *testing.T) {
 	if ev.Tags["reason"] != bakerv1alpha1.ReasonConfigError {
 		t.Fatalf("reason tag = %q, want %q", ev.Tags["reason"], bakerv1alpha1.ReasonConfigError)
 	}
-	wantFP := []string{"demo", bakerv1alpha1.ReasonConfigError}
-	if len(ev.Fingerprint) != 2 || ev.Fingerprint[0] != wantFP[0] || ev.Fingerprint[1] != wantFP[1] {
+	wantFP := []string{"apps", "demo", bakerv1alpha1.ReasonConfigError}
+	if len(ev.Fingerprint) != 3 || ev.Fingerprint[0] != wantFP[0] || ev.Fingerprint[1] != wantFP[1] || ev.Fingerprint[2] != wantFP[2] {
 		t.Fatalf("fingerprint = %v, want %v", ev.Fingerprint, wantFP)
 	}
 }
@@ -227,11 +189,12 @@ func TestSentryEmission_OOMKilledBuildEmitsNothing(t *testing.T) {
 	}
 }
 
-// Ordering proof: an OOMKilled COPIER discriminates the two orderings. If the
-// classifier ran before the OOM promotion it would see BuildFailed×copier
-// (platform fault, event); after promotion it sees OOMKilled (user fault, no
-// event).
-func TestSentryEmission_OOMKilledCopierEmitsNothing(t *testing.T) {
+// An OOMKilled COPIER is a platform fault: the copier container carries no
+// user-settable memory limit (phaseResources covers setup/fetch/build only),
+// so its OOM is the platform's sizing. The classifier still runs AFTER the
+// OOM promotion — it must see the final OOMKilled reason with step=copier and
+// emit exactly one event.
+func TestSentryEmission_OOMKilledCopierEmitsEvent(t *testing.T) {
 	app := baseApp()
 	r, cl := newReconciler(t, app, wffc())
 	reporter, transport := newRecordingReporter(t)
@@ -255,8 +218,16 @@ func TestSentryEmission_OOMKilledCopierEmitsNothing(t *testing.T) {
 	if deg == nil || deg.Reason != bakerv1alpha1.ReasonOOMKilled {
 		t.Fatalf("Degraded = %+v, want reason OOMKilled (promotion is this test's premise)", deg)
 	}
-	if n := len(transport.Events()); n != 0 {
-		t.Fatalf("got %d Sentry events, want 0: classifier must see the promoted OOMKilled reason, not BuildFailed x copier", n)
+	events := transport.Events()
+	if len(events) != 1 {
+		t.Fatalf("got %d Sentry events, want 1 for a copier OOM (platform-owned container, no user memory limit)", len(events))
+	}
+	ev := events[0]
+	if ev.Tags["step"] != bakerv1alpha1.StepCopier {
+		t.Fatalf("step tag = %q, want %q", ev.Tags["step"], bakerv1alpha1.StepCopier)
+	}
+	if ev.Tags["reason"] != bakerv1alpha1.ReasonOOMKilled {
+		t.Fatalf("reason tag = %q, want %q", ev.Tags["reason"], bakerv1alpha1.ReasonOOMKilled)
 	}
 }
 
