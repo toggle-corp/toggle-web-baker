@@ -17,6 +17,7 @@
   {{if .StorageBadgeLabel}}<span class="badge {{.StorageBadgeClass}}" title="storage threshold state: {{.Storage.ThresholdState}}">{{.StorageBadgeLabel}}</span>{{end}}
   <span class="sb-spacer"></span>
   <div class="sb-actions">
+    <a class="btn btn-ghost" href="/ns/{{.Namespace}}/app/{{.Name}}/manifest">Show manifest</a>
     <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/rebuild"
           onsubmit="return confirm('Request a manual rebuild of {{.Name}}? This patches the rebuild annotation; the operator decides when to act.');">
       <button type="submit" class="btn" title="Patches rebuild.baker.toggle-corp.com/requested-at; the operator decides when to act">Request rebuild</button>

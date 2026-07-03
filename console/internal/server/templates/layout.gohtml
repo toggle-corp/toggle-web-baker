@@ -222,6 +222,23 @@
   .logpane-empty{flex:1;display:flex;align-items:center;justify-content:center;
     background:var(--panel);margin:0;text-align:center;padding:12px}
 
+  /* ---------- manifest page (chroma YAML highlight) ----------
+     The chroma html formatter (WithClasses) emits a .chroma wrapper and short
+     per-token classes; we map them onto the existing theme vars so both light
+     and dark themes work without a new palette. Only the classes YAML actually
+     emits are styled. The block scrolls like the console's other mono panes. */
+  .manifest{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    overflow:auto;max-height:calc(100vh - var(--sbh) - 120px)}
+  .manifest pre,.manifest .chroma{margin:0;padding:12px 14px;font-family:var(--monoff);
+    font-size:12.5px;line-height:1.55;color:var(--ink);white-space:pre;overflow:auto}
+  .manifest .chroma .nt{color:var(--build-ink)}      /* keys (name.tag) */
+  .manifest .chroma .s,.manifest .chroma .s1,.manifest .chroma .s2,
+  .manifest .chroma .l{color:var(--ready-ink)}       /* strings / literals */
+  .manifest .chroma .m,.manifest .chroma .mi,.manifest .chroma .mf{color:var(--warn-ink)} /* numbers */
+  .manifest .chroma .kc,.manifest .chroma .k{color:var(--degraded-ink)} /* keyword/bool/null */
+  .manifest .chroma .c,.manifest .chroma .c1,.manifest .chroma .cm{color:var(--muted);font-style:italic} /* comments */
+  .manifest .chroma .p,.manifest .chroma .pi{color:var(--muted)} /* punctuation */
+
   /* ---------- list page ---------- */
   .listhead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:2px 0 10px}
   .listhead h2{margin:0;font-size:16px;font-weight:650}

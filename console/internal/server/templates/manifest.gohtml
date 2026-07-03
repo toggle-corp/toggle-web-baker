@@ -1,0 +1,45 @@
+{{define "manifest.gohtml"}}
+{{template "head" .Head}}
+
+<div class="statusbar">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/">apps</a> / <span class="mono">{{.Namespace}}</span> / <a href="/ns/{{.Namespace}}/app/{{.Name}}" class="mono">{{.Name}}</a> / <strong>manifest</strong>
+  </nav>
+  <span class="sb-spacer"></span>
+  <div class="sb-actions">
+    <button type="button" id="copy-yaml" class="btn btn-ghost">Copy YAML</button>
+    <select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </div>
+</div>
+
+<main>
+  <section class="card">
+    <h2>Manifest</h2>
+    <div class="body">
+      {{if .HasAnnotations}}<p class="small muted">Annotation values are hidden for security reasons.</p>{{end}}
+      {{/* The raw (un-highlighted) YAML — including the (hidden) placeholders —
+           lives in a hidden textarea so the Copy button copies exact text, not
+           the highlighted HTML. */}}
+      <textarea id="raw-yaml" hidden aria-hidden="true">{{.YAML}}</textarea>
+      <div class="manifest">{{.Highlighted}}</div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function(){
+  var btn=document.getElementById('copy-yaml');
+  var src=document.getElementById('raw-yaml');
+  if(!btn||!src){return;}
+  btn.addEventListener('click',function(){
+    var text=src.value;
+    function done(){var old=btn.textContent;btn.textContent='Copied';
+      setTimeout(function(){btn.textContent=old;},1500);}
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(function(){});
+    }
+  });
+})();
+</script>
+{{template "foot"}}
+{{end}}

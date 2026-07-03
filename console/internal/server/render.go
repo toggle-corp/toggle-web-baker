@@ -181,6 +181,18 @@ type logpaneData struct {
 	IsCurrent bool
 }
 
+// manifestData drives the read-only manifest page: the raw YAML (the exact text
+// the Copy button offers, including the (hidden) placeholders) and its
+// syntax-highlighted HTML rendering. HasAnnotations gates the security note.
+type manifestData struct {
+	Head           head
+	Namespace      string
+	Name           string
+	YAML           string
+	Highlighted    template.HTML
+	HasAnnotations bool
+}
+
 type errorData struct {
 	Message string
 	Detail  string

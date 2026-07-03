@@ -73,6 +73,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /signed-out", s.handleSignedOut)
 	mux.HandleFunc("GET /", s.handleList)
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}", s.handleDetail)
+	mux.HandleFunc("GET /ns/{namespace}/app/{name}/manifest", s.handleManifest)
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}/partial", s.handlePartial)
 	mux.HandleFunc("GET /ns/{namespace}/app/{name}/logs", s.handleLogs)
 	mux.HandleFunc("POST /ns/{namespace}/app/{name}/rebuild", s.handleRebuild)
@@ -415,6 +416,29 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		App:              app,
 		Requested:        r.URL.Query().Get("rebuild") == "requested",
 		CleanupRequested: r.URL.Query().Get("cleanup"),
+	})
+}
+
+// handleManifest renders the read-only "what you applied" view of an App: the
+// object pruned to apiVersion/kind/name/namespace/labels/spec (annotations kept
+// but values hidden), marshaled to YAML and syntax-highlighted server-side.
+func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	obj, err := s.apps.Get(r.Context(), ns, name)
+	if err != nil {
+		s.renderError(w, r, http.StatusNotFound, "App not found", err)
+		return
+	}
+	pruned := pruneManifest(obj)
+	raw := marshalManifest(pruned)
+	render(w, "manifest", manifestData{
+		Head:           head{Title: name + " · manifest", User: sentryhttp.UserFrom(r), Bare: true},
+		Namespace:      ns,
+		Name:           name,
+		YAML:           raw,
+		Highlighted:    highlightYAML(raw),
+		HasAnnotations: manifestHasAnnotations(pruned),
 	})
 }
 
