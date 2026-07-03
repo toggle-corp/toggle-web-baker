@@ -366,20 +366,6 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}
 	}
 
-	// pipeline.timeout is a duration; the k8s Job wants whole seconds. Anything
-	// non-positive — unset (nil), a sub-second value that truncates to 0, or a
-	// negative duration — falls back to the operator-config default rather than
-	// producing an invalid (<0) or absent deadline the apiserver would reject.
-	// CEL rejects non-positive values at admission; this guards objects admitted
-	// before that rule existed.
-	deadline := int64(0)
-	if t := app.Spec.Pipeline.Timeout; t != nil {
-		deadline = int64(t.Seconds())
-	}
-	if deadline <= 0 {
-		deadline = r.Config.ActiveDeadlineSeconds
-	}
-
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      buildJobName(app, token),
@@ -394,7 +380,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:          ptr.To(int32(0)),
-			ActiveDeadlineSeconds: ptr.To(deadline),
+			ActiveDeadlineSeconds: ptr.To(r.buildDeadlineSeconds(app)),
 			// TTL is set on SUCCESS only (failed jobs are retained); the
 			// reconciler stamps the TTL when it observes success.
 			Template: corev1.PodTemplateSpec{
@@ -403,6 +389,24 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 			},
 		},
 	}
+}
+
+// buildDeadlineSeconds derives the build Job's activeDeadlineSeconds.
+// pipeline.timeout is a duration; the k8s Job wants whole seconds. Anything
+// non-positive — unset (nil), a sub-second value that truncates to 0, or a
+// negative duration — falls back to the operator-config default rather than
+// producing an invalid (<0) or absent deadline the apiserver would reject.
+// CEL rejects non-positive values at admission; this guards objects admitted
+// before that rule existed.
+func (r *FrontendAppReconciler) buildDeadlineSeconds(app *bakerv1alpha1.FrontendApp) int64 {
+	deadline := int64(0)
+	if t := app.Spec.Pipeline.Timeout; t != nil {
+		deadline = int64(t.Seconds())
+	}
+	if deadline <= 0 {
+		deadline = r.Config.ActiveDeadlineSeconds
+	}
+	return deadline
 }
 
 // phaseResourceRequirements computes the resource requirements for one phase

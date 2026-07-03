@@ -66,6 +66,9 @@ type FrontendAppReconciler struct {
 	// Sentry reports platform-fault terminal failures. A nil Reporter is a
 	// fully disabled reporter (all methods are nil-receiver-safe).
 	Sentry *observability.Reporter
+
+	// Metrics records the FrontendApp metric set (defaults lazily via metrics()).
+	Metrics *Recorder
 }
 
 func (r *FrontendAppReconciler) now() time.Time {
@@ -75,12 +78,22 @@ func (r *FrontendAppReconciler) now() time.Time {
 	return time.Now()
 }
 
+func (r *FrontendAppReconciler) metrics() *Recorder {
+	if r.Metrics == nil {
+		r.Metrics = &Recorder{}
+	}
+	return r.Metrics
+}
+
 // Reconcile is the controller entrypoint.
 func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	app := &bakerv1alpha1.FrontendApp{}
 	if err := r.Get(ctx, req.NamespacedName, app); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.metrics().ForgetApp(req.Namespace, req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -208,6 +221,7 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// 11. Derive phase from conditions and persist status.
 	r.refreshPhase(app)
+	r.metrics().RecordApp(app, r.buildDeadlineSeconds(app))
 	if err := r.Status().Update(ctx, app); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -385,6 +399,7 @@ func (r *FrontendAppReconciler) fail(ctx context.Context, app *bakerv1alpha1.Fro
 	r.setCondition(app, bakerv1alpha1.ConditionReady, metav1.ConditionFalse, reason, msg)
 	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	app.Status.Phase = bakerv1alpha1.PhaseDegraded
+	r.metrics().RecordApp(app, r.buildDeadlineSeconds(app))
 	if isPlatformFault(reason, "") {
 		r.Sentry.CaptureTerminalFailure(observability.TerminalFailure{
 			App:       app.Name,
@@ -625,6 +640,8 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 		}
 	}
 
+	r.metrics().RecordTerminalBuild(app)
+
 	// Append a COPY of the finalized record to the newest-first history ring
 	// (deduped by JobName as a safety net against a re-observe).
 	app.Status.BuildHistory = appendBuildHistory(app.Status.BuildHistory, *app.Status.Build.DeepCopy(), 5)
@@ -745,6 +762,7 @@ func (r *FrontendAppReconciler) reconcileDelete(ctx context.Context, app *bakerv
 		if err := r.Update(ctx, app); err != nil {
 			return ctrl.Result{}, err
 		}
+		r.metrics().ForgetApp(app.Namespace, app.Name)
 	}
 	return ctrl.Result{}, nil
 }
