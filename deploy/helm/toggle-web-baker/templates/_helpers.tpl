@@ -80,3 +80,18 @@ Usage: include "toggle-web-baker.nodeImagesJSON" $
 {{- end -}}
 {{- $out | toJson -}}
 {{- end -}}
+
+{{/*
+The three SENTRY_* env list items shared by the operator and console
+containers. Callers gate on .Values.sentry.dsn and provide the per-binary
+image tag for SENTRY_RELEASE (falls back to the chart appVersion).
+Usage: include "toggle-web-baker.sentryEnv" (dict "root" $ "tag" .Values.operator.image.tag) | nindent 12
+*/}}
+{{- define "toggle-web-baker.sentryEnv" -}}
+- name: SENTRY_DSN
+  value: {{ .root.Values.sentry.dsn | quote }}
+- name: SENTRY_ENVIRONMENT
+  value: {{ .root.Values.sentry.environment | quote }}
+- name: SENTRY_RELEASE
+  value: {{ .tag | default .root.Chart.AppVersion | quote }}
+{{- end -}}

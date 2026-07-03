@@ -32,14 +32,11 @@ spec:
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           args:
             - --config=/etc/baker/config.yaml
+          {{- /* env: only exists when sentry is on — if you add an
+               unconditional env var, move the env: key out of this if. */}}
           {{- if .Values.sentry.dsn }}
           env:
-            - name: SENTRY_DSN
-              value: {{ .Values.sentry.dsn | quote }}
-            - name: SENTRY_ENVIRONMENT
-              value: {{ .Values.sentry.environment | quote }}
-            - name: SENTRY_RELEASE
-              value: {{ .Values.operator.image.tag | default .Chart.AppVersion | quote }}
+            {{- include "toggle-web-baker.sentryEnv" (dict "root" $ "tag" .Values.operator.image.tag) | nindent 12 }}
           {{- end }}
           volumeMounts:
             - { name: config, mountPath: /etc/baker, readOnly: true }
