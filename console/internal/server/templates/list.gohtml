@@ -59,6 +59,16 @@
   </tbody>
 </table>
 </div>
+
+{{/* Pager: hidden on a single page. Prev/Next preserve the active filters and
+     set the target page; the ends grey out (rendered as spans, not links). */}}
+{{if .ShowPager}}
+<nav class="pager" aria-label="Pagination">
+  {{if .HasPrev}}<a class="chip" href="{{.PrevURL}}" rel="prev">‹ Prev</a>{{else}}<span class="chip chip-disabled" aria-disabled="true">‹ Prev</span>{{end}}
+  <span class="small muted">Page {{.Page}} of {{.TotalPages}}</span>
+  {{if .HasNext}}<a class="chip" href="{{.NextURL}}" rel="next">Next ›</a>{{else}}<span class="chip chip-disabled" aria-disabled="true">Next ›</span>{{end}}
+</nav>
+{{end}}
 </main>
 {{template "foot"}}
 {{end}}

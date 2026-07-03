@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,9 +132,19 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return filtered[i].Name < filtered[j].Name
 	})
 
+	// Paginate AFTER filter+search+sort: clamp the requested page to [1,lastPage]
+	// (never 404) and slice the sorted set to that page's window.
+	page, totalPages := clampPage(r.URL.Query().Get("page"), len(filtered))
+	lo := (page - 1) * pageSize
+	hi := lo + pageSize
+	if hi > len(filtered) {
+		hi = len(filtered)
+	}
+	pageApps := filtered[lo:hi]
+
 	render(w, "list", listData{
 		Head:           head{Title: "Apps", User: sentryhttp.UserFrom(r)},
-		Apps:           filtered,
+		Apps:           pageApps,
 		Total:          len(apps),
 		StatusFacets:   facets,
 		GroupChips:     chips,
@@ -141,7 +152,53 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		ClearSearchURL: listURL(status, group, ""),
 		Status:         status,
 		Group:          group,
+		Page:           page,
+		TotalPages:     totalPages,
+		ShowPager:      totalPages > 1,
+		HasPrev:        page > 1,
+		HasNext:        page < totalPages,
+		PrevURL:        pageURL(status, group, search, page-1),
+		NextURL:        pageURL(status, group, search, page+1),
 	})
+}
+
+// pageSize is the fixed in-memory page window for the app list.
+const pageSize = 50
+
+// clampPage parses the ?page= param and clamps it to [1,totalPages]. Non-numeric
+// or <1 → 1; > last → last. totalPages is ceil(match/pageSize), min 1 (an empty
+// result set is page 1 of 1). It never errors — a bad page is a clamp, not a 404.
+func clampPage(raw string, match int) (page, totalPages int) {
+	totalPages = (match + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	page, err := strconv.Atoi(raw)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	return page, totalPages
+}
+
+// pageURL builds a Prev/Next href: listURL's filter params plus ?page=N. Unlike
+// listURL (used for chips/search, which reset to page 1 by omitting page), this
+// sets page so paging preserves the active status/group/search.
+func pageURL(status, group, search string, page int) string {
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if group != "" {
+		q.Set("group", group)
+	}
+	if search != "" {
+		q.Set("search", search)
+	}
+	q.Set("page", strconv.Itoa(page))
+	return "/?" + q.Encode()
 }
 
 // healthClasses is the fixed facet order (after "all"). Values are the

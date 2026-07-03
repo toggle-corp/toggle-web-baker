@@ -116,6 +116,17 @@ type listData struct {
 	ClearSearchURL string
 	Status         string
 	Group          string
+	// Pagination controls (window applied after filter+search+sort). Page is the
+	// clamped 1-based current page; TotalPages is ceil(match/pageSize), min 1.
+	// ShowPager gates the whole controls block (TotalPages>1). HasPrev/HasNext
+	// grey the ends; PrevURL/NextURL carry the active filters plus the target page.
+	Page       int
+	TotalPages int
+	ShowPager  bool
+	HasPrev    bool
+	HasNext    bool
+	PrevURL    string
+	NextURL    string
 }
 
 type detailData struct {

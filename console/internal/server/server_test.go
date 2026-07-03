@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1672,6 +1673,144 @@ func TestDetail_RendersCommitTriggerAndWatchConfig(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail page should contain %q", want)
 		}
+	}
+}
+
+// paginationFixtureServer seeds n Ready apps in one namespace named app-000…,
+// all same health so the sort collapses to ns/name order and page boundaries
+// are deterministic. group=grp-p on every app so filter+search preservation can
+// be exercised.
+func paginationFixtureServer(t *testing.T, n int) *Server {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	objs := make([]runtime.Object, 0, n)
+	for i := 0; i < n; i++ {
+		objs = append(objs, fappObj("pag", fmt.Sprintf("app-%03d", i),
+			map[string]any{"group": "grp-p"},
+			map[string]any{
+				"phase":      "Ready",
+				"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+			}))
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, objs...)
+	return New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+}
+
+func TestList_Page1ShowsFirstPageAndPager(t *testing.T) {
+	srv := paginationFixtureServer(t, 60)
+	body := getList(srv, "/").Body.String()
+	// First 50 present, 51st (app-050) absent.
+	if !strings.Contains(body, "app-000") || !strings.Contains(body, "app-049") {
+		t.Errorf("page 1 should show the first 50 apps; body=%s", body)
+	}
+	if strings.Contains(body, "app-050") {
+		t.Errorf("page 1 must not show the 51st app; body=%s", body)
+	}
+	if !strings.Contains(body, "Page 1 of 2") {
+		t.Errorf("pager should show 'Page 1 of 2'; body=%s", body)
+	}
+	// Next present, Prev disabled/absent-as-link on page 1.
+	if !strings.Contains(body, "Next") {
+		t.Errorf("pager should render a Next link on page 1; body=%s", body)
+	}
+	if strings.Contains(body, `href="/?page=0"`) {
+		t.Errorf("page 1 must not link Prev to page 0; body=%s", body)
+	}
+}
+
+func TestList_Page2ShowsRemainderAndPrev(t *testing.T) {
+	srv := paginationFixtureServer(t, 60)
+	body := getList(srv, "/?page=2").Body.String()
+	// Remaining 10 (app-050…app-059) present; first-page app absent.
+	if !strings.Contains(body, "app-050") || !strings.Contains(body, "app-059") {
+		t.Errorf("page 2 should show the remaining 10 apps; body=%s", body)
+	}
+	if strings.Contains(body, "app-049") {
+		t.Errorf("page 2 must not show page-1 apps; body=%s", body)
+	}
+	if !strings.Contains(body, "Page 2 of 2") {
+		t.Errorf("pager should show 'Page 2 of 2'; body=%s", body)
+	}
+	// Prev present as a link; Next greyed (not a link) on the last page.
+	if !strings.Contains(body, `href="/?page=1"`) {
+		t.Errorf("page 2 should link Prev to page 1; body=%s", body)
+	}
+	if strings.Contains(body, `href="/?page=3"`) {
+		t.Errorf("last page must not link Next past the end; body=%s", body)
+	}
+}
+
+func TestList_InvalidPageClamps(t *testing.T) {
+	srv := paginationFixtureServer(t, 60)
+
+	// page<1 and non-numeric clamp to page 1 (first window), never 404.
+	for _, raw := range []string{"0", "abc", "-5"} {
+		rec := getList(srv, "/?page="+raw)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("page=%s: status = %d, want 200 (never 404)", raw, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "app-000") || strings.Contains(body, "app-050") {
+			t.Errorf("page=%s should clamp to page 1; body=%s", raw, body)
+		}
+		if !strings.Contains(body, "Page 1 of 2") {
+			t.Errorf("page=%s should read 'Page 1 of 2'; body=%s", raw, body)
+		}
+	}
+
+	// page past the end clamps to the last page.
+	rec := getList(srv, "/?page=999")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page=999: status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "app-059") || !strings.Contains(body, "Page 2 of 2") {
+		t.Errorf("page=999 should clamp to the last page; body=%s", body)
+	}
+}
+
+func TestList_PagerHiddenWhenSinglePage(t *testing.T) {
+	srv := listFixtureServer(t) // 3 apps → 1 page
+	body := getList(srv, "/").Body.String()
+	if strings.Contains(body, "Pagination") || strings.Contains(body, "Page 1 of 1") {
+		t.Errorf("pager must be hidden on a single page; body=%s", body)
+	}
+}
+
+func TestList_PagerURLsPreserveFilters(t *testing.T) {
+	srv := paginationFixtureServer(t, 60) // all group=grp-p, all Ready
+	// On page 2 with status+group+search active, the Prev link must carry all
+	// three filters AND set page=1. search=app matches every name, so 60 results
+	// remain and the pager stays.
+	body := getList(srv, "/?status=ready&group=grp-p&search=app&page=2").Body.String()
+	if !strings.Contains(body, "Page 2 of 2") {
+		t.Fatalf("expected a 2-page result set under these filters; body=%s", body)
+	}
+	// The Prev href must contain every active filter and the target page.
+	for _, want := range []string{"status=ready", "group=grp-p", "search=app", "page=1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Prev URL should preserve %q; body=%s", want, body)
+		}
+	}
+}
+
+func TestList_ChipAndSearchURLsDropPage(t *testing.T) {
+	srv := paginationFixtureServer(t, 60)
+	// On page 2, every chip and the clear-search link must OMIT page= (so any
+	// filter/search change resets to page 1); only the pager's Prev/Next carry it.
+	body := getList(srv, "/?search=app&page=2").Body.String()
+	// The clear-search link and chips drop page (keeping only the filters).
+	if strings.Contains(body, `href="/?search=app&amp;page`) {
+		t.Errorf("chip/search URLs must not carry page=; body=%s", body)
+	}
+	// The status facet for degraded must be a clean filter URL without page.
+	if !strings.Contains(body, `href="/?search=app&amp;status=degraded"`) {
+		t.Errorf("status facet URL should carry filters but not page; body=%s", body)
+	}
+	// The pager itself DOES carry page (sanity: the two builders differ).
+	if !strings.Contains(body, "page=1") {
+		t.Errorf("pager Prev should still carry page=1; body=%s", body)
 	}
 }
 
