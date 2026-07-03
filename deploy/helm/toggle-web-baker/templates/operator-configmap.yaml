@@ -48,6 +48,7 @@ data:
       shim: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.shim "root" $) | quote }}
       nginx: {{ .Values.platformImages.nginx | quote }}
     nodeImages: {{ include "toggle-web-baker.nodeImagesJSON" $ }}
+    defaultSetupCommands: {{ .Values.operator.defaultSetupCommands | toJson }}
     phaseResources:
       cpu:
         request: {{ .Values.operator.phaseResources.cpu.request | quote }}

@@ -76,6 +76,15 @@ type OperatorConfig struct {
 	// map; a version absent here fails the app at reconcile (ReasonUnknownNodeVersion).
 	NodeImages map[string]domain.NodeImage
 
+	// DefaultSetupCommands maps a package-manager name (yarn/pnpm) to the default
+	// setup (install) argv the operator injects when an app omits its setup phase
+	// command. It is chart-owned (values.yaml) and, after LoadConfig, ALWAYS
+	// carries both known package managers: a file value overrides its key, a
+	// missing key falls back to the compiled-in default (see
+	// defaultSetupCommandFallbacks). Consumers should read it via
+	// DefaultSetupCommand so the merge is never re-implemented.
+	DefaultSetupCommands map[string][]string
+
 	// PhaseResourceDefaults are the operator-owned resource defaults applied to
 	// every phase container (setup/fetch/build). CPU request/limit are global
 	// (same for all phases); the memory ceiling is per-phase, used when an app's
@@ -176,6 +185,7 @@ type FileConfig struct {
 	DefaultWatchInterval string                      `json:"defaultWatchInterval,omitempty"`
 	Images               fileImages                  `json:"images,omitempty"`
 	NodeImages           map[string]domain.NodeImage `json:"nodeImages,omitempty"`
+	DefaultSetupCommands map[string][]string         `json:"defaultSetupCommands,omitempty"`
 
 	// New knobs (were never flags): per-phase resource defaults + job deadline.
 	PhaseResources        filePhaseResources `json:"phaseResources,omitempty"`
@@ -289,6 +299,12 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("gitAuth.hosts is set but gitAuth.secretName is empty (no credential to forward)")
 	}
 
+	// defaultSetupCommands: reject an unknown package manager or an explicitly
+	// broken (empty) command at startup, before the merge fills in fallbacks.
+	if err := validateDefaultSetupCommands(fc.DefaultSetupCommands); err != nil {
+		return OperatorConfig{}, ManagerOptions{}, err
+	}
+
 	cfg := OperatorConfig{
 		RegistryAllowlist:    fc.RegistryAllowlist,
 		ClusterCIDRs:         fc.ClusterCIDRs,
@@ -307,6 +323,7 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 			Nginx:   fc.Images.Nginx,
 		},
 		NodeImages:            fc.NodeImages,
+		DefaultSetupCommands:  mergeSetupCommands(fc.DefaultSetupCommands),
 		PhaseResourceDefaults: prd,
 		ActiveDeadlineSeconds: fc.ActiveDeadlineSeconds,
 		GitAuth: GitAuth{
@@ -384,6 +401,60 @@ func validateNodeImages(m map[string]domain.NodeImage) error {
 		}
 	}
 	return nil
+}
+
+// defaultSetupCommandFallbacks are the compiled-in per-package-manager setup
+// (install) commands. They are the fallback for non-helm runs and for any
+// package-manager key the operator config file omits; the Helm chart supplies
+// the same values via values.yaml. The keys here are the ONLY package managers
+// the operator recognises — an unknown key in the config file is rejected.
+var defaultSetupCommandFallbacks = map[string][]string{
+	"yarn": {"yarn", "install", "--frozen-lockfile"},
+	"pnpm": {"pnpm", "install", "--frozen-lockfile"},
+}
+
+// mergeSetupCommands returns the effective per-package-manager setup commands:
+// every known package manager is present, a file entry overriding its key and a
+// missing key falling back to the compiled-in default. The returned slices are
+// fresh copies so callers can't mutate the fallback tables. It assumes the file
+// map has already passed validateDefaultSetupCommands.
+func mergeSetupCommands(file map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(defaultSetupCommandFallbacks))
+	for pm, fallback := range defaultSetupCommandFallbacks {
+		src := fallback
+		if v, ok := file[pm]; ok {
+			src = v
+		}
+		out[pm] = append([]string(nil), src...)
+	}
+	return out
+}
+
+// validateDefaultSetupCommands fails loud at startup on an admin error rather
+// than injecting a broken command deep in the build pipeline: an unknown
+// package-manager key, or an explicitly-set entry that is empty or whose argv[0]
+// is empty (a command that could never install anything).
+func validateDefaultSetupCommands(m map[string][]string) error {
+	for pm, argv := range m {
+		if _, ok := defaultSetupCommandFallbacks[pm]; !ok {
+			return fmt.Errorf("defaultSetupCommands: key %q is not a known package manager (want one of yarn/pnpm)", pm)
+		}
+		if len(argv) == 0 {
+			return fmt.Errorf("defaultSetupCommands: entry %q has an empty command", pm)
+		}
+		if argv[0] == "" {
+			return fmt.Errorf("defaultSetupCommands: entry %q has an empty argv[0]", pm)
+		}
+	}
+	return nil
+}
+
+// DefaultSetupCommand returns the effective default setup (install) command for
+// the given package manager. After LoadConfig the effective map always carries
+// the known package managers, so this returns a non-nil argv for yarn/pnpm; an
+// unknown package manager yields nil.
+func (c OperatorConfig) DefaultSetupCommand(pm string) []string {
+	return c.DefaultSetupCommands[pm]
 }
 
 // MetadataIP is the link-local cloud metadata endpoint, always denied to build

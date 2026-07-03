@@ -57,6 +57,15 @@ operator:
       tag: ""
       runAsUser: 1000
 
+  # Default setup (install) command per package manager, injected by the operator
+  # when an app omits its setup-phase command. Keyed by package-manager name; the
+  # ONLY recognised keys are yarn and pnpm (an unknown key fails the operator at
+  # startup). A key omitted here falls back to the operator's compiled-in default
+  # (identical to the values below), so both package managers always resolve.
+  defaultSetupCommands:
+    yarn: ["yarn", "install", "--frozen-lockfile"]
+    pnpm: ["pnpm", "install", "--frozen-lockfile"]
+
   # The values below are rendered into the operator config ConfigMap
   # (templates/operator-configmap.yaml), mounted at /etc/baker/config.yaml.
   leaderElect: true

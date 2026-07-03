@@ -75,6 +75,83 @@ func TestParseNodeImages_RejectsBrokenEntries(t *testing.T) {
 	}
 }
 
+// When defaultSetupCommands is absent from the file, the effective map still
+// carries BOTH package managers via the compiled-in fallbacks.
+func TestLoadConfig_DefaultSetupCommandsFallbackWhenOmitted(t *testing.T) {
+	cfg, _, err := LoadConfig(writeConfig(t, validConfigYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	yarn := cfg.DefaultSetupCommand("yarn")
+	if len(yarn) != 3 || yarn[0] != "yarn" || yarn[1] != "install" || yarn[2] != "--frozen-lockfile" {
+		t.Fatalf("yarn fallback wrong: %v", yarn)
+	}
+	pnpm := cfg.DefaultSetupCommand("pnpm")
+	if len(pnpm) != 3 || pnpm[0] != "pnpm" || pnpm[1] != "install" || pnpm[2] != "--frozen-lockfile" {
+		t.Fatalf("pnpm fallback wrong: %v", pnpm)
+	}
+	// Effective map ALWAYS has both keys after load.
+	if _, ok := cfg.DefaultSetupCommands["yarn"]; !ok {
+		t.Fatal("effective map missing yarn key")
+	}
+	if _, ok := cfg.DefaultSetupCommands["pnpm"]; !ok {
+		t.Fatal("effective map missing pnpm key")
+	}
+}
+
+// A file value overrides its package-manager key; the untouched key still falls
+// back (per-key merge, not all-or-nothing).
+func TestLoadConfig_DefaultSetupCommandsOverridePerKey(t *testing.T) {
+	body := validConfigYAML + `
+defaultSetupCommands:
+  yarn: ["yarn", "install", "--immutable"]
+`
+	cfg, _, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	yarn := cfg.DefaultSetupCommand("yarn")
+	if len(yarn) != 3 || yarn[2] != "--immutable" {
+		t.Fatalf("yarn override not honored: %v", yarn)
+	}
+	// pnpm untouched -> fallback.
+	pnpm := cfg.DefaultSetupCommand("pnpm")
+	if len(pnpm) != 3 || pnpm[2] != "--frozen-lockfile" {
+		t.Fatalf("pnpm should fall back when only yarn overridden: %v", pnpm)
+	}
+}
+
+// An unknown package-manager key is an admin error surfaced at startup.
+func TestLoadConfig_DefaultSetupCommandsUnknownKeyError(t *testing.T) {
+	body := validConfigYAML + `
+defaultSetupCommands:
+  npm: ["npm", "ci"]
+`
+	if _, _, err := LoadConfig(writeConfig(t, body)); err == nil {
+		t.Fatal("expected error for unknown package-manager key, got nil")
+	}
+}
+
+// An explicitly-set entry that is empty (or whose argv[0] is empty) is a hard
+// startup error — an empty command can never install anything.
+func TestLoadConfig_DefaultSetupCommandsEmptyArgvError(t *testing.T) {
+	cases := map[string]string{
+		"empty argv": `
+defaultSetupCommands:
+  yarn: []
+`,
+		"empty argv[0]": `
+defaultSetupCommands:
+  yarn: ["", "install"]
+`,
+	}
+	for name, extra := range cases {
+		if _, _, err := LoadConfig(writeConfig(t, validConfigYAML+extra)); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}
+
 func validConfig() OperatorConfig {
 	c := OperatorConfig{
 		ClusterCIDRs: []string{"10.0.0.0/8", "172.20.0.0/16"},
