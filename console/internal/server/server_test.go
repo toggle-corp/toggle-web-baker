@@ -672,8 +672,9 @@ func TestDetail_RendersStatus(t *testing.T) {
 }
 
 // The detail page is the cockpit layout: a sticky status bar (breadcrumb,
-// health badge, mono URL chip, phase, actions) instead of the standard header,
-// a left column ending in the Internals disclosure, and the docked log pane.
+// health badge, warning badges, actions) instead of the standard header, a
+// left column ending in the Internals disclosure, and the docked log pane.
+// URL / phase / group moved OFF the bar into the Build details card.
 func TestDetail_CockpitLayout(t *testing.T) {
 	status := map[string]any{
 		"phase": "Ready",
@@ -691,9 +692,9 @@ func TestDetail_CockpitLayout(t *testing.T) {
 	for _, want := range []string{
 		`class="statusbar"`,              // sticky status bar
 		`class="crumbs"`,                 // breadcrumb inside it
-		`class="sb-url"`,                 // prominent mono URL chip…
-		`>mapswipe.org&nbsp;↗<`,          // …showing the bare host
-		"phase <b>Ready</b>",             // phase readout
+		`>Build details</h2>`,            // renamed card carrying URL/group/phase
+		`>mapswipe.org&nbsp;↗<`,          // bare-host URL link (now in Build details)
+		">Build phase</span>",            // build phase readout in the card
 		`class="cockpit"`,                // split layout
 		`class="card logdock col-right"`, // docked log pane
 		`<details class="internals">`,    // internals disclosure
@@ -701,6 +702,12 @@ func TestDetail_CockpitLayout(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail page should contain %q; body=%s", want, body)
+		}
+	}
+	// URL and phase moved off the sticky bar into the Build details card.
+	for _, gone := range []string{`class="sb-url"`, "phase <b>"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("detail status bar should no longer contain %q", gone)
 		}
 	}
 	// Bare page: no standard header (the status bar replaces it).
@@ -899,6 +906,44 @@ func TestContainerSelection_ExcludesReleaseAndRejectsUnknown(t *testing.T) {
 	// Default favors the failed step.
 	if got := defaultContainer(steps); got != "build" {
 		t.Errorf("defaultContainer = %q, want build (the failed step)", got)
+	}
+}
+
+func TestDefaultContainer_BetweenPhasesGapPicksNextPendingStep(t *testing.T) {
+	// Between phases the kubelet reports no Running container: the finished
+	// steps are Succeeded and everything after is Pending. The default must be
+	// the FIRST Pending step after a Succeeded one (the step about to start),
+	// NOT the last container — follow mode used to jump to copier on every
+	// phase change.
+	gap := []view.Step{
+		{Name: "clone", Status: "Succeeded"},
+		{Name: "setup", Status: "Succeeded"},
+		{Name: "fetch", Status: "Pending"},
+		{Name: "build", Status: "Pending"},
+		{Name: "copier", Status: "Pending"},
+	}
+	if got := defaultContainer(gap); got != "fetch" {
+		t.Errorf("defaultContainer(between-phases gap) = %q, want fetch (not copier)", got)
+	}
+
+	// Nothing has run yet (pod still scheduling): follow the first step.
+	allPending := []view.Step{
+		{Name: "clone", Status: "Pending"},
+		{Name: "build", Status: "Pending"},
+		{Name: "copier", Status: "Pending"},
+	}
+	if got := defaultContainer(allPending); got != "clone" {
+		t.Errorf("defaultContainer(all pending) = %q, want clone (first step)", got)
+	}
+
+	// All done: the last container (copier) holds the final word.
+	allDone := []view.Step{
+		{Name: "clone", Status: "Succeeded"},
+		{Name: "build", Status: "Succeeded"},
+		{Name: "copier", Status: "Succeeded"},
+	}
+	if got := defaultContainer(allDone); got != "copier" {
+		t.Errorf("defaultContainer(all succeeded) = %q, want copier (last)", got)
 	}
 }
 

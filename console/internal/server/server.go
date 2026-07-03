@@ -55,6 +55,13 @@ func New(apps k8s.FrontendAppPatcher, pods PodReader, tailer LokiTailer, metrics
 // the fragment degrades.
 const metricsTimeout = 1500 * time.Millisecond
 
+// logTailLines is how many newest lines the log pane fetches from either source
+// (Loki query_range or the kubelet's pod-log tail). The pane is a scrollable
+// <pre>, so this is sized to hold a WHOLE typical build log (the previous 100
+// truncated Loki-mode history logs to their last few screens); 5000 matches
+// Loki's default max_entries_limit_per_query — asking for more would 400.
+const logTailLines = 5000
+
 // Routes returns the configured mux. Go 1.22+ pattern routing carries the
 // method and {namespace}/{name} path values.
 func (s *Server) Routes() http.Handler {
@@ -354,9 +361,13 @@ func (s *Server) attachBuildMetrics(ctx context.Context, ns string, app *view.Ap
 	}
 
 	// Resolve the active container's memory limit from the pod so the % bar has
-	// something to draw against. A missing limit simply yields no bar.
+	// something to draw against, and the "used / available" text its right-hand
+	// side. A missing limit simply yields no bar and no "/ available".
 	memLim := containerMemLimit(pod, container)
 	bm.MemLimitBytes = memLim
+	if memLim > 0 {
+		bm.MemLimitHuman = view.HumanizeBytes(memLim)
+	}
 	if pct, over := view.StorageBar(usage.MemoryBytes, memLim); pct != view.StorageBarNoBar {
 		bm.HasMemBar, bm.MemBarPct, bm.MemOver = true, pct, over
 	}
@@ -478,8 +489,12 @@ func pickBuild(app view.App, build string) (rec view.Build, isCurrent, found boo
 }
 
 // defaultContainer chooses which real container's logs to show by default: the
-// failed/aborted step, else the running step, else the last container (copier),
-// else "build". steps must already exclude the synthetic release step.
+// failed/aborted step, else the running step, else — when some step has already
+// finished — the FIRST Pending step (the kubelet gap between one init container
+// terminating and the next starting; without this, follow mode briefly resolved
+// to the last container (copier) on every phase change), else the last container
+// (copier, the all-done case), else "build". steps must already exclude the
+// synthetic release step.
 func defaultContainer(steps []view.Step) string {
 	for _, st := range steps {
 		if st.Status == "Failed" || st.Status == "Aborted" {
@@ -491,7 +506,25 @@ func defaultContainer(steps []view.Step) string {
 			return st.Name
 		}
 	}
+	// Between-phases gap: the next step up is the first Pending one AFTER a
+	// Succeeded step. An all-Pending timeline (pod not started) keeps the "build"
+	// fallback below — clone's logs would be empty anyway.
+	started := false
+	for _, st := range steps {
+		if st.Status == "Succeeded" {
+			started = true
+			continue
+		}
+		if started && st.Status == "Pending" {
+			return st.Name
+		}
+	}
 	if len(steps) > 0 {
+		if steps[0].Status == "Pending" {
+			// Nothing has run yet (pod still scheduling): follow the first step,
+			// not the copier.
+			return steps[0].Name
+		}
 		return steps[len(steps)-1].Name
 	}
 	return "build"
@@ -536,7 +569,7 @@ func (s *Server) resolveLogs(ctx context.Context, ns string, rec view.Build, isC
 				end = t
 			}
 		}
-		data.Lines, data.FetchErr = s.tailer.Tail(ctx, ns, rec.PodName, container, start, end, 100)
+		data.Lines, data.FetchErr = s.tailer.Tail(ctx, ns, rec.PodName, container, start, end, logTailLines)
 	default: // SourceUnavailable
 		data.Unavailable = "logs unavailable — job " + dashOr(rec.JobName) + " / pod " + dashOr(rec.PodName)
 	}
@@ -550,7 +583,7 @@ func (s *Server) podLines(ctx context.Context, ns, pod, container string) ([]str
 	if s.pods == nil {
 		return nil, errors.New("pod reader unavailable")
 	}
-	return s.pods.PodLogTail(ctx, ns, pod, container, 100)
+	return s.pods.PodLogTail(ctx, ns, pod, container, logTailLines)
 }
 
 func dashOr(s string) string {

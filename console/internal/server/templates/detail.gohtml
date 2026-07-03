@@ -2,7 +2,7 @@
 {{template "head" .Head}}
 {{with .App}}
 
-{{/* Sticky status bar: identity, health, URL, phase, and the write actions.
+{{/* Sticky status bar: identity, health + warning badges, and the write actions.
      Rebuild stays primary; the two prunes are danger actions grouped behind an
      overflow menu. All three are plain POST forms with confirm() — no JS needed
      to act — and disable while a build or cleanup runs (CleanupBusy). */}}
@@ -12,9 +12,9 @@
   </nav>
   {{template "statusbadge" .}}
   {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE</span>{{end}}
-  {{if .URL}}<a class="sb-url" href="{{.URL}}" target="_blank" rel="noopener" title="{{.URL}}">{{.URLHost}}&nbsp;↗</a>{{end}}
-  <span class="sb-phase">phase <b>{{dash .Phase}}</b></span>
-  {{if .Group}}<span class="sb-phase">group <b class="mono">{{.Group}}</b></span>{{end}}
+  {{/* URL / phase / group moved into the Build details card; the bar keeps only
+       identity, health, and warning badges (storage threshold below). */}}
+  {{if .StorageBadgeLabel}}<span class="badge {{.StorageBadgeClass}}" title="storage threshold state: {{.Storage.ThresholdState}}">{{.StorageBadgeLabel}}</span>{{end}}
   <span class="sb-spacer"></span>
   <div class="sb-actions">
     <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/rebuild"
@@ -198,8 +198,11 @@
   }
 
   // "View logs" on a recent build loads it into the single pane (pinning it,
-  // off follow), highlights its row, and scrolls the pane into view. Delegated
-  // on #live-region because its innerHTML is swapped every poll.
+  // off follow) and highlights its row. Delegated on #live-region because its
+  // innerHTML is swapped every poll. block:'nearest' scrolls ONLY when the
+  // dock is off-screen (narrow layouts); in the two-column cockpit the dock is
+  // already visible and the page must not jump (block:'start' used to yank the
+  // whole page down on every click).
   if(region){
     region.addEventListener('click',function(e){
       var btn=e.target&&e.target.closest?e.target.closest('[data-view-logs]'):null;
@@ -209,7 +212,7 @@
       logpane.setAttribute('data-current-build', selectedJob);
       markSelectedRow();
       loadLogs();
-      if(logpane.scrollIntoView){logpane.scrollIntoView({behavior:'smooth',block:'start'});}
+      if(logpane.scrollIntoView){logpane.scrollIntoView({behavior:'smooth',block:'nearest'});}
     });
   }
 

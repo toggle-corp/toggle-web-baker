@@ -3,8 +3,8 @@
 <div class="flow">
   {{range $i, $s := .Steps}}
     {{if $i}}<span class="flow-sep" aria-hidden="true">→</span>{{end}}
-    <span class="step {{$s.CSSClass}}" title="{{$s.AriaLabel}}{{if $s.Message}} — {{$s.Message}}{{end}}{{if $s.PeakMemory}} — peak {{$s.PeakMemory}}{{end}}" aria-label="{{$s.AriaLabel}}">
-      <span class="g" aria-hidden="true">{{$s.Icon}}</span> {{$s.Name}}{{if $s.PeakMemory}} <span class="muted small">{{$s.PeakMemory}}</span>{{end}}
+    <span class="step {{$s.CSSClass}}" title="{{$s.AriaLabel}}{{if $s.Message}} — {{$s.Message}}{{end}}{{if $s.PeakMemory}} — peak {{$s.PeakMemory}}{{end}}{{if $s.MemoryLimit}} — allocated {{$s.MemoryLimit}}{{end}}{{if $s.Duration}} — took {{$s.Duration}}{{end}}" aria-label="{{$s.AriaLabel}}">
+      <span class="g" aria-hidden="true">{{$s.Icon}}</span> {{$s.Name}}{{if $s.PeakMemory}} <span class="muted small">{{$s.PeakMemory}}</span>{{end}}{{if $s.Duration}} <span class="muted small">({{$s.Duration}})</span>{{end}}
     </span>
   {{else}}
     <span class="muted small">no steps</span>
@@ -13,15 +13,15 @@
 {{end}}
 
 {{/* liveregion is the pollable detail fragment: the whole left column except
-     the internals disclosure (build flow, recent builds, conditions, schedule,
-     release, storage). Input is a view.App. Shared by detail.gohtml and
+     the internals disclosure (build details, conditions, recent builds,
+     schedule, release, storage). Input is a view.App. Shared by detail.gohtml and
      partial.gohtml. */}}
 {{define "liveregion"}}
 {{with .}}
 <div class="stack" data-build-active="{{if .BuildActive}}1{{else}}0{{end}}">
 
   <section class="card" id="card-flow">
-    <h2>Build flow</h2>
+    <h2>Build details</h2>
     <div class="body">
       {{template "flowstrip" .Build}}
 
@@ -36,7 +36,12 @@
         <div class="small muted" style="padding-top:6px">{{.Build.TerminationSummary}}</div>
       {{end}}
 
-      <div class="kv" style="margin-top:8px"><span class="k">Phase</span><span class="v">{{dash .Build.Phase}}</span></div>
+      {{/* App identity rows (URL / group), moved here from the sticky status
+           bar so the bar stays actions-only. Build Phase is labeled "Build
+           phase" to keep it distinct from the app-level health badge. */}}
+      <div class="kv" style="margin-top:8px"><span class="k">URL</span><span class="v">{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" title="{{.URL}}">{{.URLHost}}&nbsp;↗</a>{{else}}—{{end}}</span></div>
+      <div class="kv"><span class="k">Group</span><span class="v">{{if .Group}}<span class="mono">{{.Group}}</span>{{else}}—{{end}}</span></div>
+      <div class="kv"><span class="k">Build phase</span><span class="v">{{dash .Build.Phase}}</span></div>
       <div class="kv"><span class="k">Result</span><span class="v"{{if eq .Build.Result "Failed"}} style="color:var(--degraded-ink)"{{end}}>{{dash .Build.Result}}</span></div>
       <div class="kv"><span class="k">Trigger</span><span class="v">{{.Build.TriggerLabel}}</span></div>
       <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
@@ -47,9 +52,9 @@
         <div class="live-usage" style="margin-top:10px">
           <div class="small muted">Live usage · <span class="mono">{{.Container}}</span></div>
           <div class="vol">
-            <div class="vol-head"><span class="k">Memory</span><span class="v">{{.MemoryHuman}}</span></div>
+            <div class="vol-head"><span class="k">Memory</span><span class="v">{{.MemoryHuman}}{{if .MemLimitHuman}} <span class="small muted">/ {{.MemLimitHuman}}</span>{{end}}</span></div>
             {{if .HasMemBar}}
-              <div class="bar {{if .MemOver}}bar-over{{end}}" title="{{.MemoryHuman}} of limit ({{.MemBarPct}}%)">
+              <div class="bar {{if .MemOver}}bar-over{{end}}" title="{{.MemoryHuman}} of {{.MemLimitHuman}} limit ({{.MemBarPct}}%)">
                 <div class="bar-fill" style="width:{{if gt .MemBarPct 100}}100{{else}}{{.MemBarPct}}{{end}}%"></div>
               </div>
             {{end}}
@@ -58,6 +63,20 @@
       {{else}}
         {{if .BuildMetricsNote}}<div class="small muted" style="padding-top:6px">{{.BuildMetricsNote}}</div>{{end}}
       {{end}}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Conditions</h2>
+    <div class="body">
+      {{range .Conditions}}
+        <div class="kv">
+          <span class="k">{{.Type}}</span>
+          <span class="v b-{{.HealthClass}}"
+                title="{{.Reason}}: {{.Message}}">{{.Status}}</span>
+        </div>
+        {{if .Message}}<div class="small muted" style="padding:0 0 6px">{{.Message}}</div>{{end}}
+      {{else}}<div class="muted">No conditions reported.</div>{{end}}
     </div>
   </section>
 
@@ -76,26 +95,13 @@
               {{if and $.ServingJobName (eq .JobName $.ServingJobName)}}<span class="tl-serving">← serving</span>{{end}}
             </div>
             {{if .JobName}}<div class="tl-job">{{.JobName}}</div>{{end}}
+            {{template "flowstrip" .}}
           </div>
           {{if .JobName}}<button type="button" class="btn btn-ghost btn-sm" data-view-logs="{{.JobName}}">View logs</button>{{end}}
         </div>
       {{else}}
         <div class="muted">No recent builds.</div>
       {{end}}
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Conditions</h2>
-    <div class="body">
-      {{range .Conditions}}
-        <div class="kv">
-          <span class="k">{{.Type}}</span>
-          <span class="v b-{{.HealthClass}}"
-                title="{{.Reason}}: {{.Message}}">{{.Status}}</span>
-        </div>
-        {{if .Message}}<div class="small muted" style="padding:0 0 6px">{{.Message}}</div>{{end}}
-      {{else}}<div class="muted">No conditions reported.</div>{{end}}
     </div>
   </section>
 
@@ -128,10 +134,10 @@
         <div class="vol">
           <div class="vol-head">
             <span class="k">{{.DisplayName}}</span>
-            <span class="v">{{.Human}} <span class="small muted">· {{.Delta}}</span></span>
+            <span class="v">{{.Human}}{{if .HasBar}} <span class="small muted">/ {{.CapHuman}}</span>{{end}} <span class="small muted">· {{.Delta}}</span></span>
           </div>
           {{if .HasBar}}
-            <div class="bar {{if .Over}}bar-over{{end}}" title="{{.Human}} of cap ({{.BarPct}}%)">
+            <div class="bar {{if .Over}}bar-over{{end}}" title="{{.Human}} of {{.CapHuman}} ({{.BarPct}}%)">
               <div class="bar-fill" style="width:{{if gt .BarPct 100}}100{{else}}{{.BarPct}}{{end}}%"></div>
             </div>
           {{end}}

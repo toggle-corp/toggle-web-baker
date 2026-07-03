@@ -69,6 +69,55 @@ type Step struct {
 	// Empty when unmeasured — shim-less steps (clone/copier/release) or a
 	// still-running phase.
 	PeakMemory string
+	// MemoryLimit is the memory ceiling the step's container ran with (raw
+	// quantity string from status, e.g. "2Gi") — the "allocated" figure paired
+	// with PeakMemory in the flow-strip tooltip. Empty when unrecorded.
+	MemoryLimit string
+	// StartedAt / FinishedAt are the step container's RFC3339 timestamps from
+	// status (startedAt/finishedAt). FinishedAt is empty while running.
+	StartedAt  string
+	FinishedAt string
+}
+
+// Duration renders the step's runtime compactly ("48s", "2m", "2m30s"): the
+// finished span for a terminated step, or the live elapsed-so-far for a Running
+// one (the fragment re-renders every few seconds, so it ticks). Empty when the
+// step has not started, timestamps are unparseable, or the span is negative
+// (clock skew).
+func (s Step) Duration() string {
+	start, err := time.Parse(time.RFC3339, s.StartedAt)
+	if err != nil {
+		return ""
+	}
+	end := Now()
+	if s.FinishedAt != "" {
+		t, err := time.Parse(time.RFC3339, s.FinishedAt)
+		if err != nil {
+			return ""
+		}
+		end = t
+	} else if s.Status != "Running" {
+		return ""
+	}
+	d := end.Sub(start)
+	if d < 0 {
+		return ""
+	}
+	return compactDuration(d)
+}
+
+// compactDuration renders a duration rounded to seconds with zero-valued
+// trailing units dropped: "2m0s" → "2m", "1h0m0s" → "1h" (Go's String() keeps
+// them). Sub-second spans render "0s".
+func compactDuration(d time.Duration) string {
+	out := d.Round(time.Second).String()
+	if strings.HasSuffix(out, "m0s") {
+		out = strings.TrimSuffix(out, "0s")
+	}
+	if strings.HasSuffix(out, "h0m") {
+		out = strings.TrimSuffix(out, "0m")
+	}
+	return out
 }
 
 // Build mirrors status.build and each element of status.buildHistory[] (same shape).
@@ -174,29 +223,49 @@ type Release struct {
 type Storage struct {
 	MeasuredAt     string
 	ThresholdState string
+	// ReleaseCount is the copier-reported number of release dirs retained on
+	// the output PVC (0 = never reported), surfaced in the outputTotal label.
+	ReleaseCount int64
 	// Volumes is the per-volume rendering: humanized size, last-run delta, and
-	// (when a cap is known from spec.storage) a fill bar. Key-sorted.
+	// (when a cap is known from spec.storage or the PVC capacity) a fill bar.
+	// Key-sorted.
 	Volumes []StorageVolume
 }
 
 // StorageVolume is one rendered storage volume row. Bytes is the raw size from
-// status.storage.sizes; Cap is the byte cap mapped from spec.storage (0 when
-// unknown). HasBar is true only when a positive cap was resolved.
+// status.storage.sizes; Cap is the byte cap resolved from spec.storage, falling
+// back to the PVC's provisioned capacity (status.storage.capacities) so every
+// PVC-backed volume gets a bar. HasBar is true only when a positive cap was
+// resolved; CapHuman is its humanized form for the "used / cap" pairing.
 type StorageVolume struct {
-	Name   string
-	Bytes  int64
-	Human  string
-	Delta  string
-	Cap    int64
-	BarPct int
-	Over   bool
-	HasBar bool
+	Name     string
+	Bytes    int64
+	Human    string
+	Delta    string
+	Cap      int64
+	CapHuman string
+	BarPct   int
+	Over     bool
+	HasBar   bool
+	// Releases is the retained-release count, set ONLY on the outputTotal row
+	// (0 elsewhere / when never reported) to drive its "(N releases)" label.
+	Releases int64
 }
 
 // DisplayName is the human label for the volume row; the raw status key (Name)
 // is not friendly. It delegates to volumeLabel so the mapping stays a pure,
-// unit-testable helper. Name itself is kept intact — sorting and tests rely on it.
-func (v StorageVolume) DisplayName() string { return volumeLabel(v.Name) }
+// unit-testable helper — except outputTotal, whose label carries the REAL
+// retained-release count when the copier has reported one. Name itself is kept
+// intact — sorting and tests rely on it.
+func (v StorageVolume) DisplayName() string {
+	if v.Name == "outputTotal" && v.Releases > 0 {
+		if v.Releases == 1 {
+			return "Output (1 release)"
+		}
+		return fmt.Sprintf("Output (%d releases)", v.Releases)
+	}
+	return volumeLabel(v.Name)
+}
 
 // volumeLabel maps a status.storage.sizes key to a readable card label. Unmapped
 // keys fall through to the raw key so a new operator key still renders (unpretty
@@ -294,6 +363,7 @@ type BuildMetrics struct {
 	MemoryBytes   int64
 	MemoryHuman   string // reuse HumanizeBytes
 	MemLimitBytes int64  // 0 = unknown (no bar)
+	MemLimitHuman string // humanized limit for the "used / available" pairing; "" when unknown
 	MemBarPct     int
 	MemOver       bool
 	HasMemBar     bool
@@ -592,9 +662,12 @@ func stepsFrom(v any) []Step {
 			continue
 		}
 		st := Step{
-			Name:    asString(m["name"]),
-			Status:  asString(m["status"]),
-			Message: asString(m["message"]),
+			Name:        asString(m["name"]),
+			Status:      asString(m["status"]),
+			Message:     asString(m["message"]),
+			MemoryLimit: asString(m["memoryLimit"]),
+			StartedAt:   asString(m["startedAt"]),
+			FinishedAt:  asString(m["finishedAt"]),
 		}
 		if b := asInt(m["peakMemoryBytes"]); b > 0 {
 			st.PeakMemory = HumanizeBytes(b)
@@ -635,10 +708,12 @@ func storageFrom(v any, specStorage map[string]any) Storage {
 	if !ok {
 		return Storage{}
 	}
+	releaseCount := asInt(m["releaseCount"])
 	return Storage{
 		MeasuredAt:     asString(m["measuredAt"]),
 		ThresholdState: asString(m["thresholdState"]),
-		Volumes:        volumesFrom(m["sizes"], m["lastRunDeltas"], specStorage),
+		ReleaseCount:   releaseCount,
+		Volumes:        volumesFrom(m["sizes"], m["lastRunDeltas"], specStorage, m["capacities"], releaseCount),
 	}
 }
 
@@ -646,18 +721,25 @@ func storageFrom(v any, specStorage map[string]any) Storage {
 // becomes a StorageVolume; a cap is resolved DEFENSIVELY by normalizing the key
 // name (lowercased): containing "output" → spec.storage.output.capBytes;
 // "data" → dataCache.cleanupBytes or .alertBytes (first positive); else
-// "cache" → cache.cleanupBytes or .alertBytes. No match or cap<=0 → no bar.
-func volumesFrom(sizes, deltas, specStorage any) []StorageVolume {
+// "cache" → cache.cleanupBytes or .alertBytes. When spec.storage yields no cap,
+// the PVC's provisioned capacity (status.storage.capacities, keyed by the same
+// volume names) is the fallback — the physical bound, so every PVC-backed
+// volume gets a fill bar like the memory one. No cap at all → no bar.
+func volumesFrom(sizes, deltas, specStorage, capacities any, releaseCount int64) []StorageVolume {
 	sizeMap, ok := sizes.(map[string]any)
 	if !ok || len(sizeMap) == 0 {
 		return nil
 	}
 	deltaMap, _ := deltas.(map[string]any)
+	capacityMap, _ := capacities.(map[string]any)
 
 	out := make([]StorageVolume, 0, len(sizeMap))
 	for name, raw := range sizeMap {
 		bytes := asInt(raw)
 		capBytes := capForKey(name, specStorage)
+		if capBytes <= 0 {
+			capBytes = capacityForKey(name, capacityMap)
+		}
 		v := StorageVolume{
 			Name:  name,
 			Bytes: bytes,
@@ -665,7 +747,11 @@ func volumesFrom(sizes, deltas, specStorage any) []StorageVolume {
 			Delta: HumanizeDelta(asInt(deltaMap[name])),
 			Cap:   capBytes,
 		}
+		if name == "outputTotal" {
+			v.Releases = releaseCount
+		}
 		if capBytes > 0 {
+			v.CapHuman = HumanizeBytes(capBytes)
 			pct, over := StorageBar(bytes, capBytes)
 			if pct != StorageBarNoBar {
 				v.HasBar = true
@@ -693,7 +779,7 @@ func capForKey(key string, specStorage any) int64 {
 	case strings.Contains(k, "total"):
 		// "outputTotal" is the whole output PVC across all retained releases; the
 		// per-release output.capBytes bounds a single release, not the total, and no
-		// total cap exists yet. Match "total" BEFORE "output" so it stays bar-less.
+		// total cap exists in the spec. Its bound is the PVC capacity fallback.
 		return 0
 	case strings.Contains(k, "output"):
 		return nestedInt(spec, "output", "capBytes")
@@ -707,6 +793,27 @@ func capForKey(key string, specStorage any) int64 {
 			nestedInt(spec, "cache", "cleanupBytes"),
 			nestedInt(spec, "cache", "alertBytes"),
 		)
+	default:
+		return 0
+	}
+}
+
+// capacityForKey maps a status size key to its PVC's provisioned capacity from
+// status.storage.capacities (keys: cache / dataCache / output). The same fuzzy
+// normalization as capForKey: outputTotal AND output both live on the output
+// PVC; "data" before "cache" so dataCache never matches the cache PVC.
+func capacityForKey(key string, capacityMap map[string]any) int64 {
+	if len(capacityMap) == 0 {
+		return 0
+	}
+	k := strings.ToLower(key)
+	switch {
+	case strings.Contains(k, "output"):
+		return asInt(capacityMap["output"])
+	case strings.Contains(k, "data"):
+		return asInt(capacityMap["dataCache"])
+	case strings.Contains(k, "cache"):
+		return asInt(capacityMap["cache"])
 	default:
 		return 0
 	}
