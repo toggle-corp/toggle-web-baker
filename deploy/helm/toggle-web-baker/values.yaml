@@ -13,6 +13,13 @@ fullnameOverride: ""
 crds:
   install: true
 
+# Sentry error reporting for the operator and console binaries (one shared
+# project; events are tagged component=operator|console). An empty dsn
+# disables the SDK entirely. This is NOT injected into baked frontend apps.
+sentry:
+  dsn: ""
+  environment: "production"
+
 operator:
   replicas: 1
 

@@ -57,6 +57,14 @@ spec:
             - { name: LOKI_BEARER_TOKEN, value: {{ .bearerToken | quote }} }
             {{- end }}
             {{- end }}
+            {{- if .Values.sentry.dsn }}
+            - name: SENTRY_DSN
+              value: {{ .Values.sentry.dsn | quote }}
+            - name: SENTRY_ENVIRONMENT
+              value: {{ .Values.sentry.environment | quote }}
+            - name: SENTRY_RELEASE
+              value: {{ .Values.console.image.tag | default .Chart.AppVersion | quote }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

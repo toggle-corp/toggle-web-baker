@@ -1520,6 +1520,12 @@ spec:
             - { name: LISTEN_ADDR, value: ":8080" }
             - { name: LOKI_URL, value: "http://loki.monitoring.svc:3100" }
             - { name: LOKI_TENANT_ID, value: "baker" }
+            - name: SENTRY_DSN
+              value: "https://key@o0.ingest.example.sentry.io/1"
+            - name: SENTRY_ENVIRONMENT
+              value: "staging"
+            - name: SENTRY_RELEASE
+              value: "0.0.0"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -1659,6 +1665,13 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --config=/etc/baker/config.yaml
+          env:
+            - name: SENTRY_DSN
+              value: "https://key@o0.ingest.example.sentry.io/1"
+            - name: SENTRY_ENVIRONMENT
+              value: "staging"
+            - name: SENTRY_RELEASE
+              value: "0.0.0"
           volumeMounts:
             - { name: config, mountPath: /etc/baker, readOnly: true }
           ports:

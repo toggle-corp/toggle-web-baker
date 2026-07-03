@@ -3,6 +3,9 @@
 operator:
   clusterCIDRs:
     - 10.0.0.0/8
+sentry:
+  dsn: "https://key@o0.ingest.example.sentry.io/1"
+  environment: "staging"
 console:
   enabled: true
   host: baker-console.example.org
