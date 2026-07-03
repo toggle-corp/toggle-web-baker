@@ -14,6 +14,10 @@ absent in fresh clones. Read it if present.
   (`buildpod.go` is the single source of truth for the build Job).
 - `internal/domain/` — pure decision logic (build scheduling, registry
   allowlist, storage thresholds).
+- `internal/observability/` — Sentry plumbing for the operator (zap tee,
+  rate limiting, filters); `console/internal/sentryhttp/` is the console
+  counterpart. Policy: see `docs/sentry.md` — user-caused build failures
+  must NOT reach Sentry.
 - `images/` — the platform helper images (clone / copier / du / cleanup).
 - `deploy/helm/toggle-web-baker/` — the install chart.
 - `config/samples/frontendapp.yaml` — the e2e smoke sample.
