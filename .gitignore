@@ -2,3 +2,6 @@
 
 # Machine-local agent context (see AGENTS.md).
 AGENTS.local.md
+
+# Local impeccable-skill critique snapshots (not shared).
+.impeccable/
