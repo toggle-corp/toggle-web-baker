@@ -597,6 +597,66 @@ func (a App) ServingJobName() string {
 	return ""
 }
 
+// storageVolumeBytes returns the named volume's Bytes, or 0 when absent — the
+// shared reader behind the per-category Storage*Bytes getters.
+func (a App) storageVolumeBytes(name string) int64 {
+	for _, v := range a.Storage.Volumes {
+		if v.Name == name {
+			return v.Bytes
+		}
+	}
+	return 0
+}
+
+// StorageCacheBytes is the build cache volume's size (0 if absent).
+func (a App) StorageCacheBytes() int64 { return a.storageVolumeBytes("cache") }
+
+// StorageDataCacheBytes is the data cache volume's size (0 if absent).
+func (a App) StorageDataCacheBytes() int64 { return a.storageVolumeBytes("dataCache") }
+
+// StorageOutputTotalBytes is the output volume across ALL retained releases (0
+// if absent).
+func (a App) StorageOutputTotalBytes() int64 { return a.storageVolumeBytes("outputTotal") }
+
+// StorageOutputActiveBytes is the CURRENT (active) release's output size (0 if
+// absent). Informational only — a subset of StorageOutputTotalBytes, never
+// summed into the grand total.
+func (a App) StorageOutputActiveBytes() int64 { return a.storageVolumeBytes("output") }
+
+// StorageTotalBytes is the app's non-overlapping physical footprint: cache +
+// dataCache + outputTotal. The active release (StorageOutputActiveBytes) is a
+// subset of outputTotal, so it is deliberately NOT added — that would
+// double-count.
+func (a App) StorageTotalBytes() int64 {
+	return a.StorageCacheBytes() + a.StorageDataCacheBytes() + a.StorageOutputTotalBytes()
+}
+
+// StorageTotals is a cross-app storage roll-up by category. Grand is the
+// non-overlapping footprint (Cache + DataCache + OutputTotal); OutputActive is
+// informational only (a subset of OutputTotal) and is NOT part of Grand.
+type StorageTotals struct {
+	Cache        int64
+	DataCache    int64
+	OutputTotal  int64
+	OutputActive int64
+	Grand        int64
+}
+
+// AggregateStorage sums each storage category across apps and sets Grand to the
+// non-overlapping footprint (Cache + DataCache + OutputTotal). OutputActive is
+// summed for display but excluded from Grand.
+func AggregateStorage(apps []App) StorageTotals {
+	var t StorageTotals
+	for _, a := range apps {
+		t.Cache += a.StorageCacheBytes()
+		t.DataCache += a.StorageDataCacheBytes()
+		t.OutputTotal += a.StorageOutputTotalBytes()
+		t.OutputActive += a.StorageOutputActiveBytes()
+	}
+	t.Grand = t.Cache + t.DataCache + t.OutputTotal
+	return t
+}
+
 // FromUnstructured projects a FrontendApp object into the view model. It never
 // errors: missing or mistyped fields are simply left at their zero value so a
 // half-populated status (mid-reconcile, or an older operator) still renders.
