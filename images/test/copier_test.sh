@@ -218,6 +218,12 @@ case "$blob" in
 	*'"source":'*) no "emit_status: sizes must not contain a source key ([$blob])" ;;
 	*) ok "emit_status: sizes no longer carries source" ;;
 esac
+# releaseCount = the number of retained release dirs (r-new + r-old = 2), the
+# REAL on-disk count behind the console's "Output (N releases)" label.
+case "$blob" in
+	*'"releaseCount":2'*) ok "emit_status: releaseCount counts the retained release dirs" ;;
+	*) no "emit_status: missing/wrong releaseCount (want 2, [$blob])" ;;
+esac
 case "$blob" in
 	*'"sourceSize":8192'*) ok "emit_status: sourceSize flat alias present" ;;
 	*) no "emit_status: missing sourceSize flat alias ([$blob])" ;;

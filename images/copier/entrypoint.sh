@@ -143,15 +143,26 @@ emit_status() {
 	'' | *[!0-9]*) total_bytes=0 ;;
 	esac
 
+	# Count the release dirs actually retained on the PVC (post retention sweep
+	# + flip), so the console can label "Output (N releases)" with the REAL
+	# on-disk count rather than spec.keepReleases. Same defensive integer guard
+	# as total_bytes — malformed JSON would discard the whole termination status.
+	local release_count
+	release_count="$(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+	case "$release_count" in
+	'' | *[!0-9]*) release_count=0 ;;
+	esac
+
 	# Field names match the operator's CopierMessage parser (internal/controller
 	# /ensure.go): release.current flips the served-release pointer; sizes is the
 	# per-volume du map the console renders -- sizes.output = the just-assembled
 	# current release, sizes.outputTotal = every retained release on the output
-	# PVC (releases dir, post-retention). sourceSize/outputSize are flat top-level
+	# PVC (releases dir, post-retention); releaseCount = the number of retained
+	# release dirs behind outputTotal. sourceSize/outputSize are flat top-level
 	# aliases for humans reading the raw termination log (source = build output on
 	# the work volume; output = current release).
-	printf '{"releaseTs":"%s","release":{"current":"%s"},"sizes":{"output":%s,"outputTotal":%s},"outputSize":%s,"sourceSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
-		"$RELEASE_TS" "$RELEASE_TS" "$out_bytes" "$total_bytes" "$out_bytes" "$src_bytes" \
+	printf '{"releaseTs":"%s","release":{"current":"%s"},"sizes":{"output":%s,"outputTotal":%s},"releaseCount":%s,"outputSize":%s,"sourceSize":%s,"deltas":{"prevFileCount":%s,"fileCount":%s,"filesAdded":%s,"filesRemoved":%s}}\n' \
+		"$RELEASE_TS" "$RELEASE_TS" "$out_bytes" "$total_bytes" "$release_count" "$out_bytes" "$src_bytes" \
 		"$prev_count" "$cur_count" "$delta_added" "$delta_removed" | head -c 4000 >"$TERM_LOG" 2>/dev/null ||
 		printf 'copier: warning: could not write termination log\n' >&2
 
