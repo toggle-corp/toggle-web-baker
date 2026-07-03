@@ -8,8 +8,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
@@ -33,6 +35,13 @@ import (
 // to warm before List can serve from it. On timeout New() fails (crash-loop
 // rather than serve an empty list).
 const cacheSyncTimeout = 30 * time.Second
+
+// testCacheSyncTimeout bounds NewWithDynamic's warm-up. It is much shorter than
+// the production cacheSyncTimeout because that constructor is the test/inline
+// path (fake dynamic client, objects seeded synchronously): a completed sync is
+// near-instant, so a miswired fake (missing listKind, wrong GVR) should surface
+// fast — a warning after 5s, not a silent 30s stall then an empty cache.
+const testCacheSyncTimeout = 5 * time.Second
 
 // GVR addresses the FrontendApp custom resource. The resource (plural) name is
 // the lowercase-plural of the kind, matching the CRD's spec.names.plural.
@@ -58,6 +67,9 @@ type Client struct {
 	factory dynamicinformer.DynamicSharedInformerFactory
 	lister  cache.GenericLister
 	stop    chan struct{} // closed by Close to stop the informer goroutines
+	// closeOnce makes Close idempotent: concurrent callers race to close(stop),
+	// and a double close panics. sync.Once collapses them to a single close.
+	closeOnce sync.Once
 }
 
 // FrontendAppPatcher is the narrow capability the server depends on; tests
@@ -116,12 +128,17 @@ func New() (*Client, error) {
 // t.Cleanup); a long-lived server may let the informer run until process exit.
 func NewWithDynamic(dyn dynamic.Interface) *Client {
 	c := newWithInformer(dyn)
-	// Best-effort warm-up under the same bound; tests seed synchronously so the
-	// fake's initial List completes well within it. On the unlikely failure we
-	// still return the client (its List then serves whatever the cache holds).
-	ctx, cancel := context.WithTimeout(context.Background(), cacheSyncTimeout)
+	// Best-effort warm-up under a SHORT bound; tests seed synchronously so the
+	// fake's initial List completes well within it. A miswired fake never syncs,
+	// so log a clear warning (rather than stalling 30s then silently serving an
+	// empty cache) and still return the client — its List then serves whatever
+	// the cache holds, and the warning points at the cause.
+	ctx, cancel := context.WithTimeout(context.Background(), testCacheSyncTimeout)
 	defer cancel()
-	_ = c.waitForSync(ctx.Done())
+	if !c.waitForSync(ctx.Done()) {
+		log.Printf("k8s: NewWithDynamic informer cache did not sync within %s "+
+			"(miswired fake? check listKind/GVR); serving from an empty cache", testCacheSyncTimeout)
+	}
 	return c
 }
 
@@ -162,20 +179,17 @@ func (c *Client) waitForSync(stopCh <-chan struct{}) bool {
 	return synced[GVR]
 }
 
-// Close stops the informer's background goroutines. Safe to call once; further
-// List calls then serve whatever the cache last held. Tests defer this to avoid
-// leaking a goroutine per client.
+// Close stops the informer's background goroutines. Idempotent and safe under
+// concurrent callers (sync.Once): further List calls then serve whatever the
+// cache last held. Tests register this via t.Cleanup to avoid leaking a
+// goroutine per client.
 func (c *Client) Close() {
-	if c.stop != nil {
-		select {
-		case <-c.stop: // already closed
-		default:
-			close(c.stop)
+	c.closeOnce.Do(func() {
+		close(c.stop)
+		if c.factory != nil {
+			c.factory.Shutdown()
 		}
-	}
-	if c.factory != nil {
-		c.factory.Shutdown()
-	}
+	})
 }
 
 func restConfig() (*rest.Config, error) {

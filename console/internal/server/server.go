@@ -142,21 +142,17 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	pageApps := filtered[lo:hi]
 
-	// Storage roll-up spans the whole FILTERED set (pre-pagination), so the
-	// heading figure reflects every match, not just the visible page.
-	st := view.AggregateStorage(filtered)
-
 	render(w, "list", listData{
-		Head:  head{Title: "Apps", User: sentryhttp.UserFrom(r)},
-		Apps:  pageApps,
-		Total: len(apps),
-		Storage: storageHeading{
-			Grand:     view.HumanizeBytes(st.Grand),
-			Cache:     view.HumanizeBytes(st.Cache),
-			DataCache: view.HumanizeBytes(st.DataCache),
-			Output:    view.HumanizeBytes(st.OutputTotal),
-			Active:    view.HumanizeBytes(st.OutputActive),
-		},
+		Head: head{Title: "Apps", User: sentryhttp.UserFrom(r)},
+		Apps: pageApps,
+		// Matched is the filtered (pre-pagination) count; the storage roll-up
+		// spans the SAME set, so the heading count and storage describe one set.
+		// Filtered flips the count to "Matched of Total" when a filter narrowed it.
+		Total:    len(apps),
+		Matched:  len(filtered),
+		Filtered: len(filtered) != len(apps),
+		Storage:  view.AggregateStorage(filtered),
+
 		StatusFacets:   facets,
 		GroupChips:     chips,
 		Search:         search,
@@ -366,8 +362,11 @@ func filterApps(apps []view.App, status, group string) []view.App {
 	return out
 }
 
-// searchApps keeps apps whose name, namespace, group, or URL host contains term
-// (case-insensitive substring, OR across the fields). An empty term is a no-op.
+// searchApps keeps apps where term is a case-insensitive substring of ANY single
+// field (name, namespace, group, or URL host). Matching per-field — not against a
+// joined haystack — is deliberate: a term with a space (e.g. "web prod") must
+// not match ACROSS a field boundary (name "…-web" + namespace "prod-…"). An
+// empty term is a no-op.
 func searchApps(apps []view.App, term string) []view.App {
 	if term == "" {
 		return apps
@@ -375,9 +374,11 @@ func searchApps(apps []view.App, term string) []view.App {
 	term = strings.ToLower(term)
 	out := make([]view.App, 0, len(apps))
 	for _, a := range apps {
-		hay := strings.ToLower(a.Name + " " + a.Namespace + " " + a.Group + " " + a.URLHost())
-		if strings.Contains(hay, term) {
-			out = append(out, a)
+		for _, field := range []string{a.Name, a.Namespace, a.Group, a.URLHost()} {
+			if strings.Contains(strings.ToLower(field), term) {
+				out = append(out, a)
+				break
+			}
 		}
 	}
 	return out

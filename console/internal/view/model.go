@@ -597,53 +597,62 @@ func (a App) ServingJobName() string {
 	return ""
 }
 
-// storageVolumeBytes returns the named volume's Bytes, or 0 when absent — the
-// shared reader behind the per-category Storage*Bytes getters.
-func (a App) storageVolumeBytes(name string) int64 {
+// storageTotals walks Storage.Volumes ONCE, bucketing by volume name into a
+// StorageTotals. Grand is the non-overlapping footprint (Cache + DataCache +
+// OutputTotal); OutputActive is a subset of OutputTotal, so it is set but never
+// added into Grand. It is the single reader behind the per-category getters, the
+// per-row total/tooltip, and AggregateStorage — the slice is scanned once, not
+// once per category.
+func (a App) storageTotals() StorageTotals {
+	var t StorageTotals
 	for _, v := range a.Storage.Volumes {
-		if v.Name == name {
-			return v.Bytes
+		switch v.Name {
+		case "cache":
+			t.Cache = v.Bytes
+		case "dataCache":
+			t.DataCache = v.Bytes
+		case "outputTotal":
+			t.OutputTotal = v.Bytes
+		case "output":
+			t.OutputActive = v.Bytes
 		}
 	}
-	return 0
+	t.Grand = t.Cache + t.DataCache + t.OutputTotal
+	return t
 }
 
 // StorageCacheBytes is the build cache volume's size (0 if absent).
-func (a App) StorageCacheBytes() int64 { return a.storageVolumeBytes("cache") }
+func (a App) StorageCacheBytes() int64 { return a.storageTotals().Cache }
 
 // StorageDataCacheBytes is the data cache volume's size (0 if absent).
-func (a App) StorageDataCacheBytes() int64 { return a.storageVolumeBytes("dataCache") }
+func (a App) StorageDataCacheBytes() int64 { return a.storageTotals().DataCache }
 
 // StorageOutputTotalBytes is the output volume across ALL retained releases (0
 // if absent).
-func (a App) StorageOutputTotalBytes() int64 { return a.storageVolumeBytes("outputTotal") }
+func (a App) StorageOutputTotalBytes() int64 { return a.storageTotals().OutputTotal }
 
 // StorageOutputActiveBytes is the CURRENT (active) release's output size (0 if
 // absent). Informational only — a subset of StorageOutputTotalBytes, never
 // summed into the grand total.
-func (a App) StorageOutputActiveBytes() int64 { return a.storageVolumeBytes("output") }
+func (a App) StorageOutputActiveBytes() int64 { return a.storageTotals().OutputActive }
 
 // StorageTotalBytes is the app's non-overlapping physical footprint: cache +
-// dataCache + outputTotal. The active release (StorageOutputActiveBytes) is a
-// subset of outputTotal, so it is deliberately NOT added — that would
-// double-count.
-func (a App) StorageTotalBytes() int64 {
-	return a.StorageCacheBytes() + a.StorageDataCacheBytes() + a.StorageOutputTotalBytes()
-}
+// dataCache + outputTotal. The active release (OutputActive) is a subset of
+// outputTotal, so it is deliberately NOT added — that would double-count.
+func (a App) StorageTotalBytes() int64 { return a.storageTotals().Grand }
 
 // StorageTotalHuman is the app's non-overlapping footprint (StorageTotalBytes)
 // humanized — the value shown in the list-row Storage cell.
-func (a App) StorageTotalHuman() string { return HumanizeBytes(a.StorageTotalBytes()) }
+func (a App) StorageTotalHuman() string { return a.storageTotals().GrandHuman() }
 
 // StorageTooltip is the list-row Storage cell's title=, breaking the total down
 // by category: "Cache 4.0 GiB · Data cache 2.0 GiB · Output 6.4 GiB (active
-// 3.0 GiB)". Active is a subset of Output, shown parenthetically.
+// 3.0 GiB)". Active is a subset of Output, shown parenthetically. Labels match
+// the list-heading roll-up.
 func (a App) StorageTooltip() string {
+	t := a.storageTotals()
 	return fmt.Sprintf("Cache %s · Data cache %s · Output %s (active %s)",
-		HumanizeBytes(a.StorageCacheBytes()),
-		HumanizeBytes(a.StorageDataCacheBytes()),
-		HumanizeBytes(a.StorageOutputTotalBytes()),
-		HumanizeBytes(a.StorageOutputActiveBytes()),
+		t.CacheHuman(), t.DataCacheHuman(), t.OutputHuman(), t.ActiveHuman(),
 	)
 }
 
@@ -658,16 +667,26 @@ type StorageTotals struct {
 	Grand        int64
 }
 
+// Humanized accessors for the list-heading roll-up, so the template stays
+// logic-free. OutputHuman/ActiveHuman name the outputTotal/output figures.
+func (t StorageTotals) GrandHuman() string     { return HumanizeBytes(t.Grand) }
+func (t StorageTotals) CacheHuman() string     { return HumanizeBytes(t.Cache) }
+func (t StorageTotals) DataCacheHuman() string { return HumanizeBytes(t.DataCache) }
+func (t StorageTotals) OutputHuman() string    { return HumanizeBytes(t.OutputTotal) }
+func (t StorageTotals) ActiveHuman() string    { return HumanizeBytes(t.OutputActive) }
+
 // AggregateStorage sums each storage category across apps and sets Grand to the
 // non-overlapping footprint (Cache + DataCache + OutputTotal). OutputActive is
-// summed for display but excluded from Grand.
+// summed for display but excluded from Grand. Each app's volumes are walked once
+// (storageTotals), not once per category.
 func AggregateStorage(apps []App) StorageTotals {
 	var t StorageTotals
 	for _, a := range apps {
-		t.Cache += a.StorageCacheBytes()
-		t.DataCache += a.StorageDataCacheBytes()
-		t.OutputTotal += a.StorageOutputTotalBytes()
-		t.OutputActive += a.StorageOutputActiveBytes()
+		at := a.storageTotals()
+		t.Cache += at.Cache
+		t.DataCache += at.DataCache
+		t.OutputTotal += at.OutputTotal
+		t.OutputActive += at.OutputActive
 	}
 	t.Grand = t.Cache + t.DataCache + t.OutputTotal
 	return t

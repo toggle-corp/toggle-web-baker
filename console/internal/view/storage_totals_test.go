@@ -112,6 +112,50 @@ func TestStorageTooltip(t *testing.T) {
 	}
 }
 
+func TestStorageTotalsSinglePass(t *testing.T) {
+	a := App{Storage: Storage{Volumes: []StorageVolume{
+		{Name: "cache", Bytes: 100},
+		{Name: "dataCache", Bytes: 200},
+		{Name: "outputTotal", Bytes: 300},
+		{Name: "output", Bytes: 50}, // active: subset of outputTotal, excluded from Grand
+		{Name: "unknown", Bytes: 999},
+	}}}
+	got := a.storageTotals()
+	want := StorageTotals{Cache: 100, DataCache: 200, OutputTotal: 300, OutputActive: 50, Grand: 600}
+	if got != want {
+		t.Errorf("storageTotals() = %+v, want %+v", got, want)
+	}
+	// Empty app is all zeros.
+	if got := (App{}).storageTotals(); got != (StorageTotals{}) {
+		t.Errorf("storageTotals() empty = %+v, want zero", got)
+	}
+}
+
+func TestStorageTotalsHumanAccessors(t *testing.T) {
+	t2 := StorageTotals{
+		Cache:        4 * 1024 * 1024 * 1024,
+		DataCache:    2 * 1024 * 1024 * 1024,
+		OutputTotal:  6871947674,
+		OutputActive: 3 * 1024 * 1024 * 1024,
+		Grand:        4*1024*1024*1024 + 2*1024*1024*1024 + 6871947674,
+	}
+	if got := t2.CacheHuman(); got != "4.0 GiB" {
+		t.Errorf("CacheHuman() = %q, want 4.0 GiB", got)
+	}
+	if got := t2.DataCacheHuman(); got != "2.0 GiB" {
+		t.Errorf("DataCacheHuman() = %q, want 2.0 GiB", got)
+	}
+	if got := t2.OutputHuman(); got != "6.4 GiB" {
+		t.Errorf("OutputHuman() = %q, want 6.4 GiB", got)
+	}
+	if got := t2.ActiveHuman(); got != "3.0 GiB" {
+		t.Errorf("ActiveHuman() = %q, want 3.0 GiB", got)
+	}
+	if got := t2.GrandHuman(); got != "12.4 GiB" {
+		t.Errorf("GrandHuman() = %q, want 12.4 GiB", got)
+	}
+}
+
 func TestStorageTotalHuman(t *testing.T) {
 	a := App{Storage: Storage{Volumes: []StorageVolume{
 		{Name: "cache", Bytes: 100}, {Name: "outputTotal", Bytes: 924},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,6 +67,26 @@ func TestList_ServesSeededAppsFromCache(t *testing.T) {
 			t.Errorf("app[%d] = %+v, want %+v", i, got[i], want[i])
 		}
 	}
+}
+
+// Close must be idempotent under concurrent callers: it closes c.stop, so two
+// racing closes would panic ("close of closed channel") without the sync.Once
+// guard. Run with -race to exercise the TOCTOU window. A prior double Close (the
+// select-default pattern) also panicked; this asserts neither path fires.
+func TestClose_IdempotentUnderConcurrency(t *testing.T) {
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, fappObj("ns", "a"))
+	c := NewWithDynamic(dyn)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); c.Close() }()
+	}
+	wg.Wait()
+	// A further sequential Close must also be a no-op (not panic).
+	c.Close()
 }
 
 // The cleanup patch bodies must merge-patch exactly the requested-at + by

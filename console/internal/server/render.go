@@ -101,16 +101,22 @@ type signedOutData struct {
 type listData struct {
 	Head head
 	// Apps is the filtered, health-ranked row set; Total is the unfiltered
-	// count shown in the heading.
-	Apps  []view.App
-	Total int
+	// count. Matched is len(filtered) — the count AFTER status/group/search but
+	// BEFORE pagination, which is also the population the storage roll-up spans.
+	// Filtered is true when a filter/search narrowed the set (Matched != Total);
+	// the heading then reads "Matched of Total" instead of just Total.
+	Apps     []view.App
+	Total    int
+	Matched  int
+	Filtered bool
 	// StatusFacets / GroupChips are the server-rendered filter chip rows; both
 	// are computed from the unfiltered set (see handleList).
 	StatusFacets []statusFacet
 	GroupChips   []groupChip
-	// Storage is the humanized storage roll-up over the FILTERED, PRE-pagination
-	// set (see handleList), rendered in the heading after the count.
-	Storage storageHeading
+	// Storage is the storage roll-up over the FILTERED, PRE-pagination set (see
+	// handleList), rendered in the heading after the count. Its *Human methods
+	// keep the template logic-free.
+	Storage view.StorageTotals
 	// Search is the active search term (echoed into the input and empty-state
 	// copy); ClearSearchURL drops search while keeping status/group. Status /
 	// Group are the active filters, carried as hidden inputs so submitting a
@@ -130,13 +136,6 @@ type listData struct {
 	HasNext    bool
 	PrevURL    string
 	NextURL    string
-}
-
-// storageHeading is the humanized storage roll-up shown in the list heading;
-// figures are precomputed from view.AggregateStorage so the template stays
-// logic-free.
-type storageHeading struct {
-	Grand, Cache, DataCache, Output, Active string
 }
 
 type detailData struct {

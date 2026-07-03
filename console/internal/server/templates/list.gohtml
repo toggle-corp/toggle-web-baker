@@ -2,7 +2,7 @@
 {{template "head" .Head}}
 <main>
 <div class="listhead">
-  <h2>FrontendApps <span class="count">· {{.Total}}</span> <span class="count storage-total">· {{.Storage.Grand}} (Cache: {{.Storage.Cache}}, Data cache: {{.Storage.DataCache}}, Output: {{.Storage.Output}} (active {{.Storage.Active}}))</span></h2>
+  <h2>FrontendApps <span class="count">· {{if .Filtered}}{{.Matched}} of {{.Total}}{{else}}{{.Total}}{{end}}</span> <span class="count storage-total">· {{.Storage.GrandHuman}} (Cache: {{.Storage.CacheHuman}}, Data cache: {{.Storage.DataCacheHuman}}, Output: {{.Storage.OutputHuman}} (active {{.Storage.ActiveHuman}}))</span></h2>
   {{/* Plain GET search form — status/group ride along as hidden inputs so a
        search submit preserves the active chips; the clear link drops only search. */}}
   <form method="get" class="listsearch" role="search">
