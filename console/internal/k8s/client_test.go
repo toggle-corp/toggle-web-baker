@@ -1,12 +1,72 @@
 package k8s
 
 import (
+	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
+
+// fappObj builds a minimal unstructured FrontendApp for seeding the fake client.
+func fappObj(namespace, name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "baker.toggle-corp.com/v1alpha1",
+		"kind":       "FrontendApp",
+		"metadata": map[string]any{
+			"namespace": namespace,
+			"name":      name,
+		},
+		"status": map[string]any{"phase": "Ready"},
+	}}
+}
+
+// List must serve from the informer/lister cache, not a live API List. This is a
+// regression guard: NewWithDynamic starts an informer against the fake dynamic
+// client and blocks on cache sync, so both seeded apps come back mapped. (It
+// cannot fail RED against the old live-List code — the fake serves both paths —
+// so it guards the cache wiring against future regressions rather than driving
+// it.)
+func TestList_ServesSeededAppsFromCache(t *testing.T) {
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		scheme, listKinds,
+		fappObj("mapswipe", "mapswipe-uat"),
+		fappObj("hot", "hot-prod"),
+	)
+
+	c := NewWithDynamic(dyn)
+	t.Cleanup(c.Close)
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(apps) != 2 {
+		t.Fatalf("want 2 apps from cache, got %d: %+v", len(apps), apps)
+	}
+
+	type nn struct{ ns, name string }
+	got := make([]nn, 0, len(apps))
+	for _, a := range apps {
+		got = append(got, nn{a.Namespace, a.Name})
+	}
+	sort.Slice(got, func(i, j int) bool { return got[i].name < got[j].name })
+	want := []nn{{"hot", "hot-prod"}, {"mapswipe", "mapswipe-uat"}}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("app[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
 
 // The cleanup patch bodies must merge-patch exactly the requested-at + by
 // annotation keys for each action, with the RFC3339 timestamp and user. This

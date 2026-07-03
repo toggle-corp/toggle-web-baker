@@ -17,14 +17,22 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
+
+// cacheSyncTimeout bounds how long a constructor blocks waiting for the informer
+// to warm before List can serve from it. On timeout New() fails (crash-loop
+// rather than serve an empty list).
+const cacheSyncTimeout = 30 * time.Second
 
 // GVR addresses the FrontendApp custom resource. The resource (plural) name is
 // the lowercase-plural of the kind, matching the CRD's spec.names.plural.
@@ -38,9 +46,18 @@ var GVR = schema.GroupVersionResource{
 // clientset is the typed kubernetes client used for the pod-log capability; it
 // is nil-safe (tests built via NewWithDynamic have no clientset and the pod
 // methods then return an error rather than panicking).
+//
+// List reads are served from lister — a shared dynamic informer's local cache
+// warmed and kept current by a background watch — so the console's frequent list
+// polling never fans out to the API server. Writes (RequestRebuild/Cleanup) and
+// single Get/pod reads still go direct for strong consistency.
 type Client struct {
 	dyn       dynamic.Interface
 	clientset kubernetes.Interface
+
+	factory dynamicinformer.DynamicSharedInformerFactory
+	lister  cache.GenericLister
+	stop    chan struct{} // closed by Close to stop the informer goroutines
 }
 
 // FrontendAppPatcher is the narrow capability the server depends on; tests
@@ -71,15 +88,94 @@ func New() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build clientset: %w", err)
 	}
-	c := NewWithDynamic(dyn)
+	c := newWithInformer(dyn)
 	c.clientset = cs
+
+	// Warm the cache before serving. A bounded wait means a wedged watch (bad
+	// RBAC, unreachable API) crash-loops startup rather than serving an empty
+	// list. WaitForCacheSync stops early if either the timeout ctx or c.stop
+	// fires; a false result means the sync did not complete.
+	ctx, cancel := context.WithTimeout(context.Background(), cacheSyncTimeout)
+	defer cancel()
+	if !c.waitForSync(ctx.Done()) {
+		c.Close()
+		return nil, fmt.Errorf("frontendapp informer cache did not sync within %s", cacheSyncTimeout)
+	}
 	return c, nil
 }
 
 // NewWithDynamic wraps an existing dynamic client (used by tests with the fake).
 // The typed clientset is left nil; pod-log methods then return an error.
+//
+// It starts an informer against the passed dynamic client and blocks on cache
+// sync so the first List sees a warm cache — the fake dynamic client supports
+// List+Watch, so this works in tests. The signature stays (*Client) with no
+// error so the many server-package callers keep compiling; a sync failure is
+// therefore not surfaced here, but tests seed objects synchronously so sync
+// always succeeds. The caller should Close the client when done (tests use
+// t.Cleanup); a long-lived server may let the informer run until process exit.
 func NewWithDynamic(dyn dynamic.Interface) *Client {
-	return &Client{dyn: dyn}
+	c := newWithInformer(dyn)
+	// Best-effort warm-up under the same bound; tests seed synchronously so the
+	// fake's initial List completes well within it. On the unlikely failure we
+	// still return the client (its List then serves whatever the cache holds).
+	ctx, cancel := context.WithTimeout(context.Background(), cacheSyncTimeout)
+	defer cancel()
+	_ = c.waitForSync(ctx.Done())
+	return c
+}
+
+// newWithInformer builds a Client with a started shared dynamic informer for GVR
+// across all namespaces (resync 0 — we rely on the watch, not periodic relist).
+// It does NOT wait for sync; callers decide how to block on readiness.
+func newWithInformer(dyn dynamic.Interface) *Client {
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(dyn, 0)
+	informer := factory.ForResource(GVR)
+	c := &Client{
+		dyn:     dyn,
+		factory: factory,
+		lister:  informer.Lister(),
+		stop:    make(chan struct{}),
+	}
+	factory.Start(c.stop)
+	return c
+}
+
+// waitForSync blocks until the informer cache is synced, or stopCh (a bounded
+// timeout) or Close fires. Returns true only on a completed sync.
+func (c *Client) waitForSync(stopCh <-chan struct{}) bool {
+	// WaitForCacheSync takes a single stop channel; fan stopCh and c.stop (a
+	// Close during startup) into it, and tear the fan-in goroutine down when the
+	// wait returns so it can't leak past this call.
+	done := make(chan struct{})
+	fanDone := make(chan struct{})
+	go func() {
+		select {
+		case <-stopCh:
+		case <-c.stop:
+		case <-fanDone:
+		}
+		close(done)
+	}()
+	synced := c.factory.WaitForCacheSync(done)
+	close(fanDone)
+	return synced[GVR]
+}
+
+// Close stops the informer's background goroutines. Safe to call once; further
+// List calls then serve whatever the cache last held. Tests defer this to avoid
+// leaking a goroutine per client.
+func (c *Client) Close() {
+	if c.stop != nil {
+		select {
+		case <-c.stop: // already closed
+		default:
+			close(c.stop)
+		}
+	}
+	if c.factory != nil {
+		c.factory.Shutdown()
+	}
 }
 
 func restConfig() (*rest.Config, error) {
@@ -95,15 +191,25 @@ func restConfig() (*rest.Config, error) {
 }
 
 // List returns every FrontendApp in every namespace as view models, mapped
-// defensively. Items that fail to project still appear with whatever rendered.
-func (c *Client) List(ctx context.Context) ([]view.App, error) {
-	ul, err := c.dyn.Resource(GVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+// defensively. It reads from the informer's local cache (warmed at construction,
+// kept current by the background watch) rather than the API server, so the
+// console's frequent list polling costs nothing on the apiserver. Order is
+// unspecified — the server re-sorts. Items that fail to project still appear with
+// whatever rendered.
+func (c *Client) List(_ context.Context) ([]view.App, error) {
+	objs, err := c.lister.List(labels.Everything())
 	if err != nil {
-		return nil, fmt.Errorf("list frontendapps: %w", err)
+		return nil, fmt.Errorf("list frontendapps from cache: %w", err)
 	}
-	apps := make([]view.App, 0, len(ul.Items))
-	for i := range ul.Items {
-		apps = append(apps, view.FromUnstructured(&ul.Items[i]))
+	apps := make([]view.App, 0, len(objs))
+	for _, o := range objs {
+		u, ok := o.(*unstructured.Unstructured)
+		if !ok {
+			// Should never happen for a dynamic informer, but skip rather than
+			// panic if the store ever holds an unexpected type.
+			continue
+		}
+		apps = append(apps, view.FromUnstructured(u))
 	}
 	return apps, nil
 }
