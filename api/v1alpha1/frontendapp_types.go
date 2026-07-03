@@ -66,6 +66,12 @@ const (
 	PhaseDegraded           Phase = "Degraded"
 )
 
+// AllPhases is the closed set of Phase values. The operator's metrics exporter
+// iterates it to write the KSM-style frontendapp_phase series (every phase
+// always exported, exactly one == 1); keep it in lockstep with the constants
+// above or that invariant silently breaks.
+var AllPhases = []Phase{PhaseAwaitingFirstBuild, PhaseBuilding, PhaseReady, PhaseDegraded}
+
 // Condition type names owned by the operator.
 const (
 	ConditionReady          = "Ready"

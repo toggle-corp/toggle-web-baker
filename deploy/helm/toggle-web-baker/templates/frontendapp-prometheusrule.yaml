@@ -3,7 +3,6 @@
      extraLabels tries to override it. */}}
 {{- $critical := merge (dict "severity" "critical") .Values.monitoring.alerts.extraLabels }}
 {{- $warning := merge (dict "severity" "warning") .Values.monitoring.alerts.extraLabels }}
-{{- $graceSeconds := include "toggle-web-baker.durationSeconds" .Values.monitoring.alerts.stuckBuildGrace }}
 # Alert rules over the operator's frontendapp_* metrics. monitoring.labels
 # must match your Prometheus ruleSelector (e.g. release: kube-prometheus-stack).
 apiVersion: monitoring.coreos.com/v1
@@ -20,14 +19,17 @@ spec:
   groups:
     - name: frontendapp.rules
       rules:
+        {{- /* max without (reason): the reason label is excluded from the
+             alert identity so a mid-incident reason flip (BuildFailed →
+             OOMKilled) does not reset the `for:` timer. */}}
         - alert: FrontendAppDegraded
-          expr: frontendapp_degraded == 1
+          expr: max without (reason) (frontendapp_degraded) == 1
           for: {{ .Values.monitoring.alerts.degradedFor }}
           labels:
             {{- toYaml $critical | nindent 12 }}
           annotations:
-            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded ({{ $labels.reason }})` | quote }}
-            description: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded with reason {{ $labels.reason }}. Inspect the CR status conditions and the latest build history entry for details.` | quote }}
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded` | quote }}
+            description: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details.` | quote }}
         - alert: FrontendAppBuildFailed
           expr: increase(frontendapp_builds_total{result="Failed"}[10m]) > 0
           labels:
@@ -50,13 +52,18 @@ spec:
           annotations:
             summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold` | quote }}
             description: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents.` | quote }}
+        {{- /* The LHS grows monotonically while a build runs, so once the
+             deadline is crossed the condition holds and the `for:` grace is
+             equivalent to adding the grace to the threshold — uniform with
+             degradedFor/neverReadyFor (full Prometheus duration syntax). */}}
         - alert: FrontendAppBuildStuck
-          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds + {{ $graceSeconds }}) and frontendapp_build_running_since_seconds > 0
+          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds) and frontendapp_build_running_since_seconds > 0
+          for: {{ .Values.monitoring.alerts.stuckBuildGrace }}
           labels:
             {{- toYaml $warning | nindent 12 }}
           annotations:
             summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline` | quote }}
-            description: {{ printf "FrontendApp %s has had a build running for more than its deadline plus %s grace — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs." `{{ $labels.namespace }}/{{ $labels.name }}` .Values.monitoring.alerts.stuckBuildGrace | quote }}
+            description: {{ printf "FrontendApp %s has had a build running past its deadline for over %s — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs." `{{ $labels.namespace }}/{{ $labels.name }}` .Values.monitoring.alerts.stuckBuildGrace | quote }}
         - alert: FrontendAppNeverReady
           expr: frontendapp_phase{phase="AwaitingFirstBuild"} == 1
           for: {{ .Values.monitoring.alerts.neverReadyFor }}

@@ -194,5 +194,6 @@ monitoring:
     neverReadyFor: 1h
     # Slack past the build deadline before FrontendAppBuildStuck fires (the
     # operator normally aborts at the deadline; firing means it did not).
-    # Duration like 90s/10m/1h — converted to seconds for the PromQL expr.
+    # Prometheus duration (e.g. 90s/10m/1h), used as the rule's `for:` —
+    # same syntax as degradedFor/neverReadyFor.
     stuckBuildGrace: 10m

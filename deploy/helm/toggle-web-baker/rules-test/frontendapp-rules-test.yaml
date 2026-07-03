@@ -6,6 +6,10 @@
 # NOTE: promtool evaluates time() as the test's eval timestamp, which starts at
 # Unix epoch 0 — so frontendapp_build_running_since_seconds fixtures are tiny
 # absolute values (a build "started at t=60s" is just 60).
+#
+# NOTE: promtool compares annotations even when exp_annotations is omitted (an
+# omitted block means "expect NO annotations" and fails), so every firing
+# expectation carries the full annotation set.
 rule_files:
   - rules.yaml
 
@@ -13,8 +17,9 @@ evaluation_interval: 1m
 
 tests:
   # --- FrontendAppBuildStuck -------------------------------------------------
-  # deadline 1800s + 600s chart-default grace: a build started at t=60s crosses
-  # the threshold when time() - 60 > 2400, i.e. strictly after eval time 41m.
+  # deadline 1800s, `for:` = 10m chart-default grace. A build started at t=60s
+  # crosses the deadline when time() - 60 > 1800, i.e. first true at eval 32m;
+  # the alert then fires once the condition has held for 10m, at 42m.
   - interval: 1m
     input_series:
       - series: 'frontendapp_build_running_since_seconds{namespace="default", name="stuck-app"}'
@@ -22,17 +27,18 @@ tests:
       - series: 'frontendapp_build_deadline_seconds{namespace="default", name="stuck-app"}'
         values: '1800x60'
       # Idle app: running_since 0 must never fire, even though
-      # time() - 0 > deadline + grace holds (the `> 0` guard blocks it).
+      # time() - 0 > deadline holds (the `> 0` guard blocks it).
       - series: 'frontendapp_build_running_since_seconds{namespace="default", name="idle-app"}'
         values: '0x60'
       - series: 'frontendapp_build_deadline_seconds{namespace="default", name="idle-app"}'
         values: '1800x60'
     alert_rule_test:
-      # 40m: elapsed 2340s < 2400s — below deadline+grace, no alert.
+      # 40m: past the deadline (pending) but the 10m `for:` not yet satisfied.
       - eval_time: 40m
         alertname: FrontendAppBuildStuck
         exp_alerts: []
-      # 42m: elapsed 2460s > 2400s — fires (idle-app stays silent).
+      # 42m: condition held 10m past the deadline crossing — fires (idle-app
+      # stays silent).
       - eval_time: 42m
         alertname: FrontendAppBuildStuck
         exp_alerts:
@@ -42,7 +48,7 @@ tests:
               name: stuck-app
             exp_annotations:
               summary: "FrontendApp default/stuck-app build stuck past its deadline"
-              description: "FrontendApp default/stuck-app has had a build running for more than its deadline plus 10m grace — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
+              description: "FrontendApp default/stuck-app has had a build running past its deadline for over 10m — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
 
   # --- FrontendAppStorageThreshold -------------------------------------------
   - interval: 1m
@@ -80,6 +86,8 @@ tests:
               description: "FrontendApp default/web is using 1.863GiB on volume cache, above its configured alertBytes threshold. Grow the volume or prune its contents."
 
   # --- FrontendAppDegraded ---------------------------------------------------
+  # `max without (reason)` drops reason from the alert identity, so the fired
+  # alert carries only namespace/name (+severity).
   - interval: 1m
     input_series:
       - series: 'frontendapp_degraded{namespace="default", name="degraded-app", reason="BuildFailed"}'
@@ -92,8 +100,8 @@ tests:
       - eval_time: 3m
         alertname: FrontendAppDegraded
         exp_alerts: []
-      # 6m: sustained — fires critical, with the condition reason surfaced both
-      # as a label and in the annotations.
+      # 6m: sustained — fires critical, without a reason label (the annotation
+      # routes the responder to the CR's status conditions instead).
       - eval_time: 6m
         alertname: FrontendAppDegraded
         exp_alerts:
@@ -101,7 +109,85 @@ tests:
               severity: critical
               namespace: default
               name: degraded-app
-              reason: BuildFailed
             exp_annotations:
-              summary: "FrontendApp default/degraded-app is Degraded (BuildFailed)"
-              description: "FrontendApp default/degraded-app has been Degraded with reason BuildFailed. Inspect the CR status conditions and the latest build history entry for details."
+              summary: "FrontendApp default/degraded-app is Degraded"
+              description: "FrontendApp default/degraded-app has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details."
+
+  # --- FrontendAppDegraded: reason churn -------------------------------------
+  # A mid-incident reason flip (the operator deletes the old reason series and
+  # writes a new one) must NOT reset the `for:` timer: the alert identity
+  # excludes reason, so the aggregate stays 1 across the flip and fires on
+  # schedule.
+  - interval: 1m
+    input_series:
+      - series: 'frontendapp_degraded{namespace="default", name="churn-app", reason="BuildFailed"}'
+        values: '1 1 1 1 stale'
+      - series: 'frontendapp_degraded{namespace="default", name="churn-app", reason="OOMKilled"}'
+        values: '_ _ _ _ 1x26'
+    alert_rule_test:
+      # 6m: degraded continuously for 6m despite the reason flip at 4m — fires.
+      - eval_time: 6m
+        alertname: FrontendAppDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: default
+              name: churn-app
+            exp_annotations:
+              summary: "FrontendApp default/churn-app is Degraded"
+              description: "FrontendApp default/churn-app has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details."
+
+  # --- FrontendAppBuildFailed ------------------------------------------------
+  # Proves the operator's counter pre-seed matters: `increase()` needs to SEE
+  # the 0→1 step inside its range window. A pre-seeded series (born at 0) fires
+  # on the first failure; a series born directly at 1 (no pre-seed) shows no
+  # increase — the first failure of that app would be silent.
+  - interval: 1m
+    input_series:
+      - series: 'frontendapp_builds_total{namespace="default", name="seeded", result="Failed"}'
+        values: '0x5 1x14'
+      - series: 'frontendapp_builds_total{namespace="default", name="unseeded", result="Failed"}'
+        values: '_x5 1x14'
+    alert_rule_test:
+      # 7m: seeded stepped 0→1 at 6m — fires. unseeded was born at 1 with no
+      # 0 sample in the window — increase()==0, does NOT fire (this is exactly
+      # why the operator pre-seeds counters at 0).
+      - eval_time: 7m
+        alertname: FrontendAppBuildFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: default
+              name: seeded
+              result: Failed
+            exp_annotations:
+              summary: "FrontendApp default/seeded build failed"
+              description: "A build for FrontendApp default/seeded finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step."
+      # 18m: the step left the 10m window — quiet again.
+      - eval_time: 18m
+        alertname: FrontendAppBuildFailed
+        exp_alerts: []
+
+  # --- FrontendAppBuildOOMKilled ----------------------------------------------
+  # Same pre-seed proof for the per-step OOM counter.
+  - interval: 1m
+    input_series:
+      - series: 'frontendapp_build_oom_total{namespace="default", name="seeded", step="build"}'
+        values: '0x5 1x14'
+      - series: 'frontendapp_build_oom_total{namespace="default", name="unseeded", step="build"}'
+        values: '_x5 1x14'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: FrontendAppBuildOOMKilled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: default
+              name: seeded
+              step: build
+            exp_annotations:
+              summary: "FrontendApp default/seeded build OOMKilled in step build"
+              description: "A build for FrontendApp default/seeded was OOMKilled in the build step within the last 10 minutes. Raise spec.pipeline.phases.build.memoryLimit (or the operator's per-phase default)."
+      - eval_time: 18m
+        alertname: FrontendAppBuildOOMKilled
+        exp_alerts: []

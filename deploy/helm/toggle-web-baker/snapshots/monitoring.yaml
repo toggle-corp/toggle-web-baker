@@ -1491,14 +1491,14 @@ spec:
     - name: frontendapp.rules
       rules:
         - alert: FrontendAppDegraded
-          expr: frontendapp_degraded == 1
+          expr: max without (reason) (frontendapp_degraded) == 1
           for: 5m
           labels:
             severity: critical
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded ({{ $labels.reason }})"
-            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded with reason {{ $labels.reason }}. Inspect the CR status conditions and the latest build history entry for details."
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded"
+            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details."
         - alert: FrontendAppBuildFailed
           expr: increase(frontendapp_builds_total{result="Failed"}[10m]) > 0
           labels:
@@ -1525,13 +1525,14 @@ spec:
             summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold"
             description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents."
         - alert: FrontendAppBuildStuck
-          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds + 600) and frontendapp_build_running_since_seconds > 0
+          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds) and frontendapp_build_running_since_seconds > 0
+          for: 10m
           labels:
             severity: warning
             team: platform
           annotations:
             summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline"
-            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has had a build running for more than its deadline plus 10m grace — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
+            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has had a build running past its deadline for over 10m — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
         - alert: FrontendAppNeverReady
           expr: frontendapp_phase{phase="AwaitingFirstBuild"} == 1
           for: 1h
@@ -1569,3 +1570,6 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
+      # The frontendapp_* series carry their own namespace/name labels (the
+      # CR's identity); they must win over the scrape target's labels.
+      honorLabels: true

@@ -34,18 +34,28 @@ type StorageConfig struct {
 	Output    VolumeThresholds
 }
 
-// ValidateStorage enforces the ordering invariant cleanup < alert < cap for
-// every volume, so a CR can never be configured to block before it warns.
-func ValidateStorage(cfg StorageConfig) error {
-	for _, vol := range []struct {
-		name string
-		v    VolumeThresholds
-	}{
+// NamedVolume pairs a volume's status.storage.sizes key with its thresholds.
+type NamedVolume struct {
+	Name string
+	VolumeThresholds
+}
+
+// Volumes enumerates the per-volume thresholds in pipeline order. It is THE
+// name→thresholds mapping: validation and the metrics exporter both iterate it,
+// so adding a volume here is the single change that keeps them in lockstep.
+func (cfg StorageConfig) Volumes() []NamedVolume {
+	return []NamedVolume{
 		{"cache", cfg.Cache},
 		{"dataCache", cfg.DataCache},
 		{"output", cfg.Output},
-	} {
-		if err := validateVolume(vol.name, vol.v); err != nil {
+	}
+}
+
+// ValidateStorage enforces the ordering invariant cleanup < alert < cap for
+// every volume, so a CR can never be configured to block before it warns.
+func ValidateStorage(cfg StorageConfig) error {
+	for _, vol := range cfg.Volumes() {
+		if err := validateVolume(vol.Name, vol.VolumeThresholds); err != nil {
 			return err
 		}
 	}

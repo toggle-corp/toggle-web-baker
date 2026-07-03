@@ -256,8 +256,7 @@ e2e-local:
         fi
         sleep 2
     done
-    kill "${PF_PID}" 2>/dev/null || true
-    PF_PID=""
+    # (no manual kill: the cleanup EXIT trap owns the port-forward teardown)
 
     if [ -z "${metrics_ok}" ]; then
         echo "----- /metrics (frontendapp_* series) -----"
