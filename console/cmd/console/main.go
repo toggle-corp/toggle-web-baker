@@ -11,10 +11,22 @@ import (
 	"os"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+
 	"github.com/toggle-corp/toggle-web-baker/console/internal/k8s"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/loki"
+	"github.com/toggle-corp/toggle-web-baker/console/internal/sentryhttp"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/server"
 )
+
+// fatalf flushes any buffered Sentry events, then exits via log.Fatalf
+// (which calls os.Exit and would otherwise drop them).
+func fatalf(hub *sentry.Hub, format string, args ...any) {
+	if hub != nil {
+		hub.Flush(2 * time.Second)
+	}
+	log.Fatalf(format, args...)
+}
 
 func main() {
 	addr := os.Getenv("LISTEN_ADDR")
@@ -22,9 +34,14 @@ func main() {
 		addr = ":8080"
 	}
 
+	hub, err := sentryhttp.InitFromEnv()
+	if err != nil {
+		log.Fatalf("console: sentry: %v", err)
+	}
+
 	client, err := k8s.New()
 	if err != nil {
-		log.Fatalf("console: kubernetes client: %v", err)
+		fatalf(hub, "console: kubernetes client: %v", err)
 	}
 
 	lokiClient := loki.New(loki.Config{
@@ -37,12 +54,12 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(client, client, lokiClient, client).Routes(),
+		Handler:           sentryhttp.Wrap(hub, server.New(client, client, lokiClient, client).Routes()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	log.Printf("console: listening on %s", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("console: server: %v", err)
+		fatalf(hub, "console: server: %v", err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/k8s"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/loki"
+	"github.com/toggle-corp/toggle-web-baker/console/internal/sentryhttp"
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
 
 	corev1 "k8s.io/api/core/v1"
@@ -99,7 +100,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	apps, err := s.apps.List(r.Context())
 	if err != nil {
-		s.renderError(w, http.StatusBadGateway, "Could not list FrontendApps", err)
+		s.renderError(w, r, http.StatusBadGateway, "Could not list FrontendApps", err)
 		return
 	}
 
@@ -291,7 +292,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
+		s.renderError(w, r, http.StatusNotFound, "FrontendApp not found", err)
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -313,7 +314,7 @@ func (s *Server) handlePartial(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
+		s.renderError(w, r, http.StatusNotFound, "FrontendApp not found", err)
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -406,7 +407,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
-		s.renderError(w, http.StatusNotFound, "FrontendApp not found", err)
+		s.renderError(w, r, http.StatusNotFound, "FrontendApp not found", err)
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -422,7 +423,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, isCurrent, found := pickBuild(app, build)
 	if !found {
-		s.renderError(w, http.StatusNotFound, "build not found", errors.New("no build matches "+build))
+		s.renderError(w, r, http.StatusNotFound, "build not found", errors.New("no build matches "+build))
 		return
 	}
 
@@ -604,13 +605,13 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 
 	user := userFrom(r)
 	if user == "" {
-		s.renderError(w, http.StatusUnauthorized,
+		s.renderError(w, r, http.StatusUnauthorized,
 			"No authenticated user", ErrNoUser)
 		return
 	}
 
 	if err := s.apps.RequestRebuild(r.Context(), ns, name, user); err != nil {
-		s.renderError(w, http.StatusBadGateway, "Rebuild request failed", err)
+		s.renderError(w, r, http.StatusBadGateway, "Rebuild request failed", err)
 		return
 	}
 	// Redirect back to the detail page so the new lastManualTrigger shows up on
@@ -626,11 +627,11 @@ func (s *Server) handleCleanupCache(w http.ResponseWriter, r *http.Request) {
 
 	user := userFrom(r)
 	if user == "" {
-		s.renderError(w, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
+		s.renderError(w, r, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
 		return
 	}
 	if err := s.apps.RequestCleanupCache(r.Context(), ns, name, user); err != nil {
-		s.renderError(w, http.StatusBadGateway, "Cache cleanup request failed", err)
+		s.renderError(w, r, http.StatusBadGateway, "Cache cleanup request failed", err)
 		return
 	}
 	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?cleanup=cache", http.StatusSeeOther)
@@ -643,11 +644,11 @@ func (s *Server) handleCleanupReleases(w http.ResponseWriter, r *http.Request) {
 
 	user := userFrom(r)
 	if user == "" {
-		s.renderError(w, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
+		s.renderError(w, r, http.StatusUnauthorized, "No authenticated user", ErrNoUser)
 		return
 	}
 	if err := s.apps.RequestCleanupReleases(r.Context(), ns, name, user); err != nil {
-		s.renderError(w, http.StatusBadGateway, "Release cleanup request failed", err)
+		s.renderError(w, r, http.StatusBadGateway, "Release cleanup request failed", err)
 		return
 	}
 	http.Redirect(w, r, "/ns/"+ns+"/app/"+name+"?cleanup=releases", http.StatusSeeOther)
@@ -664,8 +665,9 @@ func userFrom(r *http.Request) string {
 	return r.Header.Get("X-Auth-Request-User")
 }
 
-func (s *Server) renderError(w http.ResponseWriter, code int, msg string, err error) {
+func (s *Server) renderError(w http.ResponseWriter, r *http.Request, code int, msg string, err error) {
 	log.Printf("console: %s: %v", msg, err)
+	sentryhttp.AttachError(r.Context(), msg, err)
 	w.WriteHeader(code)
 	render(w, "error", errorData{Message: msg, Detail: err.Error(), Code: code})
 }
