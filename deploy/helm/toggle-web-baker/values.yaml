@@ -50,11 +50,11 @@ operator:
   nodeImages:
     "18":
       repository: ghcr.io/toggle-corp/toggle-web-baker-node18
-      tag: ""
+      tag: "18-436d743e3c1c"
       runAsUser: 1000
     "24":
       repository: ghcr.io/toggle-corp/toggle-web-baker-node24
-      tag: ""
+      tag: "24-cddf3de62036"
       runAsUser: 1000
 
   # Default setup (install) command per package manager, injected by the operator

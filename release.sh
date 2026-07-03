@@ -29,6 +29,10 @@ function release_custom_hook {
     rm -f "${chart}.bak"
     git add "$chart"
 
+    # Update helm snapshots
+    ./deploy/helm/toggle-web-baker/update-snapshots.sh
+    git add "deploy/helm/toggle-web-baker/snapshots/"
+
     # Node base images are versioned by a content hash of their Dockerfile, NOT
     # the release tag (see images/content-tag.sh): an unchanged node image keeps
     # its tag across releases so the cluster does not re-pull, and a changed one
