@@ -51,7 +51,7 @@ func fullStatusObj() *unstructured.Unstructured {
 			},
 			"buildHistory": []any{
 				map[string]any{"jobName": "mapswipe-uat-build-7", "result": "Failed", "trigger": "Manual"},
-				map[string]any{"jobName": "mapswipe-uat-build-6", "result": "Succeeded", "trigger": "Scheduled"},
+				map[string]any{"jobName": "mapswipe-uat-build-6", "result": "Succeeded", "trigger": "Commit", "commit": "cafebabe1234567890"},
 			},
 			"lastProcessedRebuild":    "2026-06-24T08:00:00Z",
 			"lastBuiltSpecHash":       "abc123",
@@ -104,6 +104,9 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	if a.Build.TriggeredBy != "octocat" {
 		t.Errorf("build triggeredBy wrong: %q", a.Build.TriggeredBy)
 	}
+	if a.BuildHistory[1].Trigger != "Commit" || a.BuildHistory[1].Commit != "cafebabe1234567890" {
+		t.Errorf("history commit mapping wrong: %+v", a.BuildHistory[1])
+	}
 	if len(a.Build.Steps) != 2 {
 		t.Fatalf("want 2 steps, got %d", len(a.Build.Steps))
 	}
@@ -125,9 +128,6 @@ func TestFromUnstructured_FullStatus(t *testing.T) {
 	}
 	if a.BuildHistory[0].JobName != "mapswipe-uat-build-7" || a.BuildHistory[0].Result != "Failed" {
 		t.Errorf("history[0] wrong: %+v", a.BuildHistory[0])
-	}
-	if a.BuildHistory[1].Trigger != "Scheduled" {
-		t.Errorf("history[1] trigger wrong: %+v", a.BuildHistory[1])
 	}
 	if a.Release.Current != "rel-2026-06-24" {
 		t.Errorf("release.current wrong: %q", a.Release.Current)
@@ -252,6 +252,8 @@ func TestBuild_TriggerLabel(t *testing.T) {
 		{"manual without user", Build{Trigger: "Manual"}, "Manual"},
 		{"empty trigger", Build{}, "—"},
 		{"empty trigger with user", Build{TriggeredBy: "octocat"}, "—"},
+		{"commit with sha", Build{Trigger: "Commit", Commit: "cafebabe1234567890"}, "Commit · cafebab"},
+		{"commit without sha", Build{Trigger: "Commit"}, "Commit"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

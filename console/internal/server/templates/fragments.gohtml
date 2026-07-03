@@ -43,7 +43,7 @@
       <div class="kv"><span class="k">Group</span><span class="v">{{if .Group}}<span class="mono">{{.Group}}</span>{{else}}—{{end}}</span></div>
       <div class="kv"><span class="k">Build phase</span><span class="v">{{dash .Build.Phase}}</span></div>
       <div class="kv"><span class="k">Result</span><span class="v"{{if eq .Build.Result "Failed"}} style="color:var(--degraded-ink)"{{end}}>{{dash .Build.Result}}</span></div>
-      <div class="kv"><span class="k">Trigger</span><span class="v">{{.Build.TriggerLabel}}</span></div>
+      <div class="kv"><span class="k">Trigger</span><span class="v">{{.Build.TriggerLabel}}{{if .Build.Commit}}{{with .CommitLink .Build.Commit}} <a href="{{.}}" target="_blank" rel="noopener" title="View commit">↗</a>{{end}}{{end}}</span></div>
       <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
       <div class="kv"><span class="k">Started</span><span class="v">{{timetag .Build.StartTime}}</span></div>
       {{if .Build.Duration}}<div class="kv"><span class="k">Duration</span><span class="v">{{.Build.Duration}}</span></div>{{end}}
@@ -110,7 +110,16 @@
     <div class="body">
       <div class="kv"><span class="k">Last build</span><span class="v">{{timetag .LastBuildTime}}</span></div>
       <div class="kv"><span class="k">Last successful</span><span class="v">{{timetag .LastSuccessfulBuild}}</span></div>
-      <div class="kv"><span class="k">Next scheduled</span><span class="v">{{timetagFull .NextScheduledBuildTime}}</span></div>
+      {{/* Trigger config comes from the spec: each trigger is opt-in. An
+           enabled trigger without explicit tuning runs on the operator's
+           config default, which the console cannot know — say so instead of
+           guessing a value. */}}
+      <div class="kv"><span class="k">Scheduled builds</span><span class="v">{{if .ScheduledBuilds.Enabled}}{{if .ScheduledBuilds.Schedule}}<span class="mono">{{.ScheduledBuilds.Schedule}}</span>{{else}}operator default{{end}}{{else}}Disabled{{end}}</span></div>
+      {{if .ScheduledBuilds.Enabled}}<div class="kv"><span class="k">Next scheduled</span><span class="v">{{timetagFull .NextScheduledBuildTime}}</span></div>{{end}}
+      <div class="kv"><span class="k">Watch commits</span><span class="v">{{if .WatchCommits.Enabled}}{{if .WatchCommits.Interval}}every <span class="mono">{{.WatchCommits.Interval}}</span>{{else}}operator default{{end}}{{else}}Disabled{{end}}</span></div>
+      {{if and .WatchCommits.Enabled .WatchCommits.LastSeenSHA}}
+        <div class="kv"><span class="k">Last seen commit</span><span class="v mono">{{with .CommitLink .WatchCommits.LastSeenSHA}}<a href="{{.}}" target="_blank" rel="noopener" title="View commit">{{shortSHA $.WatchCommits.LastSeenSHA}}&nbsp;↗</a>{{else}}{{shortSHA .WatchCommits.LastSeenSHA}}{{end}}</span></div>
+      {{end}}
       <div class="kv"><span class="k">Last processed rebuild</span><span class="v">{{timetag .LastProcessedRebuild}}</span></div>
     </div>
   </section>

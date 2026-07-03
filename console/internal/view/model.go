@@ -20,6 +20,16 @@ const (
 	AnnotationRebuildRequestedAt = "rebuild.baker.toggle-corp.com/requested-at"
 	AnnotationRebuildBy          = "rebuild.baker.toggle-corp.com/by"
 
+	// AnnotationRebuildCommit carries the SHA that triggered a commit-watch
+	// build; the console clears it alongside setting "by" on a manual rebuild so
+	// the operator can't misclassify the manual build as Commit. Duplicated as a
+	// plain string like the other keys.
+	AnnotationRebuildCommit = "rebuild.baker.toggle-corp.com/commit"
+
+	// AnnotationWatchLastSeen is the commit watcher's dedup state (last remote
+	// SHA it observed) — display-only here.
+	AnnotationWatchLastSeen = "watch.baker.toggle-corp.com/last-seen-sha"
+
 	// Annotation keys the operator observes for the two cleanup actions. Duplicated
 	// here as plain strings (not imported from the operator) exactly as the rebuild
 	// keys are — the console never imports the operator's Go types.
@@ -126,8 +136,9 @@ type Build struct {
 	Result         string
 	JobName        string
 	PodName        string
-	Trigger        string // "Scheduled" | "Manual" | "SpecChange"
+	Trigger        string // "Scheduled" | "Manual" | "Commit" | "SpecChange"
 	TriggeredBy    string // github username for an attributed manual build; empty otherwise
+	Commit         string // SHA that triggered a commit-watch build; empty otherwise
 	StartTime      string
 	CompletionTime string
 	Attempts       int64
@@ -177,18 +188,22 @@ func (b Build) TerminationSummary() string {
 	return fmt.Sprintf("Terminated: %s (exit %d)", b.Termination.Reason, b.Termination.ExitCode)
 }
 
-// TriggerLabel renders the build trigger with its author when known:
-// "Manual · octocat" for an attributed manual build, else just the trigger
-// ("Scheduled"), or the em-dash (matching the `dash` template func) when the
-// trigger is unknown. Kept here — not in the template — so it stays logic-free
-// and unit-testable. TriggeredBy is only meaningful alongside a trigger, so an
-// author with no trigger still renders the em-dash.
+// TriggerLabel renders the build trigger with its provenance when known:
+// "Manual · octocat" for an attributed manual build, "Commit · cafebab" (short
+// SHA) for a commit-watch build, else just the trigger ("Scheduled"), or the
+// em-dash (matching the `dash` template func) when the trigger is unknown. Kept
+// here — not in the template — so it stays logic-free and unit-testable.
+// TriggeredBy/Commit are only meaningful alongside a trigger, so provenance
+// with no trigger still renders the em-dash.
 func (b Build) TriggerLabel() string {
 	if b.Trigger == "" {
 		return "—"
 	}
 	if b.TriggeredBy != "" {
 		return b.Trigger + " · " + b.TriggeredBy
+	}
+	if b.Commit != "" {
+		return b.Trigger + " · " + ShortSHA(b.Commit)
 	}
 	return b.Trigger
 }
@@ -303,6 +318,22 @@ type ManualTrigger struct {
 	Time        string
 }
 
+// ScheduledBuilds mirrors spec.scheduledBuilds (absent → zero value, disabled).
+// An empty Schedule with Enabled=true means the operator's config default,
+// which the console cannot know — templates render "operator default".
+type ScheduledBuilds struct {
+	Enabled  bool
+	Schedule string
+}
+
+// WatchCommits mirrors spec.watchCommits plus the watcher's last-seen-SHA
+// annotation. An empty Interval with Enabled=true means the operator default.
+type WatchCommits struct {
+	Enabled     bool
+	Interval    string
+	LastSeenSHA string
+}
+
 // App is the full per-app view model rendered by the detail template; the list
 // template uses only the identity + summary fields.
 type App struct {
@@ -336,6 +367,11 @@ type App struct {
 	Storage       Storage
 	Cleanup       Cleanup
 	ManualTrigger ManualTrigger
+
+	// Repo is spec.repo, kept for commit-link derivation (CommitURL).
+	Repo            string
+	ScheduledBuilds ScheduledBuilds
+	WatchCommits    WatchCommits
 
 	// HasStatus is false when the resource carries no .status yet (freshly
 	// created); the templates render an "awaiting first reconcile" note.
@@ -542,12 +578,25 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 		Name:      obj.GetName(),
 	}
 
-	// Next scheduled is derived from spec.schedule (the CronJob clock) — the
-	// FrontendApp status carries no next-build field. Compute it BEFORE the
-	// status guard so a freshly-created app (valid spec, not yet reconciled)
-	// still shows its next build time instead of an em-dash.
+	// Trigger config is derived from the spec (the FrontendApp status carries no
+	// next-build field). Compute it BEFORE the status guard so a freshly-created
+	// app (valid spec, not yet reconciled) already shows its trigger setup.
 	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
-	a.NextScheduledBuildTime = nextScheduled(asString(spec["schedule"]))
+	a.Repo = asString(spec["repo"])
+	if sb, ok := spec["scheduledBuilds"].(map[string]any); ok {
+		a.ScheduledBuilds = ScheduledBuilds{
+			Enabled:  asBool(sb["enabled"]),
+			Schedule: asString(sb["schedule"]),
+		}
+	}
+	if wc, ok := spec["watchCommits"].(map[string]any); ok {
+		a.WatchCommits = WatchCommits{
+			Enabled:  asBool(wc["enabled"]),
+			Interval: asString(wc["interval"]),
+		}
+	}
+	a.WatchCommits.LastSeenSHA = obj.GetAnnotations()[AnnotationWatchLastSeen]
+	a.NextScheduledBuildTime = nextScheduled(a.ScheduledBuilds)
 
 	// spec.group is optional and newer than some deployed resources — read it
 	// defensively (missing/mistyped → ""), and before the status guard so a
@@ -619,6 +668,7 @@ func buildFrom(v any) Build {
 		PodName:        asString(m["podName"]),
 		Trigger:        asString(m["trigger"]),
 		TriggeredBy:    asString(m["triggeredBy"]),
+		Commit:         asString(m["commit"]),
 		StartTime:      asString(m["startTime"]),
 		CompletionTime: asString(m["completionTime"]),
 		Attempts:       asInt(m["attempts"]),

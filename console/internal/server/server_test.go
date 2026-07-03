@@ -1470,3 +1470,72 @@ func TestHealthz(t *testing.T) {
 		t.Errorf("healthz = %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// A commit-watch app surfaces the trigger config (watch interval, operator
+// default schedule note, last-seen SHA linked to the repo's commit page) and a
+// Commit-triggered build renders its short SHA as an external link.
+func TestDetail_RendersCommitTriggerAndWatchConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	app := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "baker.toggle-corp.com/v1alpha1",
+		"kind":       "FrontendApp",
+		"metadata": map[string]any{
+			"namespace": "mapswipe",
+			"name":      "mapswipe-uat",
+			"annotations": map[string]any{
+				"watch.baker.toggle-corp.com/last-seen-sha": "cafebabe1234567890",
+			},
+		},
+		"spec": map[string]any{
+			"repo":            "https://github.com/mapswipe/website.git",
+			"scheduledBuilds": map[string]any{"enabled": true},
+			"watchCommits":    map[string]any{"enabled": true, "interval": "5m"},
+		},
+		"status": map[string]any{
+			"phase": "Ready",
+			"build": map[string]any{
+				"phase":   "Complete",
+				"result":  "Succeeded",
+				"jobName": "mapswipe-uat-build-8",
+				"trigger": "Commit",
+				"commit":  "cafebabe1234567890",
+			},
+		},
+	}}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, app)
+	srv := New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Commit · cafebab", // trigger label with short SHA (current build + history)
+		`href="https://github.com/mapswipe/website/commit/cafebabe1234567890"`, // linked commit
+		"operator default",  // enabled scheduledBuilds without explicit schedule
+		">Watch commits</",  // trigger-config row label
+		"5m",                // watch interval
+		"cafebab",           // last-seen short SHA
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail page should contain %q", want)
+		}
+	}
+}
+
+// Disabled triggers state it plainly instead of implying a default cadence.
+func TestDetail_RendersDisabledTriggers(t *testing.T) {
+	srv, _ := newTestServer(t) // seededDyn: no spec triggers at all
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, ">Scheduled builds</") {
+		t.Errorf("detail page should carry a Scheduled builds row")
+	}
+	if !strings.Contains(body, "Disabled") {
+		t.Errorf("detail page should say Disabled for absent triggers")
+	}
+}

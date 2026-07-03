@@ -42,6 +42,8 @@ var funcMap = template.FuncMap{
 	// loghl wraps one log line in a severity-classed span (escaping its content),
 	// so the log pane can colorize plain-text output. See loghl.go.
 	"loghl": highlightLogLine,
+	// shortSHA abbreviates a commit SHA to the conventional 7 characters.
+	"shortSHA": view.ShortSHA,
 	// cleanupCtx bundles the App, the action kind, and the action status into one
 	// value so the cleanupaction sub-template can render a prune row + button.
 	"cleanupCtx": func(app view.App, kind string, action view.CleanupAction) cleanupView {

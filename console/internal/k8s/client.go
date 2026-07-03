@@ -208,12 +208,15 @@ func (c *Client) PodLogTail(ctx context.Context, namespace, pod, container strin
 }
 
 // rebuildPatch builds the merge-patch body. Exposed package-internal so the
-// handler test can assert the exact annotations land on the object.
+// handler test can assert the exact annotations land on the object. It also
+// NULLS the commit annotation: trigger sources each clear the others' keys in
+// the same patch, so a stale watcher SHA can't relabel this manual build.
 func rebuildPatch(user string, now time.Time) []byte {
 	body := fmt.Sprintf(
-		`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
+		`{"metadata":{"annotations":{%q:%q,%q:%q,%q:null}}}`,
 		view.AnnotationRebuildRequestedAt, now.Format(time.RFC3339),
 		view.AnnotationRebuildBy, user,
+		view.AnnotationRebuildCommit,
 	)
 	return []byte(body)
 }

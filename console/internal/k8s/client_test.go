@@ -34,3 +34,24 @@ func TestCleanupPatch_CacheAndReleases(t *testing.T) {
 		}
 	}
 }
+
+// The rebuild patch stamps requested-at + by AND clears the commit annotation
+// (merge-patch null) in the same body, so a manual rebuild can't be
+// misclassified as Commit by a stale watcher SHA — mirroring how the clock tick
+// clears "by". Trigger sources each clear the others' keys.
+func TestRebuildPatch_SetsByAndClearsCommit(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	patch := string(rebuildPatch("octocat", now))
+
+	for _, want := range []string{
+		view.AnnotationRebuildRequestedAt, view.AnnotationRebuildBy,
+		now.Format(time.RFC3339), "octocat",
+	} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("rebuild patch %q missing %q", patch, want)
+		}
+	}
+	if !strings.Contains(patch, `"`+view.AnnotationRebuildCommit+`":null`) {
+		t.Errorf("rebuild patch %q must null out the commit annotation", patch)
+	}
+}
