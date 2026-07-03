@@ -25,7 +25,7 @@ func phaseConfigured(p bakerv1alpha1.PhaseSpec) bool {
 // SYNTHETIC step (the operator's release-pointer flip after copier succeeds).
 func applicableSteps(app *bakerv1alpha1.App) []string {
 	steps := []string{bakerv1alpha1.StepClone}
-	if phaseConfigured(app.Spec.Pipeline.Phases.Setup) {
+	if phaseConfigured(app.Spec.Pipeline.Phases.Setup.PhaseSpec) {
 		steps = append(steps, bakerv1alpha1.StepSetup)
 	}
 	if phaseConfigured(app.Spec.Pipeline.Phases.Fetch.PhaseSpec) {

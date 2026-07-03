@@ -19,6 +19,15 @@ type PhaseSpec struct {
 	// hash deterministic. ValueFrom identity is intentionally NOT captured here
 	// (only literal values), preserving the prior buildArgs hashing behavior.
 	Env map[string]string `json:"env,omitempty"`
+	// Skip is the setup phase's opt-out flag (only meaningful for setup). It is
+	// the spec AS WRITTEN: flipping it changes what the pipeline runs, so it is
+	// hashed. omitempty keeps a false (the default, and every non-setup phase)
+	// OUT of the marshaled payload, so apps predating this field keep their
+	// existing hash byte-for-byte instead of spuriously flipping SpecStale. The
+	// operator-injected DEFAULT setup command (when setup is omitted with a
+	// nodeVersion) is deliberately NOT captured here — the hash is what the user
+	// wrote, not what the operator resolves.
+	Skip bool `json:"skip,omitempty"`
 }
 
 // BuildSpec is the build-relevant subset of a App spec. Changing any

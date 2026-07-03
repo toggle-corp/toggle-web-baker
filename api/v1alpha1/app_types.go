@@ -251,13 +251,41 @@ type FetchPhaseSpec struct {
 	Secrets []EnvVarWithSecret `json:"secrets,omitempty"`
 }
 
+// SetupPhaseSpec is the setup phase: a PhaseSpec plus a skip opt-out. Three
+// shapes are meaningful:
+//   - OMITTED (or all-empty) + pipeline.nodeVersion set: the operator injects a
+//     default install command for the selected packageManager (implemented in
+//     the build-pod builder, not here) so the common "just install deps" case
+//     needs no boilerplate.
+//   - explicit command/image/env/…: fully BYO setup, run as written.
+//   - skip:true: NO setup phase at all — the operator injects nothing. Use this
+//     to opt out of the default install (e.g. a build that vendors its deps).
+//
+// skip is mutually exclusive with every other setup field: combining them would
+// be an ambiguous "skip but also do this". The rule uses has() guards, never a
+// comparison against an empty CEL string literal — gofmt curls '' into a Unicode
+// quote and silently corrupts the marker.
+// +kubebuilder:validation:XValidation:rule="!has(self.skip) || !self.skip || (!has(self.command) && !has(self.image) && !has(self.env) && !has(self.runAsUser) && !has(self.memoryLimit))",message="setup.skip cannot be combined with other setup fields"
+type SetupPhaseSpec struct {
+	PhaseSpec `json:",inline"`
+	// Skip opts out of the setup phase entirely: no user command AND no
+	// operator-injected default install. Mutually exclusive with every other
+	// setup field (see the CEL rule on this type).
+	// +optional
+	Skip bool `json:"skip,omitempty"`
+}
+
 // PhasesSpec is the ordered build pipeline: setup → fetch → build. setup and
 // fetch are optional (an app may install/fetch nothing); build is required (it
 // produces the served bundle). The operator runs them in this fixed order
 // regardless of map/field order.
 type PhasesSpec struct {
+	// Setup is the dependency-install phase. Omitted (with pipeline.nodeVersion
+	// set) means the operator injects a default install command for the selected
+	// packageManager; setup.skip:true means no setup phase at all. See
+	// SetupPhaseSpec.
 	// +optional
-	Setup PhaseSpec `json:"setup,omitempty"`
+	Setup SetupPhaseSpec `json:"setup,omitempty"`
 	// +optional
 	Fetch FetchPhaseSpec `json:"fetch,omitempty"`
 	// +kubebuilder:validation:Required
@@ -267,7 +295,9 @@ type PhasesSpec struct {
 // PipelineSpec groups HOW the app is built: the toolchain (nodeVersion /
 // packageManager / submodules), the whole-pipeline timeout, and the ordered
 // phases. It deliberately excludes source identity (repo/ref) and scheduling,
-// which stay top-level on the spec.
+// which stay top-level on the spec. When phases.setup is omitted and
+// nodeVersion is set, the operator injects a default install command for the
+// selected packageManager; phases.setup.skip:true opts out of setup entirely.
 // +kubebuilder:validation:XValidation:rule="has(self.nodeVersion) || has(self.phases.build.image)",message="build needs an image: set nodeVersion or build.image under pipeline"
 // +kubebuilder:validation:XValidation:rule="!has(self.timeout) || duration(self.timeout) > duration('0s')",message="pipeline.timeout must be a positive duration; omit it to use the operator default"
 type PipelineSpec struct {
@@ -280,9 +310,12 @@ type PipelineSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	NodeVersion int `json:"nodeVersion,omitempty"`
-	// +kubebuilder:default=yarn
-	// +optional
-	PackageManager PackageManager `json:"packageManager,omitempty"`
+	// PackageManager selects the JS package manager (yarn|pnpm). Required with NO
+	// default: the choice drives the cache volume layout AND the operator's
+	// default setup-install command (when setup is omitted), so an app must state
+	// it explicitly rather than inherit a silent default.
+	// +kubebuilder:validation:Required
+	PackageManager PackageManager `json:"packageManager"`
 	// +optional
 	Submodules bool `json:"submodules,omitempty"`
 

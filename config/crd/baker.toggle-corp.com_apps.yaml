@@ -142,9 +142,11 @@ spec:
                     minimum: 1
                     type: integer
                   packageManager:
-                    default: yarn
-                    description: PackageManager selects the JS package manager (drives
-                      the volume layout).
+                    description: |-
+                      PackageManager selects the JS package manager (yarn|pnpm). Required with NO
+                      default: the choice drives the cache volume layout AND the operator's
+                      default setup-install command (when setup is omitted), so an app must state
+                      it explicitly rather than inherit a silent default.
                     enum:
                     - yarn
                     - pnpm
@@ -367,9 +369,10 @@ spec:
                             (has(self.command) && size(self.command) > 0)'
                       setup:
                         description: |-
-                          PhaseSpec describes one pipeline phase container (setup / fetch / build). The
-                          public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
-                          secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                          Setup is the dependency-install phase. Omitted (with pipeline.nodeVersion
+                          set) means the operator injects a default install command for the selected
+                          packageManager; setup.skip:true means no setup phase at all. See
+                          SetupPhaseSpec.
                         properties:
                           command:
                             items:
@@ -436,7 +439,19 @@ spec:
                             format: int64
                             minimum: 1
                             type: integer
+                          skip:
+                            description: |-
+                              Skip opts out of the setup phase entirely: no user command AND no
+                              operator-injected default install. Mutually exclusive with every other
+                              setup field (see the CEL rule on this type).
+                            type: boolean
                         type: object
+                        x-kubernetes-validations:
+                        - message: setup.skip cannot be combined with other setup
+                            fields
+                          rule: '!has(self.skip) || !self.skip || (!has(self.command)
+                            && !has(self.image) && !has(self.env) && !has(self.runAsUser)
+                            && !has(self.memoryLimit))'
                     required:
                     - build
                     type: object
@@ -452,6 +467,7 @@ spec:
                       the positive-duration CEL rule on PipelineSpec.
                     type: string
                 required:
+                - packageManager
                 - phases
                 type: object
                 x-kubernetes-validations:

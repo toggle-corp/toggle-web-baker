@@ -121,6 +121,27 @@ func TestBuildSpecHash_ChangesWhenOutputDirChanges(t *testing.T) {
 	}
 }
 
+func TestBuildSpecHash_UnchangedWhenSetupHasNoSkip(t *testing.T) {
+	// Byte-for-byte backward compat: an app WITHOUT setup.skip must hash exactly
+	// as it did before the Skip field was added, so existing apps keep their
+	// stored lastBuiltSpecHash across an operator upgrade (no spurious SpecStale).
+	// The pinned value was captured from the pre-Skip code on sampleBuildSpec().
+	const preSkipHash = "f273885734df98083ea4b45f0fa33c0a88edb35058f9e3602b3ed3cba7e1ad87"
+	if got := sampleBuildSpec().Hash(); got != preSkipHash {
+		t.Fatalf("setup without skip must keep its pre-Skip hash %s, got %s", preSkipHash, got)
+	}
+}
+
+func TestBuildSpecHash_ChangesWhenSetupSkipFlips(t *testing.T) {
+	// Flipping setup.skip changes the spec-as-written, so it must change the hash.
+	a := sampleBuildSpec()
+	b := sampleBuildSpec()
+	b.Setup = PhaseSpec{Skip: true}
+	if a.Hash() == b.Hash() {
+		t.Fatalf("flipping setup.skip must change the hash")
+	}
+}
+
 func TestIsStale_FalseWhenCurrentMatchesLastDeployed(t *testing.T) {
 	cur := sampleBuildSpec()
 	if IsStale(cur, cur.Hash()) {

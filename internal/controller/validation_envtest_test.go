@@ -71,7 +71,8 @@ func validApp(name string) *bakerv1alpha1.App {
 			Repo: "https://example.com/repo.git",
 			Ref:  "main",
 			Pipeline: bakerv1alpha1.PipelineSpec{
-				NodeVersion: 18, // satisfies the build-needs-an-image rule
+				NodeVersion:    18, // satisfies the build-needs-an-image rule
+				PackageManager: bakerv1alpha1.PackageManagerYarn,
 				Phases: bakerv1alpha1.PhasesSpec{
 					Build: bakerv1alpha1.BuildPhaseSpec{
 						PhaseSpec: bakerv1alpha1.PhaseSpec{
@@ -634,6 +635,88 @@ func TestValidation_DefaultsRefToHEAD(t *testing.T) {
 	}
 	if got.Spec.Ref != "HEAD" {
 		t.Fatalf("expected Spec.Ref defaulted to HEAD, got %q", got.Spec.Ref)
+	}
+}
+
+// ---- packageManager (now required, no default) ------------------------------
+
+func TestValidation_RejectsMissingPackageManager(t *testing.T) {
+	// packageManager is Required with NO default: an app that omits it must fail
+	// at admission rather than silently defaulting to yarn. The typed struct
+	// serializes packageManager only when set (omitempty), so leaving it "" drops
+	// the key entirely, which the structural-schema `required` rejects.
+	app := validApp("reject-missing-packagemanager")
+	app.Spec.Pipeline.PackageManager = ""
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Fatalf("expected rejection when packageManager is omitted")
+	}
+	if !strings.Contains(err.Error(), "packageManager") {
+		t.Fatalf("expected error mentioning packageManager, got: %v", err)
+	}
+}
+
+func TestValidation_AcceptsPnpmPackageManager(t *testing.T) {
+	app := validApp("accept-pnpm-packagemanager")
+	app.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected pnpm packageManager to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+// ---- setup.skip (mutually exclusive with any other setup field) -------------
+
+func TestValidation_AcceptsSkipOnlySetup(t *testing.T) {
+	app := validApp("accept-setup-skip-only")
+	app.Spec.Pipeline.Phases.Setup = bakerv1alpha1.SetupPhaseSpec{Skip: true}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected setup{skip:true} alone to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_AcceptsSetupFieldsWithoutSkip(t *testing.T) {
+	app := validApp("accept-setup-fields-no-skip")
+	app.Spec.Pipeline.Phases.Setup = bakerv1alpha1.SetupPhaseSpec{
+		PhaseSpec: bakerv1alpha1.PhaseSpec{Command: []string{"yarn", "install"}},
+	}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected setup with command and no skip to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsSkipWithOtherSetupFields(t *testing.T) {
+	// skip:true means "no setup at all", so it cannot be combined with any other
+	// setup field (command/image/env/runAsUser/memoryLimit) — that would be an
+	// ambiguous "skip but also do this" instruction.
+	cases := map[string]func(*bakerv1alpha1.SetupPhaseSpec){
+		"command":     func(s *bakerv1alpha1.SetupPhaseSpec) { s.Command = []string{"true"} },
+		"image":       func(s *bakerv1alpha1.SetupPhaseSpec) { s.Image = "docker.io/cimg/node:18.20" },
+		"env":         func(s *bakerv1alpha1.SetupPhaseSpec) { s.Env = []bakerv1alpha1.EnvVar{{Name: "CI", Value: "1"}} },
+		"runAsUser":   func(s *bakerv1alpha1.SetupPhaseSpec) { u := int64(1000); s.RunAsUser = &u },
+		"memoryLimit": func(s *bakerv1alpha1.SetupPhaseSpec) { s.MemoryLimit = "512Mi" },
+	}
+	for field, mut := range cases {
+		app := validApp("reject-setup-skip-" + strings.ToLower(field))
+		s := bakerv1alpha1.SetupPhaseSpec{Skip: true}
+		mut(&s)
+		app.Spec.Pipeline.Phases.Setup = s
+
+		err := testClient.Create(testCtx, app)
+		if err == nil {
+			t.Errorf("expected rejection for setup.skip combined with %s", field)
+			_ = testClient.Delete(testCtx, app)
+			continue
+		}
+		if !strings.Contains(err.Error(), "setup.skip cannot be combined") {
+			t.Errorf("field %s: expected setup.skip-cannot-be-combined error, got: %v", field, err)
+		}
 	}
 }
 

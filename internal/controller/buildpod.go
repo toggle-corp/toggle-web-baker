@@ -254,7 +254,7 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 	// Resolve each phase's effective image/UID/HOME (nodeVersion mapping + BYO
 	// overrides). HOME is injected only for managed node phases. Resolved BEFORE
 	// clone because clone is pinned to the build phase's UID (below).
-	setupR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Setup)
+	setupR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Setup.PhaseSpec)
 	fetchR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Fetch.PhaseSpec)
 	buildR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Build.PhaseSpec)
 
