@@ -24,7 +24,8 @@
 #   BY_ANNOTATION             the rebuild "by" annotation key (cleared on trigger)
 #   COMMIT_ANNOTATION         the rebuild "commit" annotation key
 #   MODE                      "tick" (default) or "watch"
-#   REPO                      (watch) git URL, anonymous access only
+#   REPO                      (watch) git URL; anonymous, or authenticated via an
+#                              operator-mounted GIT_CREDENTIAL_DIR credential
 #   REF                       (watch) ref to watch; empty means HEAD
 #   LAST_SEEN_ANNOTATION      (watch) the last-seen-sha annotation key
 #
@@ -50,8 +51,26 @@ fi
 : "${REPO:?REPO (git URL) is required in watch mode}"
 : "${LAST_SEEN_ANNOTATION:?LAST_SEEN_ANNOTATION is required in watch mode}"
 
-# Anonymous only: never prompt for credentials — fail fast on private repos.
+# Never prompt on an interactive terminal — fail fast instead of hanging.
 export GIT_TERMINAL_PROMPT=0
+# Answer any https auth prompt from an OPTIONAL operator-mounted credential at
+# GIT_CREDENTIAL_DIR/{username,password} via the askpass helper. With no
+# credential mounted the helper prints nothing, so ls-remote of a public repo
+# stays anonymous. The credential lifts GitHub's per-IP anonymous rate limit.
+# One feature, two mount points (this watcher AND the clone pod).
+export GIT_ASKPASS=/usr/local/bin/git-askpass.sh
+
+# Unconditional ssh->https GitHub URL rewrite. This pod has no SSH key, and the
+# only credential we support is an https basic-auth token answered via
+# GIT_ASKPASS — a token CANNOT authenticate an ssh remote. So an SSH GitHub URL
+# (scp-style git@github.com: or ssh://git@github.com/) is ALWAYS rewritten to
+# https, whether or not a credential is mounted. Inject via GIT_CONFIG_* env so
+# it needs no writable HOME/.gitconfig under readOnlyRootFilesystem.
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0='url.https://github.com/.insteadOf'
+export GIT_CONFIG_VALUE_0='git@github.com:'
+export GIT_CONFIG_KEY_1='url.https://github.com/.insteadOf'
+export GIT_CONFIG_VALUE_1='ssh://git@github.com/'
 
 # ls-remote patterns TAIL-match path components: asking for "main" also returns
 # refs/heads/feature/main and refs/tags/main — and sorted output can put those

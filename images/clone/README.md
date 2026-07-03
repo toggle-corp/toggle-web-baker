@@ -24,14 +24,25 @@ pipeline (the first initContainer).
 | `SRC_DIR` | no | Override target (default `/workspace/src`). |
 | `GIT_CREDENTIAL_DIR` | no | Where the askpass helper reads optional creds (default `/run/git-credential`). |
 
-## Credentials (future private repos)
+## Credentials
 
-Anonymous by default. For a future private repo the operator may mount a
-read-only credential at `GIT_CREDENTIAL_DIR/{username,password}`. The
-`GIT_ASKPASS` helper reads it **only** to answer git's prompt and **never**
-writes it to `/workspace`, so no `.git-credentials` is left where later phases
-(setup/fetch/build/copy) could read it. `GIT_TERMINAL_PROMPT=0` and a cleared
-`credential.helper` prevent any on-disk persistence or interactive prompt.
+Anonymous by default. When the operator mounts a read-only credential at
+`GIT_CREDENTIAL_DIR/{username,password}` (default `/run/git-credential`), the
+`GIT_ASKPASS` helper (`git-askpass.sh`) reads it **only** to answer git's https
+auth prompt and **never** writes it to `/workspace`, so no `.git-credentials` is
+left where later phases (setup/fetch/build/copy) could read it. The credential
+value is never echoed and the scripts never run `set -x`. `GIT_TERMINAL_PROMPT=0`
+and a cleared `credential.helper` prevent any on-disk persistence or interactive
+prompt. With no credential mounted the helper prints nothing and the clone stays
+anonymous. This is the same mount convention as the clock watcher — one feature,
+two mount points (this clone pod AND the commit watcher).
+
+Because the only credential form is an https basic-auth token (no SSH key
+support), the ssh→https GitHub URL rewrite is **unconditional**: an SSH GitHub
+URL (`git@github.com:…` or `ssh://git@github.com/…`) is always rewritten to
+`https://github.com/…`, credential mounted or not. Authenticated, the token
+flows over https via askpass; anonymous, a public repo/submodule declared over
+SSH still clones over https as before.
 
 ## Termination message
 

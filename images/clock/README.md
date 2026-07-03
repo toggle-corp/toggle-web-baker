@@ -46,11 +46,21 @@ which has no shell and so could never run the tick command.
 - ls-remote failure: log to stderr, exit nonzero, patch NOTHING (the Job's
   backoffLimit retries).
 
-## Credentials (future private repos)
+## Credentials
 
-Watch mode is anonymous-only today, mirroring the clone image: nothing supports
-private repos yet. `GIT_TERMINAL_PROMPT=0` makes a private repo fail fast
-instead of hanging on a prompt. When private-repo support lands, the same
-read-only credential mount convention as `images/clone` (`GIT_ASKPASS` +
-`GIT_CREDENTIAL_DIR/{username,password}`) must be wired here too — one feature,
-two mount points (clone pod AND this watcher).
+Watch mode is anonymous by default. When the operator mounts a read-only
+credential at `GIT_CREDENTIAL_DIR/{username,password}` (default
+`/run/git-credential`), the `GIT_ASKPASS` helper (`git-askpass.sh`) answers
+GitHub's https auth prompt for the `git ls-remote` poll — lifting GitHub's
+per-IP anonymous rate limit. The helper reads the credential **only** to answer
+the prompt, never persists it, never echoes it, and the scripts never run
+`set -x`. With no credential mounted the helper prints nothing and the poll stays
+anonymous. `GIT_TERMINAL_PROMPT=0` makes an unauthenticated private repo fail
+fast instead of hanging on a prompt. This is the same mount convention as the
+clone image (`images/clone`) — one feature, two mount points (the clone pod AND
+this watcher).
+
+Because the only credential form is an https basic-auth token (no SSH key
+support), the ssh→https GitHub URL rewrite is **unconditional**: an SSH GitHub
+`REPO` (`git@github.com:…` or `ssh://git@github.com/…`) is always rewritten to
+`https://github.com/…`, credential mounted or not.

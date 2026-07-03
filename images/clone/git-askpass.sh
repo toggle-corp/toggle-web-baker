@@ -11,6 +11,9 @@
 # Credential mount convention (operator-controlled, optional):
 #   /run/git-credential/username
 #   /run/git-credential/password   (or a PAT)
+#
+# This is byte-identical in intent to images/clock/git-askpass.sh: one feature,
+# two mount points (the clone pod AND the commit watcher). Keep the two in sync.
 set -euo pipefail
 
 cred_dir="${GIT_CREDENTIAL_DIR:-/run/git-credential}"

@@ -194,18 +194,24 @@ assert_contains "$env_seen" "url.https://github.com/.insteadOf=git@github.com:" 
 assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.com/" \
 	"no credential: ssh:// URL rewritten to https"
 
-# ---- 9. credential mounted -> NO https rewrite -------------------------------
-# A mounted credential means the operator owns the URL scheme; the entrypoint
-# must not second-guess it with a rewrite.
+# ---- 9. credential mounted -> scp-style URL STILL rewritten to https ---------
+# A token only works over https, so the ssh->https rewrite is UNCONDITIONAL: a
+# mounted credential must NOT suppress it, or an scp-style repo URL would try
+# ssh (no key, no https askpass) and fail auth. Same rewrite as the anonymous
+# case; safe.directory stays KEY_0.
 mkdir -p "$TMP/cred"
 echo user >"$TMP/cred/username"
-export REPO="https://example/x" REF=main SRC_DIR="$TMP/src9" GIT_CREDENTIAL_DIR="$TMP/cred"
+echo tok >"$TMP/cred/password"
+export REPO="git@github.com:octo/repo.git" REF=main SRC_DIR="$TMP/src9" GIT_CREDENTIAL_DIR="$TMP/cred"
 run_clone
 assert_rc 0 "credential mounted: exits 0"
-case "$(cat "$ENV_LOG")" in
-*insteadOf*) no "credential mounted: no insteadOf rewrite injected" ;;
-*) ok "credential mounted: no insteadOf rewrite injected" ;;
-esac
+env_seen="$(cat "$ENV_LOG")"
+assert_contains "$env_seen" "safe.directory=$TMP/src9" \
+	"credential mounted: safe.directory still KEY_0"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=git@github.com:" \
+	"credential mounted: scp-style SSH URL still rewritten to https"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.com/" \
+	"credential mounted: ssh:// URL still rewritten to https"
 unset GIT_CREDENTIAL_DIR
 
 # ---- summary ----------------------------------------------------------------

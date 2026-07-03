@@ -65,10 +65,25 @@ chmod +x "$STUB_BIN/kubectl"
 # ---- stub git ----------------------------------------------------------------
 # A fake `git` that logs to $GIT_LOG; `ls-remote` prints $LS_REMOTE_STUB and
 # exits $LS_REMOTE_RC (default 0) so remote SHAs and failures are scriptable.
+# For ls-remote it also snapshots GIT_ASKPASS and the GIT_CONFIG_* env (the
+# watcher's only config channel under readOnlyRootFilesystem) to $ENV_LOG so
+# tests can assert the credential + rewrite wiring the same way clone_test does.
 cat >"$STUB_BIN/git" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GIT_LOG"
 if [ "${1:-}" = "ls-remote" ]; then
+	if [ -n "${ENV_LOG:-}" ]; then
+		{
+			printf 'askpass=%s\n' "${GIT_ASKPASS:-}"
+			i=0
+			while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do
+				eval "k=\${GIT_CONFIG_KEY_$i:-}"
+				eval "v=\${GIT_CONFIG_VALUE_$i:-}"
+				printf 'config %s=%s\n' "$k" "$v"
+				i=$((i + 1))
+			done
+		} >>"$ENV_LOG"
+	fi
 	printf '%s\n' "${LS_REMOTE_STUB:-}"
 	exit "${LS_REMOTE_RC:-0}"
 fi
@@ -80,7 +95,8 @@ export PATH="$STUB_BIN:$PATH"
 ENTRY="$HERE/../clock/entrypoint.sh"
 KUBECTL_LOG="$TMP/kubectl.log"
 GIT_LOG="$TMP/git.log"
-export KUBECTL_LOG GIT_LOG
+ENV_LOG="$TMP/env.log"
+export KUBECTL_LOG GIT_LOG ENV_LOG
 
 RA="rebuild.baker.toggle-corp.com/requested-at"
 BY="rebuild.baker.toggle-corp.com/by"
@@ -89,6 +105,7 @@ CM="rebuild.baker.toggle-corp.com/commit"
 run_clock() {
 	: >"$KUBECTL_LOG"
 	: >"$GIT_LOG"
+	: >"$ENV_LOG"
 	rc=0
 	err="$(bash "$ENTRY" 2>&1 1>/dev/null)" || rc=$?
 }
@@ -210,6 +227,51 @@ run_clock
 assert_rc 0 "watch default ref: exits 0"
 gitline="$(cat "$GIT_LOG")"
 assert_contains "$gitline" "ls-remote https://github.com/acme/site.git HEAD" "watch default ref: ls-remote uses HEAD"
+
+# ---- 9. watch mode: GIT_ASKPASS wired for the ls-remote poll --------------------
+# The watcher must run ls-remote with GIT_ASKPASS pointed at the shared helper so
+# an operator-mounted credential (GIT_CREDENTIAL_DIR/{username,password}) answers
+# GitHub's https auth prompt and lifts the anonymous rate limit — one feature,
+# two mount points (this watcher AND the clone pod).
+export REF="main"
+export LS_REMOTE_STUB="$SHA_A	refs/heads/main"
+export LAST_SEEN_STUB="$SHA_A"
+run_clock
+assert_rc 0 "watch askpass: exits 0"
+env_seen="$(cat "$ENV_LOG")"
+assert_contains "$env_seen" "askpass=/usr/local/bin/git-askpass.sh" \
+	"watch askpass: GIT_ASKPASS points at the shared helper"
+
+# ---- 10. watch mode: ssh->https GitHub rewrite is UNCONDITIONAL -----------------
+# A token only works over https and the pod has no ssh key, so an scp-style or
+# ssh:// GitHub REPO is ALWAYS rewritten to https, mounted credential or not.
+# With a credential mounted:
+export REF="main"
+export LS_REMOTE_STUB="$SHA_A	refs/heads/main"
+export LAST_SEEN_STUB="$SHA_A"
+mkdir -p "$TMP/cred"
+echo user >"$TMP/cred/username"
+echo tok >"$TMP/cred/password"
+export REPO="git@github.com:acme/site.git" GIT_CREDENTIAL_DIR="$TMP/cred"
+run_clock
+assert_rc 0 "watch rewrite (cred): exits 0"
+env_seen="$(cat "$ENV_LOG")"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=git@github.com:" \
+	"watch rewrite (cred): scp-style SSH URL rewritten to https"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.com/" \
+	"watch rewrite (cred): ssh:// URL rewritten to https"
+unset GIT_CREDENTIAL_DIR
+# And with NO credential mounted the rewrite still applies:
+export REPO="git@github.com:acme/site.git" GIT_CREDENTIAL_DIR="$TMP/no-such-cred-dir"
+run_clock
+assert_rc 0 "watch rewrite (anon): exits 0"
+env_seen="$(cat "$ENV_LOG")"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=git@github.com:" \
+	"watch rewrite (anon): scp-style SSH URL rewritten to https"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.com/" \
+	"watch rewrite (anon): ssh:// URL rewritten to https"
+unset GIT_CREDENTIAL_DIR
+export REPO="https://github.com/acme/site.git"
 
 # ---- summary ----------------------------------------------------------------
 printf '\n# %s passed, %s failed\n' "$PASS" "$FAIL"

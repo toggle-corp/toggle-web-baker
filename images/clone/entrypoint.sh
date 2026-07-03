@@ -62,20 +62,20 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0="$SRC_DIR"
 
-# Anonymous fallback: with NO mounted credential, an SSH remote (git@github.com:
-# or ssh://git@github.com/) can never authenticate — the pod has no SSH key and
-# GIT_ASKPASS only answers https prompts. Rewrite SSH GitHub URLs to https so a
-# public repo (or a public submodule of one) declared over SSH still clones
-# anonymously. When a credential IS mounted the rewrite is skipped: the operator
-# owns the URL scheme in that case. Same GIT_CONFIG_* env mechanism as above.
-cred_dir="${GIT_CREDENTIAL_DIR:-/run/git-credential}"
-if [ ! -r "$cred_dir/username" ] && [ ! -r "$cred_dir/password" ]; then
-	export GIT_CONFIG_COUNT=3
-	export GIT_CONFIG_KEY_1='url.https://github.com/.insteadOf'
-	export GIT_CONFIG_VALUE_1='git@github.com:'
-	export GIT_CONFIG_KEY_2='url.https://github.com/.insteadOf'
-	export GIT_CONFIG_VALUE_2='ssh://git@github.com/'
-fi
+# Unconditional ssh->https GitHub URL rewrite. This pod has no SSH key, and the
+# only credential we support is an https basic-auth token answered via
+# GIT_ASKPASS — a token CANNOT authenticate an ssh remote. So an SSH GitHub URL
+# (scp-style git@github.com: or ssh://git@github.com/) is ALWAYS rewritten to
+# https, whether or not a credential is mounted:
+#   * credential mounted: the token then flows over https via askpass.
+#   * no credential: a public repo (or public submodule) declared over SSH still
+#     clones anonymously over https, exactly as before.
+# Same GIT_CONFIG_* env mechanism as above; safe.directory stays KEY_0.
+export GIT_CONFIG_COUNT=3
+export GIT_CONFIG_KEY_1='url.https://github.com/.insteadOf'
+export GIT_CONFIG_VALUE_1='git@github.com:'
+export GIT_CONFIG_KEY_2='url.https://github.com/.insteadOf'
+export GIT_CONFIG_VALUE_2='ssh://git@github.com/'
 
 # SUBMODULES opt-in: only fetch submodules when explicitly enabled (1/true).
 # Default off, so an app without submodules: true never fetches submodules.

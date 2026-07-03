@@ -14,7 +14,8 @@ FROM alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc
 RUN apk add --no-cache bash git kubectl
 
 COPY entrypoint.sh /usr/local/bin/clock-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/clock-entrypoint.sh
+COPY git-askpass.sh /usr/local/bin/git-askpass.sh
+RUN chmod 0755 /usr/local/bin/clock-entrypoint.sh /usr/local/bin/git-askpass.sh
 
 USER 65532:65532
 
