@@ -12,6 +12,25 @@ metadata:
     app.kubernetes.io/version: "0.0.0"
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: toggle-web-baker-helm/templates/operator-git-credential-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-toggle-web-baker-git-credential
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator
+type: kubernetes.io/basic-auth
+stringData:
+  username: "baker-bot"
+  password: "PLACEHOLDER_NOT_A_REAL_TOKEN"
+
+---
 # Source: toggle-web-baker-helm/templates/operator-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -42,6 +61,10 @@ data:
     measureInterval: "1h"
     defaultSchedule: "0 */12 * * *"
     defaultWatchInterval: "10m"
+    gitAuth:
+      secretName: "release-name-toggle-web-baker-git-credential"
+      hosts:
+        - "github.com"
     images:
       clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0"
       copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0"
@@ -1494,7 +1517,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 9792cc7216dfd5c4c6f6520e424ca74da62bae2bb0d564c09548fd099f5f47b0
+        checksum/config: b9508a60456458370088e9c48c1f439040a09f03cce9e5064aa2840a0c26064a
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

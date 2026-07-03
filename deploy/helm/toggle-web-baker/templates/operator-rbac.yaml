@@ -38,10 +38,25 @@ rules:
   - ""
   resources:
   - persistentvolumes
-  - secrets
   verbs:
   - get
   - list
+  - watch
+# Full secrets verbs (was get;list;watch): the operator syncs an owned, labeled
+# copy of the gitAuth credential Secret into each App's namespace (Secrets don't
+# cross namespaces) and drift-corrects/deletes it — create;update;patch;delete on
+# top of the read verbs. get;list;watch also back the source-Secret informer.
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - ""

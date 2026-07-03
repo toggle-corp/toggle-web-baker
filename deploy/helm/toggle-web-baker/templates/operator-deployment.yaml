@@ -32,12 +32,17 @@ spec:
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           args:
             - --config=/etc/baker/config.yaml
-          {{- /* env: only exists when sentry is on — if you add an
-               unconditional env var, move the env: key out of this if. */}}
-          {{- if .Values.sentry.dsn }}
           env:
+            {{- /* POD_NAMESPACE (downward API): the operator needs its own
+                 namespace to read the gitAuth source Secret. Harmless when the
+                 git-credential feature is off; REQUIRED when it is on. */}}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.sentry.dsn }}
             {{- include "toggle-web-baker.sentryEnv" (dict "root" $ "tag" .Values.operator.image.tag) | nindent 12 }}
-          {{- end }}
+            {{- end }}
           volumeMounts:
             - { name: config, mountPath: /etc/baker, readOnly: true }
           ports:

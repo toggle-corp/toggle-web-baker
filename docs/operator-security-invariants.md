@@ -82,6 +82,51 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
   author. Residual risk (a fetch author who deliberately relays the secret) is
   accepted under the threat model.
 
+## Git credential (clone + commit-watch)
+
+Optional feature; **off** unless configured (then today's anonymous behaviour is
+unchanged). It authenticates `git ls-remote` (commit-watch) and the clone phase
+over **HTTPS basic-auth** to lift them out of GitHub's per-IP anonymous rate
+limit. Two sources feed one mounted shape (`GIT_CREDENTIAL_DIR/{username,
+password}` files, never URL-embedded creds):
+
+- **Operator-global:** `operator.gitAuth` (chart) → a `kubernetes.io/basic-auth`
+  Secret in the operator namespace. The Helm chart supplies it two ways —
+  `existingSecret` (ESO / pre-created) or chart-created from `username`/`password`
+  (sops+helmfile). These are **mutually exclusive** (template `fail`): silent
+  precedence could leave a stale sops password shadowing the ESO-owned real
+  credential. The **secret values are never rendered into the operator ConfigMap**
+  — only the Secret *name* is passed through.
+- **Per-App override:** `spec.repoAuth.secretRef.name` (a Secret in the App's own
+  namespace) **fully replaces** the global credential for that App.
+
+Security invariants:
+
+- **Host allowlist (`operator.gitAuth.hosts`, default `["github.com"]`) is
+  load-bearing, not cosmetic.** `spec.repo` is user-controlled; injecting the
+  global credential unconditionally would let `repo: https://evil.com/x.git`
+  harvest the token via askpass (credential forwarding). The operator injects the
+  global credential **only when the normalized repo host matches** the allowlist;
+  off-allowlist repos stay anonymous. The **per-App override is exempt** — it is
+  the user's own credential for their own repo. Precedent: `registryAllowlist`.
+- **Per-App credential copies are readable by namespace users.** Build pods and
+  watch CronJobs run in the App namespace and Secrets don't cross namespaces, so
+  the operator syncs an owned, labeled, drift-corrected copy of the global Secret
+  **per App** (ownerReference → GC with the App). Anyone with secret-read /
+  pod-exec in that namespace can extract it — inherent, mitigated by using a
+  **dedicated bot account with a zero-scope classic PAT** (public repos: the
+  token's only job is the authenticated rate bucket). Assumes an effectively
+  single-tenant/internal cluster.
+- **Values are never logged.** The operator never logs secret data; conditions,
+  events, and errors mention the Secret *name* only. The clone/watch scripts never
+  `set -x` or echo the credential (consistent with the mask work in 5ebb5df).
+- **Fail-closed on source deletion / misconfiguration.** `operator.gitAuth`
+  half-configured (name set, hosts empty) or the source Secret missing at startup
+  is a **hard startup fail** (like `clusterCIDRs`). If the source Secret is
+  deleted at runtime the operator is **fail-static**: it keeps existing copies,
+  logs loudly + emits an Event, and hard-fails on next restart. A missing/malformed
+  per-App override Secret surfaces a `Degraded` condition (naming the Secret only).
+
 ## Copier (airlock)
 
 - **Platform-owned image**, the **sole writer** to the output PVC.

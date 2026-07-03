@@ -53,6 +53,36 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-oauth2-proxy" (include "toggle-web-baker.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* Chart-created git-credential Secret name (used when the from-values path is chosen). */}}
+{{- define "toggle-web-baker.gitCredential.fullname" -}}
+{{- printf "%s-git-credential" (include "toggle-web-baker.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Whether the git-credential feature is enabled: ON iff existingSecret OR password is set.
+Emits "true" when on, "" when off. Enforces the existingSecret/password mutual
+exclusion here so the fail fires from EVERY caller (configmap + secret template),
+even in the render where the secret template would be skipped.
+Usage: if (include "toggle-web-baker.gitAuth.enabled" .)
+*/}}
+{{- define "toggle-web-baker.gitAuth.enabled" -}}
+{{- $ga := .Values.operator.gitAuth -}}
+{{- if and $ga.existingSecret $ga.password -}}
+{{- fail "operator.gitAuth: set EITHER existingSecret (ESO/pre-created Secret) OR username/password (chart creates the Secret), not both — silent precedence would leave a stale sops password shadowing the ESO-owned credential." -}}
+{{- end -}}
+{{- if or $ga.existingSecret $ga.password -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+The name of the git-credential Secret the operator should read (in the release
+namespace): the pre-created existingSecret, else the chart-created name. Only
+meaningful when the feature is enabled.
+*/}}
+{{- define "toggle-web-baker.gitAuth.secretName" -}}
+{{- $ga := .Values.operator.gitAuth -}}
+{{- $ga.existingSecret | default (include "toggle-web-baker.gitCredential.fullname" .) -}}
+{{- end -}}
+
 {{/*
 Render an image ref "repository:tag", defaulting tag to the chart appVersion.
 Usage: include "toggle-web-baker.image" (dict "image" .Values.x.image "root" $)

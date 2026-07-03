@@ -1,0 +1,16 @@
+# Operator git credential enabled via the chart-created (sops+helmfile) path:
+# the chart renders a kubernetes.io/basic-auth Secret and the operator ConfigMap
+# carries the gitAuth block (secretName + hosts). Placeholder credential — never
+# a real token. The ESO (existingSecret) path renders no Secret and is covered
+# by the on/off/both-set helm-template eyeball checks instead.
+operator:
+  clusterCIDRs:
+    - 10.0.0.0/8
+    - 172.20.0.0/16
+  registryAllowlist:
+    - ghcr.io/toggle-corp/
+  gitAuth:
+    hosts:
+      - github.com
+    username: baker-bot
+    password: PLACEHOLDER_NOT_A_REAL_TOKEN

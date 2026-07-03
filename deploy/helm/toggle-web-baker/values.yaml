@@ -73,6 +73,45 @@ operator:
   defaultSchedule: "0 */12 * * *"
   defaultWatchInterval: "10m"
 
+  # Operator-global git credential for clone (build) + watchCommits (git
+  # ls-remote polling). Anonymous GitHub throttles per source IP; an
+  # authenticated token lifts clone/watch into the 5k/hr bucket. A per-App
+  # `spec.repoAuth` overrides this globally for that App (host check skipped).
+  #
+  # The feature is OFF unless a credential is supplied (existingSecret OR
+  # password). When OFF the operator keeps today's anonymous behaviour and the
+  # gitAuth block is omitted from the operator ConfigMap entirely.
+  #
+  # Credential shape: a kubernetes.io/basic-auth Secret in the RELEASE namespace
+  # with keys `username`/`password`. The operator reads it and syncs an owned,
+  # drift-corrected copy into each App's namespace (Secrets don't cross
+  # namespaces). Use a DEDICATED bot account and — for public repos — a classic
+  # PAT with ZERO scopes: the token's only job is the authenticated rate bucket,
+  # and namespace users with secret-read/pod-exec can extract the per-app copy
+  # (inherent; mitigated by the zero-scope PAT). See docs/operator-security-invariants.md.
+  gitAuth:
+    # Repo-host allowlist. The global credential is injected ONLY when
+    # spec.repo's host matches (all URL forms — https/scp/ssh — normalized in
+    # the operator). A user-controlled spec.repo pointing off-allowlist stays
+    # anonymous, so the token can't be harvested by `repo: https://evil.com/…`.
+    hosts: ["github.com"]
+
+    # Path A (recommended, ESO / external-secrets): reference a Secret you (or
+    # External Secrets Operator) pre-create in the release namespace, keys
+    # username/password. The chart does NOT create or template the credential.
+    existingSecret: ""
+
+    # Path B (sops + helmfile): the chart creates the basic-auth Secret from
+    # these values. Secret values are NEVER rendered into the ConfigMap — only
+    # the resulting Secret name is passed to the operator.
+    #
+    # existingSecret and password are MUTUALLY EXCLUSIVE — setting both is a
+    # template-time `fail`. Silent precedence would let a stale sops password
+    # linger while ESO owns the real credential; failing loudly forces the
+    # operator to pick one owner.
+    username: ""
+    password: ""
+
   # Per-phase build-pod resource defaults (operator-owned). memory is per-phase
   # (a phase's spec.pipeline.phases.<phase>.memoryLimit overrides its ceiling; request is pinned
   # == limit); cpu request/limit are global (same for every phase container).

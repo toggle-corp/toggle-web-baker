@@ -26,6 +26,19 @@ data:
     measureInterval: {{ .Values.operator.measureInterval | quote }}
     defaultSchedule: {{ .Values.operator.defaultSchedule | quote }}
     defaultWatchInterval: {{ .Values.operator.defaultWatchInterval | quote }}
+    {{- /* Only rendered when the git-credential feature is on (existingSecret OR
+         password set); omitted entirely otherwise — the operator treats an
+         absent gitAuth block as disabled. Secret VALUES never appear here, only
+         the Secret name. The include also enforces the existingSecret/password
+         mutual-exclusion fail. */}}
+    {{- if include "toggle-web-baker.gitAuth.enabled" . }}
+    gitAuth:
+      secretName: {{ include "toggle-web-baker.gitAuth.secretName" . | quote }}
+      hosts:
+        {{- range .Values.operator.gitAuth.hosts }}
+        - {{ . | quote }}
+        {{- end }}
+    {{- end }}
     images:
       clone: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clone "root" $) | quote }}
       copier: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.copier "root" $) | quote }}

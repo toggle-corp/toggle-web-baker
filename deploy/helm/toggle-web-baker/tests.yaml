@@ -10,3 +10,6 @@ tests:
   no-crd.yaml: []
   # monitoring.enabled — metrics Service + ServiceMonitor + PrometheusRule.
   monitoring.yaml: []
+  # operator.gitAuth via the chart-created (username/password) path: basic-auth
+  # Secret rendered + gitAuth block in the operator ConfigMap.
+  git-auth.yaml: []
