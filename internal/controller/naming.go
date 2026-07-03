@@ -10,6 +10,7 @@ func cacheePVCName(app *bakerv1alpha1.FrontendApp) string    { return app.Name +
 func dataCachePVCName(app *bakerv1alpha1.FrontendApp) string { return app.Name + "-data-cache" }
 func outputPVCName(app *bakerv1alpha1.FrontendApp) string    { return app.Name + "-output" }
 func clockCronJobName(app *bakerv1alpha1.FrontendApp) string { return app.Name + "-clock" }
+func watchCronJobName(app *bakerv1alpha1.FrontendApp) string { return app.Name + "-watch" }
 func clockSAName(app *bakerv1alpha1.FrontendApp) string      { return app.Name + "-clock" }
 func clockRoleName(app *bakerv1alpha1.FrontendApp) string    { return app.Name + "-clock" }
 func clockBindingName(app *bakerv1alpha1.FrontendApp) string { return app.Name + "-clock" }

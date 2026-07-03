@@ -30,6 +30,8 @@ import (
 func TestReconcile_SteadyStateDoesNotRewriteChildren(t *testing.T) {
 	app := baseApp()
 	app.Spec.Auth = &bakerv1alpha1.AuthConfig{PasswordHash: ptr.To("hash")}
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true}
+	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true}
 	app.Annotations = map[string]string{bakerv1alpha1.RebuildAnnotation: "tok-1"}
 	app.Status.LastProcessedRebuild = "tok-1"
 	app.Status.LastSuccessfulBuildTime = ptr.To(metav1.NewTime(time.Unix(900, 0)))
@@ -45,6 +47,7 @@ func TestReconcile_SteadyStateDoesNotRewriteChildren(t *testing.T) {
 		clockRoleName(app):    &rbacv1.Role{},
 		clockBindingName(app): &rbacv1.RoleBinding{},
 		clockCronJobName(app): &batchv1.CronJob{},
+		watchCronJobName(app): &batchv1.CronJob{},
 		buildNetPolName(app):  &networkingv1.NetworkPolicy{},
 		nginxConfigName(app):  &corev1.ConfigMap{},
 		nginxDeployName(app):  &appsv1.Deployment{},

@@ -398,9 +398,11 @@ func TestReconcile_NginxCreatedAfterFirstSuccess(t *testing.T) {
 	}
 }
 
-// Requirement 3 + 13: clock CronJob and its scoped RBAC are created with owner refs.
+// Requirement 3 + 13: clock CronJob and its scoped RBAC are created with owner
+// refs (for an app that opts into scheduled builds).
 func TestReconcile_ClockCronJobAndRBACCreated(t *testing.T) {
 	app := baseApp()
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true}
 	r, cl := newReconciler(t, app, wffc())
 	reconcile(t, r, app) // finalizer
 	reconcile(t, r, app)
@@ -515,6 +517,7 @@ func TestMapBuildPodToApp(t *testing.T) {
 // scheduled build as Manual). No shell command is embedded in the operator.
 func TestClockCronJob_PassesAnnotationEnvContract(t *testing.T) {
 	app := baseApp()
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true}
 	r, _ := newReconciler(t, app, wffc())
 	cron := r.clockCronJob(app)
 	c := cron.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
@@ -542,6 +545,7 @@ func TestClockCronJob_PassesAnnotationEnvContract(t *testing.T) {
 // satisfy. Guards against dropping the pin back to a bare hardened context.
 func TestClockCronJob_PinsNonRootRunAsUser(t *testing.T) {
 	app := baseApp()
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true}
 	r, _ := newReconciler(t, app, wffc())
 	cron := r.clockCronJob(app)
 	sc := cron.Spec.JobTemplate.Spec.Template.Spec.Containers[0].SecurityContext

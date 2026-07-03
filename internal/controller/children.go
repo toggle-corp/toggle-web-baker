@@ -15,6 +15,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
+	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
 // shortToken yields a filesystem/k8s-name-safe short hash of a rebuild token.
@@ -68,18 +69,62 @@ func (r *FrontendAppReconciler) clockRoleBinding(app *bakerv1alpha1.FrontendApp)
 }
 
 // clockCronJob is the CLOCK: on each tick it patches the rebuild annotation with
-// the current timestamp via kubectl. It never creates build Jobs.
+// the current timestamp via kubectl. It never creates build Jobs. Rendered only
+// when spec.scheduledBuilds is enabled.
 func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *batchv1.CronJob {
-	schedule := app.Spec.Schedule
+	schedule := app.Spec.ScheduledBuilds.Schedule
 	if schedule == "" {
-		schedule = bakerv1alpha1.DefaultSchedule
+		schedule = r.Config.DefaultSchedule
 	}
 	// The tick logic lives in the platform-owned clock image's entrypoint: it
-	// sets requested-at AND clears any stale manual "by" in the SAME annotate
-	// call, so a scheduled tick can't be mislabeled Manual by a leftover "by"
-	// (the operator classifies trigger by "by" presence). The operator passes the
-	// app name and annotation keys via env so api/v1alpha1 stays the single
-	// source of truth for the keys.
+	// sets requested-at AND clears any stale "by"/"commit" in the SAME annotate
+	// call, so a scheduled tick can't be mislabeled Manual or Commit by leftovers
+	// (the operator classifies trigger by which key is present). The operator
+	// passes the app name and annotation keys via env so api/v1alpha1 stays the
+	// single source of truth for the keys.
+	return r.triggerCronJob(app, clockCronJobName(app), schedule, nil)
+}
+
+// watchCronJob is the commit WATCHER: on each tick it polls `git ls-remote` on
+// the app's repo/ref (clock image, MODE=watch) and requests a rebuild — stamping
+// the commit annotation — only when the SHA changed since the last poll. It
+// shares the clock's image, ServiceAccount, and scoped RBAC. Rendered only when
+// spec.watchCommits is enabled.
+func (r *FrontendAppReconciler) watchCronJob(app *bakerv1alpha1.FrontendApp) (*batchv1.CronJob, error) {
+	interval := app.Spec.WatchCommits.Interval
+	if interval == "" {
+		interval = r.Config.DefaultWatchInterval.String()
+	}
+	schedule, err := domain.WatchCron(interval)
+	if err != nil {
+		return nil, err
+	}
+	ref := app.Spec.Ref
+	if ref == "" {
+		ref = "HEAD"
+	}
+	return r.triggerCronJob(app, watchCronJobName(app), schedule, []corev1.EnvVar{
+		{Name: "MODE", Value: "watch"},
+		{Name: "REPO", Value: app.Spec.Repo},
+		{Name: "REF", Value: ref},
+		{Name: "LAST_SEEN_ANNOTATION", Value: bakerv1alpha1.WatchLastSeenAnnotation},
+	}), nil
+}
+
+// triggerCronJob renders one trigger CronJob (clock tick or commit watcher):
+// same image, shared clock ServiceAccount, same hardening; only name, schedule
+// and extra env differ.
+func (r *FrontendAppReconciler) triggerCronJob(app *bakerv1alpha1.FrontendApp, name, schedule string, extraEnv []corev1.EnvVar) *batchv1.CronJob {
+	env := []corev1.EnvVar{
+		{Name: "APP", Value: app.Name},
+		{Name: "REQUESTED_AT_ANNOTATION", Value: bakerv1alpha1.RebuildAnnotation},
+		{Name: "BY_ANNOTATION", Value: bakerv1alpha1.RebuildByAnnotation},
+		{Name: "COMMIT_ANNOTATION", Value: bakerv1alpha1.RebuildCommitAnnotation},
+		// kubectl's discovery cache needs a writable HOME under the pod's
+		// readOnlyRootFilesystem; point it at the tmp emptyDir below.
+		{Name: "HOME", Value: "/tmp"},
+	}
+	env = append(env, extraEnv...)
 	podSpec := corev1.PodSpec{
 		RestartPolicy:      corev1.RestartPolicyNever,
 		ServiceAccountName: clockSAName(app),
@@ -88,16 +133,9 @@ func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *ba
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 		Containers: []corev1.Container{{
-			Name:  "clock",
-			Image: r.Config.Images.Clock,
-			Env: []corev1.EnvVar{
-				{Name: "APP", Value: app.Name},
-				{Name: "REQUESTED_AT_ANNOTATION", Value: bakerv1alpha1.RebuildAnnotation},
-				{Name: "BY_ANNOTATION", Value: bakerv1alpha1.RebuildByAnnotation},
-				// kubectl's discovery cache needs a writable HOME under the pod's
-				// readOnlyRootFilesystem; point it at the tmp emptyDir below.
-				{Name: "HOME", Value: "/tmp"},
-			},
+			Name:            "clock",
+			Image:           r.Config.Images.Clock,
+			Env:             env,
 			VolumeMounts:    []corev1.VolumeMount{{Name: volTmp, MountPath: "/tmp"}},
 			SecurityContext: clockSecurityContext(),
 		}},
@@ -109,7 +147,7 @@ func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *ba
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}
 	}
 	return &batchv1.CronJob{
-		ObjectMeta: metav1.ObjectMeta{Name: clockCronJobName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: app.Namespace, Labels: labelsFor(app)},
 		Spec: batchv1.CronJobSpec{
 			Schedule:                   schedule,
 			ConcurrencyPolicy:          batchv1.ForbidConcurrent,

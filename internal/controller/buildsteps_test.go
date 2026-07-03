@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
@@ -110,6 +111,62 @@ func TestClassifyTrigger(t *testing.T) {
 			t.Fatalf("got %s, want Manual", got)
 		}
 	})
+	t.Run("commit annotation set => Commit", func(t *testing.T) {
+		app := baseApp()
+		app.Annotations = map[string]string{bakerv1alpha1.RebuildCommitAnnotation: "abc1234"}
+		if got := classifyTrigger(app); got != bakerv1alpha1.BuildTriggerCommit {
+			t.Fatalf("got %s, want Commit", got)
+		}
+	})
+	t.Run("by wins over commit (each source clears the other, but never trust it)", func(t *testing.T) {
+		app := baseApp()
+		app.Annotations = map[string]string{
+			bakerv1alpha1.RebuildByAnnotation:     "octocat",
+			bakerv1alpha1.RebuildCommitAnnotation: "abc1234",
+		}
+		if got := classifyTrigger(app); got != bakerv1alpha1.BuildTriggerManual {
+			t.Fatalf("got %s, want Manual", got)
+		}
+	})
+}
+
+// A commit-triggered build records the SHA into status.build.commit; other
+// triggers leave it empty even when a stale commit annotation lingers.
+func TestStartBuild_RecordsCommitSHA(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildAnnotation:       "tok-9",
+		bakerv1alpha1.RebuildCommitAnnotation: "cafebabe123",
+	}
+	r, _ := newReconciler(t, app, wffc())
+	if err := r.startBuild(context.Background(), app, "tok-9"); err != nil {
+		t.Fatalf("startBuild: %v", err)
+	}
+	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerCommit {
+		t.Fatalf("trigger = %s, want Commit", app.Status.Build.Trigger)
+	}
+	if app.Status.Build.Commit != "cafebabe123" {
+		t.Fatalf("commit = %q, want cafebabe123", app.Status.Build.Commit)
+	}
+}
+
+func TestStartBuild_ManualDoesNotRecordStaleCommit(t *testing.T) {
+	app := baseApp()
+	app.Annotations = map[string]string{
+		bakerv1alpha1.RebuildAnnotation:       "tok-9",
+		bakerv1alpha1.RebuildByAnnotation:     "octocat",
+		bakerv1alpha1.RebuildCommitAnnotation: "cafebabe123", // stale leftover
+	}
+	r, _ := newReconciler(t, app, wffc())
+	if err := r.startBuild(context.Background(), app, "tok-9"); err != nil {
+		t.Fatalf("startBuild: %v", err)
+	}
+	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerManual {
+		t.Fatalf("trigger = %s, want Manual", app.Status.Build.Trigger)
+	}
+	if app.Status.Build.Commit != "" {
+		t.Fatalf("commit = %q, want empty for a Manual build", app.Status.Build.Commit)
+	}
 }
 
 func bs(job string, result bakerv1alpha1.BuildResult) bakerv1alpha1.BuildStatus {

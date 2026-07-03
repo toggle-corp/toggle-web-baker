@@ -14,18 +14,28 @@ const (
 
 	// RebuildByAnnotation carries the user who requested a MANUAL rebuild (set by
 	// the console alongside RebuildAnnotation). Its presence lets the operator
-	// classify a build's trigger as Manual vs Scheduled. The clock tick clears it
-	// so a stale manual "by" can't mislabel a later scheduled build. This const
+	// classify a build's trigger as Manual. The clock tick and the commit watcher
+	// clear it so a stale manual "by" can't mislabel a later build. This const
 	// mirrors the console's view.AnnotationRebuildBy without importing it.
 	RebuildByAnnotation = "rebuild.baker.toggle-corp.com/by"
 
+	// RebuildCommitAnnotation carries the commit SHA that triggered a commit-watch
+	// build (set by the watcher alongside RebuildAnnotation). Its presence lets
+	// the operator classify a build's trigger as Commit and record the SHA. The
+	// clock tick clears it (a scheduled tick must not inherit a stale Commit
+	// classification); the console clears it on manual rebuilds. Each trigger
+	// source stamps its own key and clears the others' in the same patch.
+	RebuildCommitAnnotation = "rebuild.baker.toggle-corp.com/commit"
+
+	// WatchLastSeenAnnotation is the commit watcher's dedup state: the remote SHA
+	// observed on the previous poll. Written only by the watcher (seeded without
+	// triggering on its first run). Deliberately LAST-SEEN, not last-built: a
+	// failed build is not re-triggered by the watcher — the scheduled clock (when
+	// enabled) retries it.
+	WatchLastSeenAnnotation = "watch.baker.toggle-corp.com/last-seen-sha"
+
 	// FinalizerName guards a best-effort abort of an in-flight build Job on delete.
 	FinalizerName = "baker.toggle-corp.com/finalizer"
-
-	// DefaultSchedule is the clock CronJob's schedule when Spec.Schedule is empty.
-	// It MUST match the +kubebuilder:default on Spec.Schedule (a magic comment
-	// that cannot reference this const) and the console's view.DefaultSchedule.
-	DefaultSchedule = "0 */12 * * *"
 
 	// SpecHashAnnotation stamps the build-relevant spec hash onto the build Job at
 	// CREATION time, so on success the operator records the hash of the spec the
@@ -370,6 +380,33 @@ type StorageConfig struct {
 	Output OutputThresholds `json:"output,omitempty"`
 }
 
+// ScheduledBuildsSpec opts an app into time-based rebuilds.
+type ScheduledBuildsSpec struct {
+	// Enabled must be stated explicitly (no default): false keeps the config
+	// around while pausing the clock CronJob.
+	// +kubebuilder:validation:Required
+	Enabled bool `json:"enabled"`
+	// Schedule is the clock CronJob's cron expression. Empty means the operator
+	// default (config defaultSchedule, chart-owned; the CRD cannot know it).
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
+}
+
+// WatchCommitsSpec opts an app into commit-triggered rebuilds.
+type WatchCommitsSpec struct {
+	// Enabled must be stated explicitly (no default): false keeps the config
+	// around while pausing the watcher CronJob.
+	// +kubebuilder:validation:Required
+	Enabled bool `json:"enabled"`
+	// Interval is how often the watcher polls the remote, as a Go duration in
+	// whole minutes or whole hours (e.g. "5m", "1h") — CronJob schedules cannot
+	// express anything finer, and the pattern rejects sub-minute units at
+	// admission. Empty means the operator default (config defaultWatchInterval).
+	// +kubebuilder:validation:Pattern=`^([0-9]+[mh])+$`
+	// +optional
+	Interval string `json:"interval,omitempty"`
+}
+
 // FrontendAppSpec is the desired state: operational tunables for one app.
 type FrontendAppSpec struct {
 	// Repo is the clone URL, handed verbatim to `git clone`. The pattern is a
@@ -391,9 +428,20 @@ type FrontendAppSpec struct {
 	// +optional
 	Group string `json:"group,omitempty"`
 
-	// +kubebuilder:default="0 */12 * * *"
+	// ScheduledBuilds enables time-based rebuilds (the clock CronJob). Absent
+	// means DISABLED — apps that need periodic data-refresh builds must opt in
+	// explicitly. Deliberately a struct with a required Enabled rather than a
+	// defaulted flat field, so `scheduledBuilds: {schedule: ...}` without an
+	// explicit enabled is rejected at admission instead of silently doing nothing.
 	// +optional
-	Schedule string `json:"schedule,omitempty"`
+	ScheduledBuilds *ScheduledBuildsSpec `json:"scheduledBuilds,omitempty"`
+
+	// WatchCommits enables commit-triggered rebuilds: a per-app watcher CronJob
+	// polls `git ls-remote` on Repo/Ref and requests a rebuild when the SHA
+	// changes. Absent means DISABLED. Coexists with ScheduledBuilds (data-driven
+	// apps still need time-based rebuilds; pure-source apps can go watch-only).
+	// +optional
+	WatchCommits *WatchCommitsSpec `json:"watchCommits,omitempty"`
 
 	// Pipeline is HOW the app is built: toolchain, timeout, and the ordered
 	// setup/fetch/build phases. Required — every app must build something.
@@ -499,6 +547,10 @@ const (
 	BuildTriggerScheduled  BuildTrigger = "Scheduled"
 	BuildTriggerManual     BuildTrigger = "Manual"
 	BuildTriggerSpecChange BuildTrigger = "SpecChange"
+	// BuildTriggerCommit: the commit watcher saw a new SHA on the watched ref
+	// (classified by RebuildCommitAnnotation presence; the SHA lands in
+	// BuildStatus.Commit).
+	BuildTriggerCommit BuildTrigger = "Commit"
 )
 
 // BuildPhase is the lifecycle of the current/last build pod.
@@ -537,6 +589,10 @@ type BuildStatus struct {
 	// TriggeredBy is the user who requested a manual build (empty for scheduled).
 	// +optional
 	TriggeredBy string `json:"triggeredBy,omitempty"`
+	// Commit is the SHA that triggered a commit-watch build (empty for other
+	// triggers), captured from RebuildCommitAnnotation at Job creation.
+	// +optional
+	Commit string `json:"commit,omitempty"`
 	// Steps is the ordered per-step timeline (only applicable steps).
 	// +optional
 	// +listType=atomic

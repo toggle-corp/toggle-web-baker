@@ -138,6 +138,8 @@ clusterCIDRs:
   - 10.0.0.0/16
   - 10.96.0.0/12
 measureInterval: 2h
+defaultSchedule: "30 */6 * * *"
+defaultWatchInterval: 15m
 images:
   clone: ghcr.io/x/clone@sha256:aaa
   copier: ghcr.io/x/copier@sha256:bbb
@@ -201,6 +203,55 @@ func TestLoadConfig_ValidPopulatesOperatorConfig(t *testing.T) {
 	}
 	if cfg.ActiveDeadlineSeconds != 1800 {
 		t.Fatalf("activeDeadlineSeconds = %d, want 1800", cfg.ActiveDeadlineSeconds)
+	}
+	if cfg.DefaultSchedule != "30 */6 * * *" {
+		t.Fatalf("defaultSchedule = %q, want 30 */6 * * *", cfg.DefaultSchedule)
+	}
+	if cfg.DefaultWatchInterval.String() != "15m0s" {
+		t.Fatalf("defaultWatchInterval = %v, want 15m", cfg.DefaultWatchInterval)
+	}
+}
+
+// Omitted trigger defaults fall back to the documented values: every 12 hours
+// for scheduled builds, 10m for the commit-watch poll.
+func TestLoadConfig_TriggerDefaultsWhenOmitted(t *testing.T) {
+	body := `
+clusterCIDRs: [10.0.0.0/8]
+phaseResources:
+  cpu: { request: "0.1", limit: "4" }
+  memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }
+activeDeadlineSeconds: 1800
+`
+	cfg, _, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DefaultSchedule != "0 */12 * * *" {
+		t.Fatalf("defaultSchedule = %q, want 0 */12 * * *", cfg.DefaultSchedule)
+	}
+	if cfg.DefaultWatchInterval.String() != "10m0s" {
+		t.Fatalf("defaultWatchInterval = %v, want 10m", cfg.DefaultWatchInterval)
+	}
+}
+
+// A defaultWatchInterval the watcher CronJob cannot express must fail at
+// startup, not at reconcile time.
+func TestLoadConfig_BadTriggerDefaultsError(t *testing.T) {
+	base := `
+clusterCIDRs: [10.0.0.0/8]
+phaseResources:
+  cpu: { request: "0.1", limit: "4" }
+  memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }
+activeDeadlineSeconds: 1800
+`
+	for _, extra := range []string{
+		"defaultWatchInterval: 30s",
+		"defaultWatchInterval: bogus",
+		"defaultSchedule: not-a-cron",
+	} {
+		if _, _, err := LoadConfig(writeConfig(t, base+extra+"\n")); err == nil {
+			t.Fatalf("LoadConfig with %q: expected error, got nil", extra)
+		}
 	}
 }
 

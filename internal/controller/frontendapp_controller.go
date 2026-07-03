@@ -485,6 +485,12 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 	app.Status.LastProcessedRebuild = token
 	by := app.Annotations[bakerv1alpha1.RebuildByAnnotation]
 	trigger := classifyTrigger(app)
+	// The SHA breadcrumb is only meaningful when the trigger IS Commit — a stale
+	// commit annotation under a Manual build must not leak into the record.
+	commit := ""
+	if trigger == bakerv1alpha1.BuildTriggerCommit {
+		commit = app.Annotations[bakerv1alpha1.RebuildCommitAnnotation]
+	}
 	app.Status.Build = bakerv1alpha1.BuildStatus{
 		Phase:     bakerv1alpha1.BuildPhasePending,
 		JobName:   job.Name,
@@ -494,6 +500,7 @@ func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alph
 		// Pending; observeBuild fills in PodName + per-step statuses as the pod runs.
 		Trigger:     trigger,
 		TriggeredBy: by,
+		Commit:      commit,
 		Steps:       deriveBuildSteps(applicableSteps(app), nil, false),
 		// Record the exact image each container was created with (digest-pinned
 		// for managed toolchains), read from the Job spec itself so it reflects

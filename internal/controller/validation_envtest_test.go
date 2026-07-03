@@ -636,3 +636,88 @@ func TestValidation_DefaultsRefToHEAD(t *testing.T) {
 		t.Fatalf("expected Spec.Ref defaulted to HEAD, got %q", got.Spec.Ref)
 	}
 }
+
+// ---- trigger opt-in structs (scheduledBuilds / watchCommits) ----------------
+
+func TestValidation_AcceptsEnabledTriggersWithTuning(t *testing.T) {
+	app := validApp("accept-triggers")
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true, Schedule: "0 3 * * *"}
+	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "5m"}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected Create to succeed, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsSubMinuteWatchInterval(t *testing.T) {
+	app := validApp("reject-subminute-interval")
+	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "30s"}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for sub-minute watch interval")
+	}
+}
+
+func TestValidation_RejectsGarbageWatchInterval(t *testing.T) {
+	app := validApp("reject-garbage-interval")
+	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "often"}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for non-duration watch interval")
+	}
+}
+
+// enabled is Required inside each trigger struct precisely so that
+// `scheduledBuilds: {schedule: ...}` (tuning without an explicit decision)
+// fails at admission instead of silently doing nothing. The typed struct
+// always serializes enabled (no omitempty), so drop the key via unstructured.
+func TestValidation_RejectsTriggerStructWithoutEnabled(t *testing.T) {
+	for _, field := range []string{"scheduledBuilds", "watchCommits"} {
+		app := validApp("reject-" + strings.ToLower(field) + "-no-enabled")
+		app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true, Schedule: "0 3 * * *"}
+		app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "5m"}
+		obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(app)
+		if err != nil {
+			t.Fatalf("failed to convert app to unstructured: %v", err)
+		}
+		unstructured.RemoveNestedField(obj, "spec", field, "enabled")
+		u := &unstructured.Unstructured{Object: obj}
+		u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+
+		if err := testClient.Create(testCtx, u); err == nil {
+			t.Errorf("expected rejection for %s without enabled", field)
+			_ = testClient.Delete(testCtx, u)
+		}
+	}
+}
+
+// The old flat spec.schedule is GONE from the schema: a manifest still carrying
+// it is admitted (structural schemas prune unknown fields) but the field is
+// silently dropped — callers must migrate to scheduledBuilds.
+func TestValidation_OldFlatScheduleIsPruned(t *testing.T) {
+	app := validApp("old-flat-schedule-pruned")
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(app)
+	if err != nil {
+		t.Fatalf("failed to convert app to unstructured: %v", err)
+	}
+	if err := unstructured.SetNestedField(obj, "0 */6 * * *", "spec", "schedule"); err != nil {
+		t.Fatalf("set spec.schedule: %v", err)
+	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+
+	if err := testClient.Create(testCtx, u); err != nil {
+		t.Fatalf("expected Create with legacy spec.schedule to succeed (pruned), got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, u) })
+
+	stored := &unstructured.Unstructured{}
+	stored.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+	if err := testClient.Get(testCtx, client.ObjectKeyFromObject(u), stored); err != nil {
+		t.Fatalf("get stored app: %v", err)
+	}
+	if _, found, _ := unstructured.NestedString(stored.Object, "spec", "schedule"); found {
+		t.Fatalf("legacy spec.schedule survived; want pruned")
+	}
+}

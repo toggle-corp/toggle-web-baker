@@ -76,12 +76,19 @@ func findContainerStatus(statuses []corev1.ContainerStatus, name string) *corev1
 }
 
 // classifyTrigger derives why a build ran from the rebuild annotations: a
-// non-empty "by" user means the manual-rebuild UI requested it (Manual);
-// otherwise it is the clock tick (Scheduled). SpecChange is reserved and never
-// emitted (spec edits are detect-only and never trigger a build).
+// non-empty "by" user means the manual-rebuild UI requested it (Manual); else a
+// non-empty "commit" SHA means the commit watcher requested it (Commit);
+// otherwise it is the clock tick (Scheduled). Every trigger source clears the
+// other sources' keys in the same patch, so at most one is normally set; "by"
+// still wins on a conflicting patch because a human's request is the stronger
+// claim. SpecChange is reserved and never emitted (spec edits are detect-only
+// and never trigger a build).
 func classifyTrigger(app *bakerv1alpha1.FrontendApp) bakerv1alpha1.BuildTrigger {
 	if app.Annotations[bakerv1alpha1.RebuildByAnnotation] != "" {
 		return bakerv1alpha1.BuildTriggerManual
+	}
+	if app.Annotations[bakerv1alpha1.RebuildCommitAnnotation] != "" {
+		return bakerv1alpha1.BuildTriggerCommit
 	}
 	return bakerv1alpha1.BuildTriggerScheduled
 }

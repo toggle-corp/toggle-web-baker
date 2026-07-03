@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 
@@ -54,6 +55,15 @@ type OperatorConfig struct {
 	// Measurement runs after a successful build, but at most once per interval so
 	// rapid back-to-back rebuilds don't spawn redundant du Jobs. Defaults to 1h.
 	MeasureInterval time.Duration
+
+	// DefaultSchedule is the clock CronJob's cron expression when an app enables
+	// scheduledBuilds without a schedule. Chart-owned; defaults to every 12h.
+	DefaultSchedule string
+
+	// DefaultWatchInterval is the commit watcher's poll interval when an app
+	// enables watchCommits without an interval. Must be expressible as a CronJob
+	// schedule (whole minutes/hours — see domain.WatchCron). Defaults to 10m.
+	DefaultWatchInterval time.Duration
 
 	Images PlatformImages
 
@@ -131,6 +141,9 @@ type FileConfig struct {
 	ImagePullSecret   string                      `json:"imagePullSecret,omitempty"`
 	StorageClass      string                      `json:"storageClass,omitempty"`
 	MeasureInterval   string                      `json:"measureInterval,omitempty"`
+	// Trigger defaults for apps that enable a trigger without tuning it.
+	DefaultSchedule      string `json:"defaultSchedule,omitempty"`
+	DefaultWatchInterval string `json:"defaultWatchInterval,omitempty"`
 	Images            fileImages                  `json:"images,omitempty"`
 	NodeImages        map[string]domain.NodeImage `json:"nodeImages,omitempty"`
 
@@ -189,6 +202,20 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		}
 	}
 
+	// Trigger defaults fail loud at startup: a broken chart value would otherwise
+	// surface per-app at CronJob creation time.
+	defaultSchedule := defaultStr(fc.DefaultSchedule, "0 */12 * * *")
+	if _, err := cron.ParseStandard(defaultSchedule); err != nil {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("defaultSchedule %q is not a valid cron expression: %w", fc.DefaultSchedule, err)
+	}
+	defaultWatch := 10 * time.Minute
+	if fc.DefaultWatchInterval != "" {
+		if _, err := domain.WatchCron(fc.DefaultWatchInterval); err != nil {
+			return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("defaultWatchInterval: %w", err)
+		}
+		defaultWatch, _ = time.ParseDuration(fc.DefaultWatchInterval)
+	}
+
 	// Every resource quantity MUST parse (they are load-bearing: the per-phase
 	// memory defaults are the fallback for malformed user input, so they can
 	// never be allowed to be absent/invalid).
@@ -219,8 +246,10 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		RegistryAllowlist: fc.RegistryAllowlist,
 		ClusterCIDRs:      fc.ClusterCIDRs,
 		TraefikGroup:      fc.TraefikGroup,
-		ImagePullSecret:   fc.ImagePullSecret,
-		MeasureInterval:   interval,
+		ImagePullSecret:      fc.ImagePullSecret,
+		MeasureInterval:      interval,
+		DefaultSchedule:      defaultSchedule,
+		DefaultWatchInterval: defaultWatch,
 		Images: PlatformImages{
 			Clone:   fc.Images.Clone,
 			Copier:  fc.Images.Copier,
@@ -338,6 +367,12 @@ func (c *OperatorConfig) Defaults() {
 	}
 	if c.MeasureInterval <= 0 {
 		c.MeasureInterval = time.Hour
+	}
+	if c.DefaultSchedule == "" {
+		c.DefaultSchedule = "0 */12 * * *"
+	}
+	if c.DefaultWatchInterval <= 0 {
+		c.DefaultWatchInterval = 10 * time.Minute
 	}
 	if c.Images.Clone == "" {
 		c.Images.Clone = "ghcr.io/toggle-corp/toggle-web-baker-clone@sha256:0000000000000000000000000000000000000000000000000000000000000000"
