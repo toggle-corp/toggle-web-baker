@@ -57,6 +57,19 @@ cat >"$STUB_BIN/git" <<'STUB'
 printf '%s\n' "$*" >>"$GIT_LOG"
 case "$1" in
 clone)
+	# Snapshot the GIT_CONFIG_* env the clone runs with (the entrypoint's only
+	# config channel under readOnlyRootFilesystem) so tests can assert on it.
+	if [ -n "${ENV_LOG:-}" ]; then
+		{
+			i=0
+			while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do
+				eval "k=\${GIT_CONFIG_KEY_$i:-}"
+				eval "v=\${GIT_CONFIG_VALUE_$i:-}"
+				printf 'config %s=%s\n' "$k" "$v"
+				i=$((i + 1))
+			done
+		} >>"$ENV_LOG"
+	fi
 	# Destination is the last positional argument.
 	dest="${!#}"
 	mkdir -p "$dest"
@@ -81,11 +94,13 @@ ENTRY="$HERE/../clone/entrypoint.sh"
 # Reads test-local REPO/REF/DEPTH/SRC_DIR from the shell's exported env.
 TERM_LOG="$TMP/term.log"
 GIT_LOG="$TMP/git.log"
-export TERMINATION_LOG="$TERM_LOG" GIT_LOG
+ENV_LOG="$TMP/env.log"
+export TERMINATION_LOG="$TERM_LOG" GIT_LOG ENV_LOG
 
 run_clone() {
 	: >"$TERM_LOG"
 	: >"$GIT_LOG"
+	: >"$ENV_LOG"
 	rc=0
 	err="$(bash "$ENTRY" 2>&1 1>/dev/null)" || rc=$?
 }
@@ -164,6 +179,34 @@ if grep -q '^submodule update' "$GIT_LOG"; then
 else
 	ok "submodules off: git submodule update is NOT invoked"
 fi
+
+# ---- 8. no credential mounted -> SSH GitHub URLs rewritten to https ---------
+# With nothing under the credential dir, the entrypoint must inject the
+# url.https://github.com/.insteadOf rewrites (scp-style AND ssh://) so a public
+# repo/submodule declared over SSH still clones anonymously.
+export REPO="git@github.com:octo/repo.git" REF=main SRC_DIR="$TMP/src8"
+export GIT_CREDENTIAL_DIR="$TMP/no-such-cred-dir"
+run_clone
+assert_rc 0 "no credential: exits 0"
+env_seen="$(cat "$ENV_LOG")"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=git@github.com:" \
+	"no credential: scp-style SSH URL rewritten to https"
+assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.com/" \
+	"no credential: ssh:// URL rewritten to https"
+
+# ---- 9. credential mounted -> NO https rewrite -------------------------------
+# A mounted credential means the operator owns the URL scheme; the entrypoint
+# must not second-guess it with a rewrite.
+mkdir -p "$TMP/cred"
+echo user >"$TMP/cred/username"
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src9" GIT_CREDENTIAL_DIR="$TMP/cred"
+run_clone
+assert_rc 0 "credential mounted: exits 0"
+case "$(cat "$ENV_LOG")" in
+*insteadOf*) no "credential mounted: no insteadOf rewrite injected" ;;
+*) ok "credential mounted: no insteadOf rewrite injected" ;;
+esac
+unset GIT_CREDENTIAL_DIR
 
 # ---- summary ----------------------------------------------------------------
 printf '\n# %s passed, %s failed\n' "$PASS" "$FAIL"
