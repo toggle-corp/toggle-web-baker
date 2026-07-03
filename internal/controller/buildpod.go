@@ -251,6 +251,13 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	// User phases mount the binary read-only.
 	shimMount := corev1.VolumeMount{Name: volShim, MountPath: shimMountPath, ReadOnly: true}
 
+	// Resolve each phase's effective image/UID/HOME (nodeVersion mapping + BYO
+	// overrides). HOME is injected only for managed node phases. Resolved BEFORE
+	// clone because clone is pinned to the build phase's UID (below).
+	setupR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Setup)
+	fetchR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Fetch.PhaseSpec)
+	buildR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Build.PhaseSpec)
+
 	// clone: platform image, no caches needed beyond work. SUBMODULES is set
 	// ONLY when the app opts in; the entrypoint defaults to no submodule
 	// recursion when the env is absent.
@@ -262,19 +269,24 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 	if app.Spec.Pipeline.Submodules {
 		cloneEnv = append(cloneEnv, corev1.EnvVar{Name: "SUBMODULES", Value: "1"})
 	}
+	// clone runs as the BUILD phase's resolved UID (the managed node image's UID,
+	// or a BYO build.runAsUser) — NOT the clone image's own default. Rationale:
+	// clone writes the checkout into /work, so the checkout (and every subdir git
+	// creates, mode 755) is owned by whoever clone runs as. The build phases then
+	// need to WRITE into that tree — e.g. graphql-codegen emitting a gitignored
+	// src/generated/, or any in-tree codegen — which fails with EACCES if clone
+	// owns it under a different UID. Pinning clone to the build UID makes the
+	// checkout writable by the phases. When the build phase has no resolved UID
+	// (BYO image without runAsUser) clone keeps its image default (nil == no
+	// override). This deliberately drops the older "checkout is read-only input
+	// to the toolchain" posture in favour of supporting in-tree codegen.
 	clone := corev1.Container{
 		Name:            "clone",
 		Image:           r.Config.Images.Clone,
 		Env:             cloneEnv,
 		VolumeMounts:    base,
-		SecurityContext: hardenedSecurityContext(),
+		SecurityContext: resolvedSecurityContext(buildR),
 	}
-
-	// Resolve each phase's effective image/UID/HOME (nodeVersion mapping + BYO
-	// overrides). HOME is injected only for managed node phases.
-	setupR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Setup)
-	fetchR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Fetch.PhaseSpec)
-	buildR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Build.PhaseSpec)
 
 	// setup: install deps. Mounts cache (RW for pnpm store / yarn cache).
 	setupMounts := append(append([]corev1.VolumeMount{}, base...), cacheMount, shimMount)

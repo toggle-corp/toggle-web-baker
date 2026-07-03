@@ -35,6 +35,16 @@ validating webhook are deliberately **out of scope**, while the in-pod controls
   > lockstep release. The "digest-pinned, no user override" guarantee currently
   > holds only for `go run`/non-helm deploys using the `config.go` defaults. Harden
   > by resolving tag→digest in CI before packaging the chart (see chart README).
+- **`clone` runs as the build phase's UID** (the managed node image's UID, or a
+  BYO `build.runAsUser`), NOT the clone image's own default. clone writes the
+  checkout into the shared work volume, so pinning it to the build UID makes the
+  checkout **writable by the build phases** — required for in-tree codegen (e.g.
+  `graphql-codegen` emitting a gitignored `src/generated/`). This intentionally
+  drops the earlier "checkout is read-only input to the toolchain" posture; the
+  toolchain may write build artefacts into the tree, but the managed node images
+  still keep `COREPACK_ENABLE_AUTO_PIN=0` so corepack cannot silently rewrite the
+  user's `package.json`. When the build phase has no resolved UID (BYO image with
+  no `runAsUser`), clone keeps its image default.
 - **Build container NEVER mounts the output PVC** (only the scratch work volume +
   cache). The copier is the sole writer to output.
 - **`backoffLimit: 0`** (a failed build fails once → `Degraded`; last-good keeps

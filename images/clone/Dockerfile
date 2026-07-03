@@ -18,8 +18,11 @@ COPY entrypoint.sh /usr/local/bin/clone-entrypoint.sh
 COPY git-askpass.sh /usr/local/bin/git-askpass.sh
 RUN chmod 0755 /usr/local/bin/clone-entrypoint.sh /usr/local/bin/git-askpass.sh
 
-# Run as a non-root, unprivileged uid. The operator may override; nothing here
-# requires root. /workspace is provided by the shared work volume at runtime.
+# Run as a non-root, unprivileged uid. This is only a sane default for standalone
+# runs: the operator OVERRIDES runAsUser at runtime to the build phase's UID, so
+# the checkout this container writes is owned by — and writable by — the build
+# phases (in-tree codegen). Nothing here requires root. /workspace is provided by
+# the shared work volume at runtime.
 USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/clone-entrypoint.sh"]

@@ -197,6 +197,50 @@ func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
 	}
 }
 
+// clone runs as the BUILD phase's resolved UID (not the clone image default) so
+// the checkout it writes into /work is owned by — and writable by — the build
+// phases (in-tree codegen, e.g. graphql-codegen into a gitignored src/generated/).
+func TestBuildJob_CloneRunsAsBuildUID(t *testing.T) {
+	// managed nodeVersion -> clone inherits the managed image UID.
+	t.Run("managed", func(t *testing.T) {
+		app := baseApp()
+		app.Spec.Pipeline.NodeVersion = 18
+		app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+		r := reconcilerForPod()
+		r.Config.NodeImages = map[string]domain.NodeImage{
+			"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
+		}
+		clone := containerByName(r.BuildJob(app, "tok").Spec.Template.Spec.InitContainers, "clone")
+		if clone.SecurityContext.RunAsUser == nil || *clone.SecurityContext.RunAsUser != 1000 {
+			t.Fatalf("clone runAsUser = %v, want 1000 (build UID)", clone.SecurityContext.RunAsUser)
+		}
+		if clone.SecurityContext.RunAsNonRoot == nil || !*clone.SecurityContext.RunAsNonRoot {
+			t.Fatalf("clone must still runAsNonRoot")
+		}
+	})
+
+	// BYO build image + runAsUser -> clone inherits that UID.
+	t.Run("byo build runAsUser", func(t *testing.T) {
+		app := baseApp()
+		app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
+		app.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(3434))
+		clone := containerByName(reconcilerForPod().BuildJob(app, "tok").Spec.Template.Spec.InitContainers, "clone")
+		if clone.SecurityContext.RunAsUser == nil || *clone.SecurityContext.RunAsUser != 3434 {
+			t.Fatalf("clone runAsUser = %v, want 3434 (BYO build UID)", clone.SecurityContext.RunAsUser)
+		}
+	})
+
+	// BYO build image WITHOUT runAsUser -> no resolved UID, clone keeps its image default (nil).
+	t.Run("byo build no runAsUser", func(t *testing.T) {
+		app := baseApp()
+		app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
+		clone := containerByName(reconcilerForPod().BuildJob(app, "tok").Spec.Template.Spec.InitContainers, "clone")
+		if clone.SecurityContext.RunAsUser != nil {
+			t.Fatalf("clone runAsUser = %v, want nil (image default)", *clone.SecurityContext.RunAsUser)
+		}
+	})
+}
+
 // DefaultNodeHome must equal the work emptyDir mount: HOME has to land on a
 // writable volume under readOnlyRootFilesystem. Guards the cross-package
 // coupling (domain.DefaultNodeHome vs controller workMountPath) against drift.
