@@ -29,6 +29,16 @@ assert_rc() {
 	if [ "$rc" -eq "$1" ]; then ok "$2"; else no "$2 (rc=$rc, want $1)"; fi
 }
 
+# assert_rc_var <expected_rc> <desc> -- check the rc captured in $arc (askpass).
+assert_rc_var() {
+	if [ "$arc" -eq "$1" ]; then ok "$2"; else no "$2 (rc=$arc, want $1)"; fi
+}
+
+# assert_eq <got> <want> <desc>
+assert_eq() {
+	if [ "$1" = "$2" ]; then ok "$3"; else no "$3 (got [$1], want [$2])"; fi
+}
+
 # assert_contains <haystack> <needle> <desc>
 assert_contains() {
 	case "$1" in
@@ -272,6 +282,62 @@ assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.
 	"watch rewrite (anon): ssh:// URL rewritten to https"
 unset GIT_CREDENTIAL_DIR
 export REPO="https://github.com/acme/site.git"
+
+# ---- 11. git-askpass.sh: host-scoped credential answers (GIT_CREDENTIAL_HOST) -
+# Same fail-closed host scoping as the clone helper (the pair is kept identical):
+# with GIT_CREDENTIAL_HOST set, answer ONLY prompts for that host; print NOTHING
+# for any other host so a .gitmodules-declared submodule on evil.example never
+# receives the operator-global credential. Unset preserves answer-any behavior.
+ASKPASS="$HERE/../clock/git-askpass.sh"
+
+# $TMP/cred (username=user, password=tok) was seeded above in test 10.
+export GIT_CREDENTIAL_DIR="$TMP/cred"
+askpass() {
+	arc=0
+	aout="$(bash "$ASKPASS" "$1")" || arc=$?
+}
+
+# scoped to github.com: a github.com prompt is answered with the credential.
+export GIT_CREDENTIAL_HOST=github.com
+askpass "Username for 'https://github.com': "
+assert_rc_var 0 "askpass scoped: github.com Username exits 0"
+assert_eq "$aout" "user" "askpass scoped: github.com Username answered"
+askpass "Password for 'https://github.com': "
+assert_eq "$aout" "tok" "askpass scoped: github.com Password answered"
+
+# userinfo present (git re-prompts Password with the answered username in the
+# URL) must still match on the bare hostname.
+askpass "Password for 'https://x-access-token@github.com': "
+assert_eq "$aout" "tok" "askpass scoped: userinfo form still answered"
+
+# non-default port must match on hostname only (port ignored).
+askpass "Username for 'https://github.com:8443': "
+assert_eq "$aout" "user" "askpass scoped: non-default port still matches host"
+
+# http:// scheme is parsed the same way.
+askpass "Username for 'http://github.com': "
+assert_eq "$aout" "user" "askpass scoped: http:// scheme matches host"
+
+# WRONG host (the .gitmodules attack): print NOTHING, exit 0 — fail closed.
+askpass "Username for 'https://evil.example/x.git': "
+assert_rc_var 0 "askpass wrong host: exits 0"
+assert_eq "$aout" "" "askpass wrong host: prints NOTHING (no credential leak)"
+askpass "Password for 'https://x-access-token@evil.example/x.git': "
+assert_eq "$aout" "" "askpass wrong host: userinfo form on other host also blank"
+
+# unset GIT_CREDENTIAL_HOST -> old behavior: answer ANY host.
+unset GIT_CREDENTIAL_HOST
+askpass "Username for 'https://evil.example/x.git': "
+assert_eq "$aout" "user" "askpass unset: answers any host (back-compat)"
+askpass "Password for 'https://github.com': "
+assert_eq "$aout" "tok" "askpass unset: answers github.com too"
+
+# a non-Username/Password prompt is ignored regardless of host scoping.
+export GIT_CREDENTIAL_HOST=github.com
+askpass "Some other prompt for 'https://github.com': "
+assert_rc_var 0 "askpass other prompt: exits 0"
+assert_eq "$aout" "" "askpass other prompt: prints nothing"
+unset GIT_CREDENTIAL_HOST GIT_CREDENTIAL_DIR
 
 # ---- summary ----------------------------------------------------------------
 printf '\n# %s passed, %s failed\n' "$PASS" "$FAIL"

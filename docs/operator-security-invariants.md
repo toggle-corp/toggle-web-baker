@@ -109,6 +109,17 @@ Security invariants:
   global credential **only when the normalized repo host matches** the allowlist;
   off-allowlist repos stay anonymous. The **per-App override is exempt** — it is
   the user's own credential for their own repo. Precedent: `registryAllowlist`.
+- **The mounted credential is host-scoped at the askpass layer.** The operator
+  sets `GIT_CREDENTIAL_HOST` to the repo's own host, and askpass only returns the
+  credential when git asks for that exact host. So **submodules or HTTP redirects
+  that point at a *different* host fetch anonymously** rather than receiving the
+  credential. The allowlist gates only the top-level repo; host-scoping contains
+  everything git reaches transitively.
+- **Known limitation — non-GitHub ssh/scp URL rewriting.** Only `github.com`
+  `spec.repo` URLs in ssh/scp form (`git@…`, `ssh://…`) are rewritten to `https://`
+  for the token to apply. For any **other** host, ssh/scp-style URLs are **not**
+  rewritten; with a token credential, `spec.repo` for such hosts **must be written
+  in `https://` form** or the credential will not be used.
 - **Per-App credential copies are readable by namespace users.** Build pods and
   watch CronJobs run in the App namespace and Secrets don't cross namespaces, so
   the operator syncs an owned, labeled, drift-corrected copy of the global Secret

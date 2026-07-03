@@ -60,6 +60,13 @@ fast instead of hanging on a prompt. This is the same mount convention as the
 clone image (`images/clone`) — one feature, two mount points (the clone pod AND
 this watcher).
 
+The credential is **host-scoped** via `GIT_CREDENTIAL_HOST` (a lowercase
+hostname the operator injects at mount time). The helper answers only prompts
+whose URL is for exactly that host; for any other host it prints nothing and the
+poll proceeds anonymously — the operator-global credential never leaves toward
+an unexpected host. Match is on hostname only (port ignored). Unset/empty falls
+back to answering any prompt (manual/back-compat).
+
 Because the only credential form is an https basic-auth token (no SSH key
 support), the ssh→https GitHub URL rewrite is **unconditional**: an SSH GitHub
 `REPO` (`git@github.com:…` or `ssh://git@github.com/…`) is always rewritten to

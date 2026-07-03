@@ -119,7 +119,10 @@ func run(configPath string, reporter *observability.Reporter) error {
 	}
 
 	r := &controller.AppReconciler{
-		Client:            mgr.GetClient(),
+		Client: mgr.GetClient(),
+		// APIReader is the uncached reader for Secret DATA reads: the Secret watch
+		// is metadata-only, so the manager cache holds no Secret data.
+		APIReader:         mgr.GetAPIReader(),
 		Scheme:            mgr.GetScheme(),
 		Config:            cfg,
 		StorageClassName:  mgrOpts.StorageClass,

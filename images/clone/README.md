@@ -23,6 +23,7 @@ pipeline (the first initContainer).
 | `SUBMODULES` | no | `1`/`true` fetches top-level submodules only (one level, like `actions/checkout submodules:true`; not recursive). Default off. |
 | `SRC_DIR` | no | Override target (default `/workspace/src`). |
 | `GIT_CREDENTIAL_DIR` | no | Where the askpass helper reads optional creds (default `/run/git-credential`). |
+| `GIT_CREDENTIAL_HOST` | no | Lowercase hostname the credential is scoped to; the helper answers only prompts for this host (others fetch anonymously). Unset answers any host. |
 
 ## Credentials
 
@@ -36,6 +37,15 @@ and a cleared `credential.helper` prevent any on-disk persistence or interactive
 prompt. With no credential mounted the helper prints nothing and the clone stays
 anonymous. This is the same mount convention as the clock watcher — one feature,
 two mount points (this clone pod AND the commit watcher).
+
+The credential is **host-scoped** via `GIT_CREDENTIAL_HOST` (a lowercase
+hostname the operator injects at mount time). The helper answers only prompts
+whose URL is for exactly that host; for any other host it prints nothing and the
+fetch proceeds anonymously. This closes a `.gitmodules` leak: a submodule
+declared on another host (e.g. `https://evil.example/x.git`, whose content the
+repo committers — not the platform — control) fetches anonymously and never
+receives the operator-global credential. Match is on hostname only (port
+ignored). Unset/empty falls back to answering any prompt (manual/back-compat).
 
 Because the only credential form is an https basic-auth token (no SSH key
 support), the ssh→https GitHub URL rewrite is **unconditional**: an SSH GitHub

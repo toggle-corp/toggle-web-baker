@@ -41,15 +41,16 @@ func RepoHost(repo string) (string, error) {
 		if colon <= 0 {
 			return "", fmt.Errorf("repo URL %q is not a recognized git URL", repo)
 		}
-		hostPart := repo[:colon]
-		if at := strings.LastIndex(hostPart, "@"); at >= 0 {
-			hostPart = hostPart[at+1:]
+		host := repo[:colon]
+		if at := strings.LastIndex(host, "@"); at >= 0 {
+			host = host[at+1:]
 		}
 		// A scp-style path portion must be non-empty; a bare "host:" is malformed.
 		if repo[colon+1:] == "" {
 			return "", fmt.Errorf("repo URL %q is not a recognized git URL", repo)
 		}
-		host := stripPort(hostPart)
+		// host is everything before the FIRST colon, so it structurally cannot
+		// itself contain a ':' — no port to strip (scp-style hosts carry none).
 		if host == "" {
 			return "", fmt.Errorf("repo URL %q has no host", repo)
 		}
@@ -65,15 +66,6 @@ func RepoHost(repo string) (string, error) {
 		return "", fmt.Errorf("repo URL %q has no host", repo)
 	}
 	return strings.ToLower(host), nil
-}
-
-// stripPort removes a trailing ":port" from a bare host (scp-style hosts never
-// carry a port, but strip defensively so "host:22"-style typos don't leak in).
-func stripPort(host string) string {
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		return host[:i]
-	}
-	return host
 }
 
 // RepoHostAllowed reports whether repo's host is on the allowlist, using a

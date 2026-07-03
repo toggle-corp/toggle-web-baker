@@ -100,7 +100,7 @@ func (r *AppReconciler) ensureExists(ctx context.Context, app *bakerv1alpha1.App
 
 // ensureInfra reconciles the always-present children: PVCs, the clock
 // SA/Role/RoleBinding/CronJob, and the build NetworkPolicy.
-func (r *AppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.App) error {
+func (r *AppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.App, gitCred gitCredentialDecision) error {
 	// Three PVCs (cache, dataCache, output) — WaitForFirstConsumer SC; the build
 	// pod is the first consumer of all three (deterministic co-binding).
 	for _, name := range []string{cacheePVCName(app), dataCachePVCName(app), outputPVCName(app)} {
@@ -110,7 +110,7 @@ func (r *AppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.App)
 		}
 	}
 
-	if err := r.ensureTriggers(ctx, app); err != nil {
+	if err := r.ensureTriggers(ctx, app, gitCred); err != nil {
 		return err
 	}
 
@@ -146,7 +146,7 @@ func (r *AppReconciler) deleteOwnedChild(ctx context.Context, app *bakerv1alpha1
 // CronJob keeps DOING things, unlike an inert orphan). The shared RBAC trio
 // (SA/Role/RoleBinding, scoped to patch only this App) and the trigger
 // NetworkPolicy exist while EITHER trigger is enabled and go with the last one.
-func (r *AppReconciler) ensureTriggers(ctx context.Context, app *bakerv1alpha1.App) error {
+func (r *AppReconciler) ensureTriggers(ctx context.Context, app *bakerv1alpha1.App, gitCred gitCredentialDecision) error {
 	scheduledOn := app.Spec.ScheduledBuilds != nil && app.Spec.ScheduledBuilds.Enabled
 	watchOn := app.Spec.WatchCommits != nil && app.Spec.WatchCommits.Enabled
 
@@ -163,7 +163,7 @@ func (r *AppReconciler) ensureTriggers(ctx context.Context, app *bakerv1alpha1.A
 			func() (client.Object, error) { return r.clockCronJob(app), nil },
 			&batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: clockCronJobName(app), Namespace: app.Namespace}}},
 		{watchOn,
-			func() (client.Object, error) { cj, err := r.watchCronJob(app); return cj, err },
+			func() (client.Object, error) { cj, err := r.watchCronJob(app, gitCred); return cj, err },
 			&batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: watchCronJobName(app), Namespace: app.Namespace}}},
 	}
 

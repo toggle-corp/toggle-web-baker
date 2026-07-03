@@ -139,7 +139,7 @@ func TestStartBuild_RecordsCommitSHA(t *testing.T) {
 		bakerv1alpha1.RebuildCommitAnnotation: "cafebabe123",
 	}
 	r, _ := newReconciler(t, app, wffc())
-	if err := r.startBuild(context.Background(), app, "tok-9"); err != nil {
+	if err := r.startBuild(context.Background(), app, "tok-9", gitCredentialDecision{}); err != nil {
 		t.Fatalf("startBuild: %v", err)
 	}
 	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerCommit {
@@ -158,7 +158,7 @@ func TestStartBuild_ManualDoesNotRecordStaleCommit(t *testing.T) {
 		bakerv1alpha1.RebuildCommitAnnotation: "cafebabe123", // stale leftover
 	}
 	r, _ := newReconciler(t, app, wffc())
-	if err := r.startBuild(context.Background(), app, "tok-9"); err != nil {
+	if err := r.startBuild(context.Background(), app, "tok-9", gitCredentialDecision{}); err != nil {
 		t.Fatalf("startBuild: %v", err)
 	}
 	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerManual {

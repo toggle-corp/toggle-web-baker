@@ -60,9 +60,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{/*
 Whether the git-credential feature is enabled: ON iff existingSecret OR password is set.
-Emits "true" when on, "" when off. Enforces the existingSecret/password mutual
-exclusion here so the fail fires from EVERY caller (configmap + secret template),
-even in the render where the secret template would be skipped.
+Emits "true" when on, "" when off. This is the single always-evaluated guard for
+the gitAuth block: every caller (configmap + secret template) includes it, so its
+fails fire from EVERY render — even the one where the secret template is skipped.
+It mirrors the operator's fail-closed LoadConfig: a misconfiguration that would
+CrashLoopBackOff (or silently disable) the operator must fail at template time.
 Usage: if (include "toggle-web-baker.gitAuth.enabled" .)
 */}}
 {{- define "toggle-web-baker.gitAuth.enabled" -}}
@@ -70,7 +72,17 @@ Usage: if (include "toggle-web-baker.gitAuth.enabled" .)
 {{- if and $ga.existingSecret $ga.password -}}
 {{- fail "operator.gitAuth: set EITHER existingSecret (ESO/pre-created Secret) OR username/password (chart creates the Secret), not both — silent precedence would leave a stale sops password shadowing the ESO-owned credential." -}}
 {{- end -}}
-{{- if or $ga.existingSecret $ga.password -}}true{{- end -}}
+{{- if and $ga.username (not $ga.password) -}}
+{{- fail "operator.gitAuth: username set but password empty — the feature would silently render OFF (no Secret, no config block), leaving clone/watch anonymous. Set operator.gitAuth.password too, or clear username to disable the feature." -}}
+{{- end -}}
+{{- if and $ga.password (not $ga.username) -}}
+{{- fail "operator.gitAuth: password set but username empty — the chart would render a basic-auth Secret with an empty username, which the operator rejects at startup (CrashLoopBackOff). Set operator.gitAuth.username too." -}}
+{{- end -}}
+{{- $enabled := or $ga.existingSecret $ga.password -}}
+{{- if and $enabled (not $ga.hosts) -}}
+{{- fail "operator.gitAuth: a credential is set (existingSecret or password) but hosts is empty/null — the operator hard-errors at startup (CrashLoopBackOff). Set operator.gitAuth.hosts (e.g. [\"github.com\"]) to the repo hosts the credential may be injected for." -}}
+{{- end -}}
+{{- if $enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*

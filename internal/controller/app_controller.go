@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -54,6 +55,18 @@ type AppReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	Config OperatorConfig
+
+	// APIReader is an UNCACHED reader (mgr.GetAPIReader) used for all Secret DATA
+	// reads (F4). The Secret watch is registered metadata-only, so the manager
+	// cache holds no Secret data; reads that need the credential VALUES (source
+	// sync, override validation) must bypass the cache. Tests set it to the fake
+	// client. Nil-safe: dataReader() falls back to the cached Client.
+	APIReader client.Reader
+
+	// gitSourceMissing de-storms the fail-static logging (F6): it tracks the
+	// missing↔present transition of the operator-global source Secret so the Error
+	// log + recovery Info fire ONCE per outage, not once per App per reconcile.
+	gitSourceMissing atomic.Bool
 
 	// StorageClassName is the WaitForFirstConsumer SC backing all three PVCs.
 	StorageClassName string
@@ -148,21 +161,28 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return r.fail(ctx, app, bakerv1alpha1.ReasonInvalidSpec, err.Error())
 	}
 
-	// 2d. repoAuth override validation: the referenced Secret must exist with
+	// 2d. Converge the per-app git credential FIRST (before the repoAuth fail
+	// below — F3): sync the operator-global copy, or reclaim a stale copy. This
+	// MUST run before validateRepoAuthSecret's fail(): setting a repoAuth override
+	// (even a broken one) flips the decision to syncCopy=false, so switching from
+	// the global credential to a typo'd override still reclaims the now-orphaned
+	// global copy in the app namespace instead of leaking it while Degraded.
+	// gitCred is the ONE fail-static-adjusted decision (F1) threaded into the
+	// build pod (BuildJob) and the watch CronJob (watchCronJob) so the mount wiring
+	// can never diverge from what was actually synced. Fail-static on a runtime
+	// source deletion/invalidation (design Q9-3): keeps existing copies, never
+	// degrades.
+	gitCred, err := r.reconcileGitCredential(ctx, app)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 2e. repoAuth override validation: the referenced Secret must exist with
 	// non-empty username/password, else Degraded (message names the Secret only).
 	// Short-circuits before any build pod/CronJob so a broken auth config never
 	// spawns a pod that would fail to clone. No-op when spec.repoAuth is absent.
 	if err := r.validateRepoAuthSecret(ctx, app); err != nil {
 		return r.fail(ctx, app, bakerv1alpha1.ReasonInvalidRepoAuth, err.Error())
-	}
-
-	// 2e. Converge the per-app git credential: sync the operator-global copy (or
-	// reclaim a stale copy) so the credential Secret the build pod + watch CronJob
-	// mount is present. The mount wiring re-derives the same decision statelessly
-	// via decideGitCredential. Fail-static on a runtime source deletion (design
-	// Q9-3): keeps existing copies, never degrades.
-	if _, err := r.reconcileGitCredential(ctx, app); err != nil {
-		return ctrl.Result{}, err
 	}
 
 	// 3. Storage threshold ordering (operator-side, mirrors the CEL markers).
@@ -182,7 +202,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// 6. Ensure infra children (PVCs, build args CM, clock RBAC+CronJob,
 	// NetworkPolicies). nginx + Service + Ingress are created ONLY after the
 	// first successful deploy.
-	if err := r.ensureInfra(ctx, app); err != nil {
+	if err := r.ensureInfra(ctx, app, gitCred); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -205,7 +225,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	switch domain.DecideBuild(requested, app.Status.LastProcessedRebuild, active) {
 	case domain.StartBuild:
-		if err := r.startBuild(ctx, app, requested); err != nil {
+		if err := r.startBuild(ctx, app, requested, gitCred); err != nil {
 			return ctrl.Result{}, err
 		}
 		// A build is now in flight this reconcile. Reflect it so cleanup (9c)
@@ -517,8 +537,8 @@ func (r *AppReconciler) buildActive(ctx context.Context, app *bakerv1alpha1.App)
 
 // startBuild records the token into status.lastProcessedRebuild and creates ONE
 // build Job (single source of truth pod). It also GCs a prior failed build pod.
-func (r *AppReconciler) startBuild(ctx context.Context, app *bakerv1alpha1.App, token string) error {
-	job := r.BuildJob(app, token)
+func (r *AppReconciler) startBuild(ctx context.Context, app *bakerv1alpha1.App, token string, gitCred gitCredentialDecision) error {
+	job := r.BuildJob(app, token, gitCred)
 	if err := controllerutil.SetControllerReference(app, job, r.Scheme); err != nil {
 		return err
 	}
@@ -902,6 +922,13 @@ func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// repoAuth (or a synced-copy child) drift-corrects that App and recovers a
 		// previously-Degraded broken override. mapSecretToApps filters; unrelated
 		// Secret churn maps to nothing.
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapSecretToApps)).
+		//
+		// F4: register the watch METADATA-ONLY (builder.OnlyMetadata). A typed
+		// Secret watch would cache EVERY cluster Secret's full data (helm release
+		// blobs, TLS keys, unrelated app secrets) in the manager cache — a large,
+		// needless memory + confidentiality footprint. Metadata-only caches just
+		// object metadata; mapSecretToApps keys off name/namespace only, and all
+		// actual credential-DATA reads go through the uncached APIReader (dataReader).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapSecretToApps), builder.OnlyMetadata).
 		Complete(r)
 }

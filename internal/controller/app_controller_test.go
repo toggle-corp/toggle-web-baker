@@ -155,7 +155,10 @@ func newReconcilerWithFuncs(t *testing.T, funcs interceptor.Funcs, objs ...clien
 		WithInterceptorFuncs(funcs).
 		Build()
 	r := &AppReconciler{
-		Client:           cl,
+		Client: cl,
+		// APIReader points at the same fake client: production uses the uncached
+		// reader for Secret DATA reads (the Secret watch is metadata-only).
+		APIReader:        cl,
 		Scheme:           s,
 		StorageClassName: "local-path",
 		TraefikNamespace: "traefik",
@@ -565,7 +568,7 @@ func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 	}
 	r, _ := newReconciler(t, app, wffc())
 
-	if err := r.startBuild(context.Background(), app, "tok-1"); err != nil {
+	if err := r.startBuild(context.Background(), app, "tok-1", gitCredentialDecision{}); err != nil {
 		t.Fatalf("startBuild: %v", err)
 	}
 	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerManual {
@@ -604,11 +607,11 @@ func TestStartBuild_RecordsResolvedImages(t *testing.T) {
 	app := baseApp()
 	r, _ := newReconciler(t, app, wffc())
 
-	if err := r.startBuild(context.Background(), app, "tok-1"); err != nil {
+	if err := r.startBuild(context.Background(), app, "tok-1", gitCredentialDecision{}); err != nil {
 		t.Fatalf("startBuild: %v", err)
 	}
 
-	job := r.BuildJob(app, "tok-1")
+	job := r.BuildJob(app, "tok-1", gitCredentialDecision{})
 	wantContainers := append(
 		append([]corev1.Container{}, job.Spec.Template.Spec.InitContainers...),
 		job.Spec.Template.Spec.Containers...,
@@ -647,7 +650,7 @@ func TestStartBuild_ScheduledPreservesLastManualTrigger(t *testing.T) {
 	app.Status.LastManualTrigger = bakerv1alpha1.ManualTrigger{TriggeredBy: "earlier-user"}
 	r, _ := newReconciler(t, app, wffc())
 
-	if err := r.startBuild(context.Background(), app, "tok-2"); err != nil {
+	if err := r.startBuild(context.Background(), app, "tok-2", gitCredentialDecision{}); err != nil {
 		t.Fatalf("startBuild: %v", err)
 	}
 	if app.Status.Build.Trigger != bakerv1alpha1.BuildTriggerScheduled {

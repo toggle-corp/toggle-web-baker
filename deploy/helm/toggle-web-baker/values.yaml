@@ -94,6 +94,10 @@ operator:
     # spec.repo's host matches (all URL forms — https/scp/ssh — normalized in
     # the operator). A user-controlled spec.repo pointing off-allowlist stays
     # anonymous, so the token can't be harvested by `repo: https://evil.com/…`.
+    # NOTE: only github.com ssh/scp URLs are rewritten to https:// — for any
+    # OTHER host added here, spec.repo must be written in https:// form or the
+    # token credential won't be applied. Must be non-empty whenever the feature
+    # is enabled (existingSecret or password); empty/null is a template-time fail.
     hosts: ["github.com"]
 
     # Path A (recommended, ESO / external-secrets): reference a Secret you (or
@@ -108,7 +112,11 @@ operator:
     # existingSecret and password are MUTUALLY EXCLUSIVE — setting both is a
     # template-time `fail`. Silent precedence would let a stale sops password
     # linger while ESO owns the real credential; failing loudly forces the
-    # operator to pick one owner.
+    # operator to pick one owner. username and password must BOTH be set or BOTH
+    # empty: username-only is a fail (feature would silently render OFF, staying
+    # anonymous) and password-only is a fail (empty-username Secret the operator
+    # rejects at startup → CrashLoopBackOff). All mirror the operator's
+    # fail-closed LoadConfig.
     username: ""
     password: ""
 

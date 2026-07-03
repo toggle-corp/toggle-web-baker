@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
@@ -19,12 +20,11 @@ func enableGitAuth(r *AppReconciler) {
 	r.Config.GitAuth = GitAuth{SecretName: "baker-git-credential", Hosts: []string{"github.com"}}
 }
 
+// sourceGitSecret is the operator-global source Secret fixture, built on the
+// shared gitAuthSecret fixture (F8 dedup) at the enableGitAuth ns/name.
 func sourceGitSecret() *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "baker-system", Name: "baker-git-credential"},
-		Type:       corev1.SecretTypeBasicAuth,
-		Data:       map[string][]byte{"username": []byte("bot"), "password": []byte("tok-secret")},
-	}
+	return gitAuthSecret("baker-system", "baker-git-credential",
+		map[string][]byte{"username": []byte("bot"), "password": []byte("tok-secret")})
 }
 
 func getSecret(t *testing.T, r *AppReconciler, name, ns string) (*corev1.Secret, bool) {
@@ -202,5 +202,162 @@ func TestGitCred_SourceDeletedAtRuntime_FailStatic(t *testing.T) {
 	}
 	if string(copyAfter.Data["password"]) != string(copyBefore.Data["password"]) {
 		t.Fatal("synced copy must not be blanked on source deletion")
+	}
+}
+
+// F1 regression: gitAuth enabled + source Secret deleted + NO existing copy
+// (brand-new App). Reconcile must decide anonymous (fail-static, no copy to
+// preserve), and BOTH the build pod AND the watch CronJob rendered from that ONE
+// threaded decision must carry NO credential volume — not the naive
+// decideGitCredential result (which would mount a nonexistent <app>-git-credential
+// and wedge the pods in ContainerCreating forever).
+func TestGitCred_SourceMissingNoCopy_MountWiringAnonymous(t *testing.T) {
+	app := baseApp()
+	app.Spec.Repo = "https://github.com/org/repo.git"
+	app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true}
+	// gitAuth enabled + host allowlisted, but the source Secret is ABSENT and no
+	// prior copy exists.
+	r, _ := newReconciler(t, app, wffc())
+	enableGitAuth(r)
+
+	gitCred, err := r.reconcileGitCredential(context.Background(), app)
+	if err != nil {
+		t.Fatalf("reconcileGitCredential must not error (fail-static): %v", err)
+	}
+	if gitCred.mounts() || gitCred.syncCopy {
+		t.Fatalf("no source + no copy must resolve to anonymous, got %+v", gitCred)
+	}
+
+	// Build pod: no credential volume.
+	job := r.BuildJob(app, "tok", gitCred)
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == volGitCred {
+			t.Fatal("build pod must NOT mount a credential when source is absent and no copy exists")
+		}
+	}
+	// Watch CronJob: no credential volume.
+	cj, err := r.watchCronJob(app, gitCred)
+	if err != nil {
+		t.Fatalf("watchCronJob: %v", err)
+	}
+	for _, v := range cj.Spec.JobTemplate.Spec.Template.Spec.Volumes {
+		if v.Name == volGitCred {
+			t.Fatal("watch CronJob must NOT mount a credential when source is absent and no copy exists")
+		}
+	}
+}
+
+// F2 regression: rotating the source Secret to INVALID keys (empty password) is
+// treated identically to a missing source (fail-static): the existing synced
+// copy is left UNCHANGED — no garbage propagated.
+func TestGitCred_SourceRotatedToBadKeys_CopyUnchanged(t *testing.T) {
+	app := baseApp()
+	app.Spec.Repo = "https://github.com/org/repo.git"
+	r, cl := newReconciler(t, app, wffc(), sourceGitSecret())
+	enableGitAuth(r)
+	reconcile(t, r, app)
+	before, ok := getSecret(t, r, gitCredentialSecretName(app), app.Namespace)
+	if !ok {
+		t.Fatal("precondition: synced copy should exist")
+	}
+
+	// Rotate the source to an invalid (empty-password) state.
+	src, _ := getSecret(t, r, "baker-git-credential", "baker-system")
+	src.Data["password"] = []byte("")
+	if err := cl.Update(context.Background(), src); err != nil {
+		t.Fatal(err)
+	}
+	reconcile(t, r, app)
+
+	after, ok := getSecret(t, r, gitCredentialSecretName(app), app.Namespace)
+	if !ok {
+		t.Fatal("synced copy must survive a bad-keys rotation (fail-static)")
+	}
+	if string(after.Data["username"]) != string(before.Data["username"]) ||
+		string(after.Data["password"]) != string(before.Data["password"]) {
+		t.Fatalf("synced copy must not change on a bad-keys rotation: before=%v after=%v", before.Data, after.Data)
+	}
+}
+
+// F3 regression: switching from the global credential to a TYPO'd override must
+// reclaim the now-orphaned global copy in the app namespace — the copy sweep runs
+// BEFORE the repoAuth fail(). Previously the broken-override Degraded
+// short-circuit ran first and leaked the global copy indefinitely.
+func TestGitCred_SwitchGlobalToBrokenOverride_ReclaimsCopy(t *testing.T) {
+	app := baseApp()
+	app.Spec.Repo = "https://github.com/org/repo.git"
+	r, cl := newReconciler(t, app, wffc(), sourceGitSecret())
+	enableGitAuth(r)
+	reconcile(t, r, app)
+	if _, ok := getSecret(t, r, gitCredentialSecretName(app), app.Namespace); !ok {
+		t.Fatal("precondition: global synced copy should exist")
+	}
+
+	// Add a repoAuth override pointing at a MISSING Secret (a typo).
+	live := getApp(t, cl, app.Name, app.Namespace)
+	live.Spec.RepoAuth = &bakerv1alpha1.RepoAuthConfig{SecretRef: bakerv1alpha1.RepoAuthSecretRef{Name: "typo-cred"}}
+	if err := cl.Update(context.Background(), live); err != nil {
+		t.Fatal(err)
+	}
+	// Reconcile: the app degrades on the broken override, but the sweep (which runs
+	// first) must already have reclaimed the orphaned global copy.
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	got := getApp(t, cl, app.Name, app.Namespace)
+	if got.Status.Phase != bakerv1alpha1.PhaseDegraded {
+		t.Fatalf("phase = %s, want Degraded (broken override)", got.Status.Phase)
+	}
+	if _, ok := getSecret(t, r, gitCredentialSecretName(app), app.Namespace); ok {
+		t.Fatal("orphaned global copy must be reclaimed even when the new override is broken")
+	}
+}
+
+// F5: the synced copy carries a content-hash annotation, and a reconcile with an
+// unchanged source does NOT bump the copy's resourceVersion (no-op SSA skip).
+func TestGitCred_UnchangedSource_SkipsNoopPatch(t *testing.T) {
+	app := baseApp()
+	app.Spec.Repo = "https://github.com/org/repo.git"
+	r, _ := newReconciler(t, app, wffc(), sourceGitSecret())
+	enableGitAuth(r)
+	reconcile(t, r, app)
+	first, ok := getSecret(t, r, gitCredentialSecretName(app), app.Namespace)
+	if !ok {
+		t.Fatal("precondition: synced copy should exist")
+	}
+	if first.Annotations[gitCredHashAnnotation] == "" {
+		t.Fatal("synced copy must carry the content-hash annotation (F5)")
+	}
+	rv := first.ResourceVersion
+
+	// A second reconcile with the SAME source must not rewrite the copy.
+	reconcile(t, r, app)
+	second, _ := getSecret(t, r, gitCredentialSecretName(app), app.Namespace)
+	if second.ResourceVersion != rv {
+		t.Fatalf("unchanged source must skip the SSA patch: rv %s -> %s", rv, second.ResourceVersion)
+	}
+}
+
+// F6: the fail-static source-missing Warning Event fires ONCE per outage
+// (missing→present transition), not once per reconcile — no Event storm.
+func TestGitCred_SourceMissing_EventFiresOncePerOutage(t *testing.T) {
+	app := baseApp()
+	app.Spec.Repo = "https://github.com/org/repo.git"
+	r, _ := newReconciler(t, app, wffc(), sourceGitSecret())
+	enableGitAuth(r)
+	rec := record.NewFakeRecorder(16)
+	r.Recorder = rec
+	reconcile(t, r, app) // creates the copy; source present ⇒ no Event
+
+	// Delete the source, then reconcile several times.
+	src := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "baker-system", Name: "baker-git-credential"}}
+	if err := r.Delete(context.Background(), src); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		reconcile(t, r, app)
+	}
+	if got := len(rec.Events); got != 1 {
+		t.Fatalf("source-missing Event must fire once per outage, got %d events", got)
 	}
 }

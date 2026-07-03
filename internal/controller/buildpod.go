@@ -230,7 +230,7 @@ func pkgManagerEnv(app *bakerv1alpha1.App) []corev1.EnvVar {
 // The build container NEVER mounts the output PVC; secrets go ONLY to fetch.
 // User phases (setup/fetch/build) are wrapped by the peak-memory shim; clone
 // and copier are platform entrypoints and stay unwrapped.
-func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string) *batchv1.Job {
+func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred gitCredentialDecision) *batchv1.Job {
 	volumes, cacheMount := buildVolumesAndMounts(app)
 	base := commonMounts()
 	pmEnv := pkgManagerEnv(app)
@@ -280,21 +280,14 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string) *batchv1.
 	// (BYO image without runAsUser) clone keeps its image default (nil == no
 	// override). This deliberately drops the older "checkout is read-only input
 	// to the toolchain" posture in favour of supporting in-tree codegen.
-	// Git credential (design Q3/Q4/Q6): mount the effective credential Secret
-	// read-only into clone so its GIT_ASKPASS helper can authenticate the fetch of
-	// the user-controlled spec.repo. Anonymous (empty decision) adds nothing.
-	cloneMounts := base
-	gitCred := decideGitCredential(app, r.Config.GitAuth)
-	if gitCred.mount {
-		cloneEnv = append(cloneEnv, gitCredentialEnv())
-		cloneMounts = append(append([]corev1.VolumeMount{}, base...), gitCredentialMount())
-		volumes = append(volumes, gitCredentialVolume(gitCred.secretName))
-	}
+	// Git credential (design Q3/Q4/Q6/Q7): the effective credential is mounted
+	// into clone AFTER the podSpec is assembled, via the shared addGitCredential
+	// helper (host-scoped) — see below. Anonymous (empty decision) adds nothing.
 	clone := corev1.Container{
 		Name:            "clone",
 		Image:           r.Config.Images.Clone,
 		Env:             cloneEnv,
-		VolumeMounts:    cloneMounts,
+		VolumeMounts:    base,
 		SecurityContext: resolvedSecurityContext(buildR),
 	}
 
@@ -386,6 +379,16 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string) *batchv1.
 	}
 	if r.Config.ImagePullSecret != "" {
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: r.Config.ImagePullSecret}}
+	}
+
+	// Git credential (design Q3/Q4/Q6/Q7): wire the threaded decision into the
+	// clone initContainer via the shared helper. Host-scoped to the repo's own
+	// host (GIT_CREDENTIAL_HOST) so a submodule/redirect to another host can't
+	// harvest the token. host="" (unparseable override repo) fails closed inside
+	// addGitCredential (anonymous). Anonymous decision (no secret) adds nothing.
+	if gitCred.mounts() {
+		host, _ := domain.RepoHost(app.Spec.Repo)
+		addGitCredential(&podSpec, "clone", gitCred.secretName, host)
 	}
 
 	return &batchv1.Job{

@@ -15,7 +15,7 @@ func TestGitCredentialDecision_OverrideWins(t *testing.T) {
 	cfg := GitAuth{SecretName: "baker-git-credential", Hosts: []string{"github.com"}}
 
 	d := decideGitCredential(app, cfg)
-	if !d.mount {
+	if !d.mounts() {
 		t.Fatal("override must mount")
 	}
 	if d.syncCopy {
@@ -34,7 +34,7 @@ func TestGitCredentialDecision_GlobalAllowlisted_SyncsCopy(t *testing.T) {
 	cfg := GitAuth{SecretName: "baker-git-credential", Hosts: []string{"github.com"}}
 
 	d := decideGitCredential(app, cfg)
-	if !d.mount || !d.syncCopy {
+	if !d.mounts() || !d.syncCopy {
 		t.Fatalf("allowlisted global must mount+sync, got %+v", d)
 	}
 	if d.secretName != gitCredentialSecretName(app) {
@@ -49,7 +49,7 @@ func TestGitCredentialDecision_GlobalNotAllowlisted_Anonymous(t *testing.T) {
 	cfg := GitAuth{SecretName: "baker-git-credential", Hosts: []string{"github.com"}}
 
 	d := decideGitCredential(app, cfg)
-	if d.mount || d.syncCopy {
+	if d.mounts() || d.syncCopy {
 		t.Fatalf("non-allowlisted host must be anonymous, got %+v", d)
 	}
 }
@@ -59,7 +59,7 @@ func TestGitCredentialDecision_DisabledNoOverride_Anonymous(t *testing.T) {
 	app := baseApp()
 	app.Spec.Repo = "https://github.com/org/repo.git"
 	d := decideGitCredential(app, GitAuth{})
-	if d.mount || d.syncCopy {
+	if d.mounts() || d.syncCopy {
 		t.Fatalf("disabled + no override must be anonymous, got %+v", d)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -36,7 +35,7 @@ func TestGitCredInformer_SourceSecretChange_EnqueuesAllApps(t *testing.T) {
 	r, _ := newReconciler(t, a1, a2)
 	enableGitAuth(r)
 
-	src := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "baker-system", Name: "baker-git-credential"}}
+	src := gitAuthSecret("baker-system", "baker-git-credential", nil)
 	got := reqSet(r.mapSecretToApps(context.Background(), src))
 	if !got["apps/one"] || !got["other/two"] {
 		t.Fatalf("source-secret change must enqueue all apps, got %v", got)
@@ -51,7 +50,7 @@ func TestGitCredInformer_RepoAuthSecretChange_EnqueuesReferencingApp(t *testing.
 	r, _ := newReconciler(t, a1, a2)
 	enableGitAuth(r)
 
-	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "user-cred"}}
+	sec := gitAuthSecret("apps", "user-cred", nil)
 	got := reqSet(r.mapSecretToApps(context.Background(), sec))
 	if !got["apps/one"] {
 		t.Fatalf("repoAuth-referenced secret change must enqueue the referencing app, got %v", got)
@@ -68,7 +67,7 @@ func TestGitCredInformer_SyncedCopyChange_EnqueuesOwningApp(t *testing.T) {
 	enableGitAuth(r)
 
 	// Synced-copy Secret follows the <app>-git-credential naming in the app ns.
-	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: gitCredentialSecretName(a1)}}
+	sec := gitAuthSecret("apps", gitCredentialSecretName(a1), nil)
 	got := reqSet(r.mapSecretToApps(context.Background(), sec))
 	if !got["apps/one"] {
 		t.Fatalf("synced-copy change must enqueue owning app, got %v", got)
@@ -81,7 +80,7 @@ func TestGitCredInformer_UnrelatedSecret_EnqueuesNothing(t *testing.T) {
 	r, _ := newReconciler(t, a1)
 	enableGitAuth(r)
 
-	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "random-tls"}}
+	sec := gitAuthSecret("apps", "random-tls", nil)
 	if got := r.mapSecretToApps(context.Background(), sec); len(got) != 0 {
 		t.Fatalf("unrelated secret must enqueue nothing, got %v", got)
 	}

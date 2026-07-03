@@ -54,7 +54,7 @@ func mountByName(ms []corev1.VolumeMount, name string) *corev1.VolumeMount {
 func TestBuildJob_BuildNeverMountsOutput(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	if build == nil {
 		t.Fatal("no build container")
@@ -78,7 +78,7 @@ func TestBuildJob_SecretsOnlyInFetch(t *testing.T) {
 		},
 	}}
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 
 	for _, c := range job.Spec.Template.Spec.InitContainers {
 		for _, e := range c.Env {
@@ -105,7 +105,7 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 
 	yarn := baseApp()
 	yarn.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerYarn
-	yjob := r.BuildJob(yarn, "t")
+	yjob := r.BuildJob(yarn, "t", gitCredentialDecision{})
 	ybuild := containerByName(yjob.Spec.Template.Spec.InitContainers, "build")
 	if !hasEnv(ybuild.Env, "YARN_CACHE_FOLDER") {
 		t.Fatalf("yarn build must set YARN_CACHE_FOLDER")
@@ -113,7 +113,7 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 
 	pnpm := baseApp()
 	pnpm.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
-	pjob := r.BuildJob(pnpm, "t")
+	pjob := r.BuildJob(pnpm, "t", gitCredentialDecision{})
 	pbuild := containerByName(pjob.Spec.Template.Spec.InitContainers, "build")
 	if !hasEnv(pbuild.Env, "npm_config_store_dir") || !hasEnv(pbuild.Env, "npm_config_modules_dir") {
 		t.Fatalf("pnpm build must set npm_config_store_dir and npm_config_modules_dir (store+node_modules on cache PVC)")
@@ -149,7 +149,7 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 func TestBuildJob_HardenedSecurity(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	if *job.Spec.BackoffLimit != 0 {
 		t.Fatalf("backoffLimit must be 0")
 	}
@@ -180,7 +180,7 @@ func TestBuildJob_RunAsUserPinnedPerPhase(t *testing.T) {
 	app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
 	app.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(3434))
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	if build.SecurityContext.RunAsUser == nil || *build.SecurityContext.RunAsUser != 3434 {
@@ -210,7 +210,7 @@ func TestBuildJob_CloneRunsAsBuildUID(t *testing.T) {
 		r.Config.NodeImages = map[string]domain.NodeImage{
 			"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
 		}
-		clone := containerByName(r.BuildJob(app, "tok").Spec.Template.Spec.InitContainers, "clone")
+		clone := containerByName(r.BuildJob(app, "tok", gitCredentialDecision{}).Spec.Template.Spec.InitContainers, "clone")
 		if clone.SecurityContext.RunAsUser == nil || *clone.SecurityContext.RunAsUser != 1000 {
 			t.Fatalf("clone runAsUser = %v, want 1000 (build UID)", clone.SecurityContext.RunAsUser)
 		}
@@ -224,7 +224,7 @@ func TestBuildJob_CloneRunsAsBuildUID(t *testing.T) {
 		app := baseApp()
 		app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
 		app.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(3434))
-		clone := containerByName(reconcilerForPod().BuildJob(app, "tok").Spec.Template.Spec.InitContainers, "clone")
+		clone := containerByName(reconcilerForPod().BuildJob(app, "tok", gitCredentialDecision{}).Spec.Template.Spec.InitContainers, "clone")
 		if clone.SecurityContext.RunAsUser == nil || *clone.SecurityContext.RunAsUser != 3434 {
 			t.Fatalf("clone runAsUser = %v, want 3434 (BYO build UID)", clone.SecurityContext.RunAsUser)
 		}
@@ -234,7 +234,7 @@ func TestBuildJob_CloneRunsAsBuildUID(t *testing.T) {
 	t.Run("byo build no runAsUser", func(t *testing.T) {
 		app := baseApp()
 		app.Spec.Pipeline.Phases.Build.Image = "docker.io/cimg/node:18.20"
-		clone := containerByName(reconcilerForPod().BuildJob(app, "tok").Spec.Template.Spec.InitContainers, "clone")
+		clone := containerByName(reconcilerForPod().BuildJob(app, "tok", gitCredentialDecision{}).Spec.Template.Spec.InitContainers, "clone")
 		if clone.SecurityContext.RunAsUser != nil {
 			t.Fatalf("clone runAsUser = %v, want nil (image default)", *clone.SecurityContext.RunAsUser)
 		}
@@ -269,7 +269,7 @@ func TestBuildJob_NodeVersionResolvesManagedImageUIDAndHome(t *testing.T) {
 	r.Config.NodeImages = map[string]domain.NodeImage{
 		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
 	}
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 
 	for _, name := range []string{"setup", "fetch", "build"} {
 		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
@@ -299,7 +299,7 @@ func TestBuildJob_PhaseImageOverrideOptsOutOfManaged(t *testing.T) {
 	r.Config.NodeImages = map[string]domain.NodeImage{
 		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
 	}
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 
 	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
 	if fetch.Image != "docker.io/library/python:3.12" {
@@ -325,7 +325,7 @@ func TestBuildJob_MalformedMemoryLimitFallsBackToPhaseDefault(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.MemoryLimit = "this-is-not-a-quantity"
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	if build == nil {
 		t.Fatal("no build container")
@@ -351,7 +351,7 @@ func TestBuildJob_MalformedMemoryLimitFallsBackToPhaseDefault(t *testing.T) {
 func TestBuildJob_AllPhasesCarryResourceRequirements(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	prd := r.Config.PhaseResourceDefaults
 	perPhaseMem := map[string]resource.Quantity{
 		"setup": prd.MemorySetup,
@@ -389,7 +389,7 @@ func TestBuildJob_UserMemoryLimitOverridesDefault(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.MemoryLimit = "8Gi"
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	want := resource.MustParse("8Gi")
 	lim := build.Resources.Limits[corev1.ResourceMemory]
@@ -408,14 +408,14 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	r := reconcilerForPod()
 
 	def := baseApp()
-	dj := r.BuildJob(def, "tok")
+	dj := r.BuildJob(def, "tok", gitCredentialDecision{})
 	if dj.Spec.ActiveDeadlineSeconds == nil || *dj.Spec.ActiveDeadlineSeconds != r.Config.ActiveDeadlineSeconds {
 		t.Fatalf("unset spec deadline must use operator default %d, got %v", r.Config.ActiveDeadlineSeconds, dj.Spec.ActiveDeadlineSeconds)
 	}
 
 	custom := baseApp()
 	custom.Spec.Pipeline.Timeout = &metav1.Duration{Duration: 42 * time.Second}
-	cj := r.BuildJob(custom, "tok")
+	cj := r.BuildJob(custom, "tok", gitCredentialDecision{})
 	if cj.Spec.ActiveDeadlineSeconds == nil || *cj.Spec.ActiveDeadlineSeconds != 42 {
 		t.Fatalf("spec deadline 42 must win, got %v", cj.Spec.ActiveDeadlineSeconds)
 	}
@@ -423,7 +423,7 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	// A duration string like "1h30m" must map to whole seconds.
 	dur := baseApp()
 	dur.Spec.Pipeline.Timeout = &metav1.Duration{Duration: time.Hour + 30*time.Minute}
-	durJob := r.BuildJob(dur, "tok")
+	durJob := r.BuildJob(dur, "tok", gitCredentialDecision{})
 	if durJob.Spec.ActiveDeadlineSeconds == nil || *durJob.Spec.ActiveDeadlineSeconds != 5400 {
 		t.Fatalf("timeout 1h30m must map to 5400s, got %v", durJob.Spec.ActiveDeadlineSeconds)
 	}
@@ -434,7 +434,7 @@ func TestBuildJob_ActiveDeadlineFromSpecElseOperatorDefault(t *testing.T) {
 	for _, bad := range []time.Duration{500 * time.Millisecond, -time.Hour} {
 		np := baseApp()
 		np.Spec.Pipeline.Timeout = &metav1.Duration{Duration: bad}
-		npJob := r.BuildJob(np, "tok")
+		npJob := r.BuildJob(np, "tok", gitCredentialDecision{})
 		if npJob.Spec.ActiveDeadlineSeconds == nil || *npJob.Spec.ActiveDeadlineSeconds != r.Config.ActiveDeadlineSeconds {
 			t.Fatalf("timeout %v must fall back to operator default %d, got %v", bad, r.Config.ActiveDeadlineSeconds, npJob.Spec.ActiveDeadlineSeconds)
 		}
@@ -498,7 +498,7 @@ func assertEnvVar(t *testing.T, c *corev1.Container, name, want string) {
 func TestBuildJob_CloneUsesEnvNotArgs(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")
 	if clone == nil {
 		t.Fatal("no clone container")
@@ -516,7 +516,7 @@ func TestBuildJob_CopierUsesEnvNotArgs(t *testing.T) {
 	app := baseApp()
 	app.Spec.KeepReleases = 5
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
 	if copier == nil {
 		t.Fatal("no copier container")
@@ -541,7 +541,7 @@ func TestBuildJob_BuildEnvReachesBuildContainer(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.Env = []bakerv1alpha1.EnvVar{{Name: "NEXT_PUBLIC_API", Value: "https://api"}}
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	if build == nil {
 		t.Fatal("no build container")
@@ -554,7 +554,7 @@ func TestBuildJob_BuildOutputDirFlowsToCopier(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.OutputDir = "out"
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
 	if copier == nil {
 		t.Fatal("no copier container")
@@ -574,7 +574,7 @@ func shimmed(cmd ...string) []string {
 func TestBuildJob_OptionalPhasesNoOpWhenUnset(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	for _, name := range []string{"setup", "fetch"} {
 		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
 		if c == nil {
@@ -593,7 +593,7 @@ func TestBuildJob_OptionalPhasesPreserveCommand(t *testing.T) {
 	app.Spec.Pipeline.Phases.Setup.Command = []string{"sh", "-c", "yarn install"}
 	app.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "fetch-data"}
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
 	if !slices.Equal(setup.Command, shimmed(app.Spec.Pipeline.Phases.Setup.Command...)) {
 		t.Fatalf("setup command not preserved behind the shim: got %v", setup.Command)
@@ -610,7 +610,7 @@ func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Build.Command = []string{"sh", "-c", "yarn build"}
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
 	if !slices.Equal(build.Command, shimmed(app.Spec.Pipeline.Phases.Build.Command...)) {
 		t.Fatalf("build command must be the shimmed spec build command, got %v", build.Command)
@@ -625,7 +625,7 @@ func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 func TestBuildJob_ShimInstallFirstAndMountsReadOnly(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	inits := job.Spec.Template.Spec.InitContainers
 	if len(inits) == 0 || inits[0].Name != "shim-install" {
 		names := make([]string, 0, len(inits))
@@ -668,7 +668,7 @@ func TestBuildJob_SubmodulesEnvWhenEnabled(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Submodules = true
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")
 	if clone == nil {
 		t.Fatal("no clone container")
@@ -681,7 +681,7 @@ func TestBuildJob_SubmodulesEnvWhenEnabled(t *testing.T) {
 func TestBuildJob_NoSubmodulesEnvByDefault(t *testing.T) {
 	app := baseApp()
 	r := reconcilerForPod()
-	job := r.BuildJob(app, "tok")
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	clone := containerByName(job.Spec.Template.Spec.InitContainers, "clone")
 	if clone == nil {
 		t.Fatal("no clone container")

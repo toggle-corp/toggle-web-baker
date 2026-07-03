@@ -38,10 +38,10 @@ func ValidateGitAuthSecret(ctx context.Context, c client.Reader, namespace strin
 	if err := c.Get(ctx, key, &secret); err != nil {
 		return fmt.Errorf("gitAuth secret %q in namespace %q: %w", ga.SecretName, namespace, err)
 	}
-	for _, k := range []string{gitAuthUsernameKey, gitAuthPasswordKey} {
-		if len(secret.Data[k]) == 0 {
-			return fmt.Errorf("gitAuth secret %q in namespace %q is missing a non-empty %q key", ga.SecretName, namespace, k)
-		}
+	// Shared data check (F2): same non-empty username+password rule as the
+	// override validation and the sync path. The wrapped error is value-free.
+	if err := checkGitCredentialData(secret.Data); err != nil {
+		return fmt.Errorf("gitAuth secret %q in namespace %q is %w", ga.SecretName, namespace, err)
 	}
 	return nil
 }

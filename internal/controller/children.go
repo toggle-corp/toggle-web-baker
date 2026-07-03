@@ -90,7 +90,7 @@ func (r *AppReconciler) clockCronJob(app *bakerv1alpha1.App) *batchv1.CronJob {
 // the commit annotation — only when the SHA changed since the last poll. It
 // shares the clock's image, ServiceAccount, and scoped RBAC. Rendered only when
 // spec.watchCommits is enabled.
-func (r *AppReconciler) watchCronJob(app *bakerv1alpha1.App) (*batchv1.CronJob, error) {
+func (r *AppReconciler) watchCronJob(app *bakerv1alpha1.App, gitCred gitCredentialDecision) (*batchv1.CronJob, error) {
 	interval := app.Spec.WatchCommits.Interval
 	if interval == "" {
 		interval = r.Config.DefaultWatchInterval
@@ -109,28 +109,18 @@ func (r *AppReconciler) watchCronJob(app *bakerv1alpha1.App) (*batchv1.CronJob, 
 		{Name: "REF", Value: ref},
 		{Name: "LAST_SEEN_ANNOTATION", Value: bakerv1alpha1.WatchLastSeenAnnotation},
 	}
-	// Git credential (design Q3/Q4/Q6): the watcher runs `git ls-remote` against
-	// the user-controlled spec.repo, so it authenticates with the SAME effective
-	// credential as the clone phase. Only the WATCH CronJob mounts it — the clock
-	// (scheduled-builds) CronJob never touches the repo, so it stays credential-free.
-	gitCred := decideGitCredential(app, r.Config.GitAuth)
-	if gitCred.mount {
-		watchEnv = append(watchEnv, gitCredentialEnv())
-	}
 	cj := r.triggerCronJob(app, watchCronJobName(app), schedule, watchEnv)
-	if gitCred.mount {
-		mountGitCredential(&cj.Spec.JobTemplate.Spec.Template.Spec, gitCred.secretName)
+	// Git credential (design Q3/Q4/Q6/Q7): the watcher runs `git ls-remote`
+	// against the user-controlled spec.repo, so it authenticates with the SAME
+	// threaded decision as the clone phase (F1 — never re-derived). Only the WATCH
+	// CronJob mounts it — the clock (scheduled-builds) CronJob never touches the
+	// repo, so it stays credential-free. Wired via the shared addGitCredential
+	// helper, host-scoped (GIT_CREDENTIAL_HOST); host="" fails closed (anonymous).
+	if gitCred.mounts() {
+		host, _ := domain.RepoHost(app.Spec.Repo)
+		addGitCredential(&cj.Spec.JobTemplate.Spec.Template.Spec, "clock", gitCred.secretName, host)
 	}
 	return cj, nil
-}
-
-// mountGitCredential adds the read-only credential Secret volume + mount to the
-// (single-container) trigger pod so its git-askpass helper finds the credential.
-func mountGitCredential(pod *corev1.PodSpec, secretName string) {
-	pod.Volumes = append(pod.Volumes, gitCredentialVolume(secretName))
-	for i := range pod.Containers {
-		pod.Containers[i].VolumeMounts = append(pod.Containers[i].VolumeMounts, gitCredentialMount())
-	}
 }
 
 // triggerCronJob renders one trigger CronJob (clock tick or commit watcher):
