@@ -87,6 +87,11 @@ func install(dest string) error {
 // best-effort by design: any failure to read the peak or write the log must
 // NEVER change the phase's outcome, so errors go to stderr only.
 func wrap(argv []string) int {
+	// Echo the command to STDOUT so it reads as part of the build output, like
+	// `set -x`. Deliberately no `shim:` prefix (that prefix is reserved for shim
+	// diagnostics on stderr); this belongs to the phase's own log stream.
+	fmt.Printf("+ %s\n", quoteArgv(argv))
+
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // argv is the operator-supplied phase command
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
@@ -118,6 +123,40 @@ loop:
 
 	reportPeak()
 	return exitCode(cmd, waitErr)
+}
+
+// quoteArgv renders argv as a single shell-safe command line, space-joined,
+// so it can be printed verbatim and pasted back into a POSIX shell.
+func quoteArgv(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = quoteArg(a)
+	}
+	return strings.Join(quoted, " ")
+}
+
+// quoteArg applies POSIX single-quote quoting to one argument. Words made only
+// of shell-safe characters stay bare; anything else is wrapped in single quotes
+// with embedded single quotes escaped via the standard '\'' idiom (close quote,
+// escaped literal quote, reopen quote), which keeps $VAR, spaces, and quotes
+// literal. The empty string becomes '' so it survives as a distinct argument.
+func quoteArg(s string) string {
+	if s != "" && !strings.ContainsFunc(s, func(r rune) bool { return !isShellSafe(r) }) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// isShellSafe reports whether r may appear unquoted in a shell word, matching
+// ^[A-Za-z0-9_@%+=:,./-]$. Note: non-ASCII runes are treated as unsafe so we
+// never rely on locale-dependent shell word-splitting; they are quoted, which
+// is always safe.
+func isShellSafe(r rune) bool {
+	switch {
+	case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		return true
+	}
+	return strings.ContainsRune("_@%+=:,./-", r)
 }
 
 // exitCode maps the child's wait result to the code this process should exit
