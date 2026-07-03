@@ -90,3 +90,14 @@ of the chart.
 just helm-snapshots                  # refresh snapshots
 just helm-snapshots --check-diff-only # CI mode: fail on drift
 ```
+
+## Alert rule tests
+
+`promtool` unit tests for the `PrometheusRule` alerts live in
+`rules-test/frontendapp-rules-test.yaml`. The recipe renders the chart with
+`monitoring.enabled=true`, extracts `.spec.groups` into a plain rules file, and
+runs `promtool test rules` against it:
+
+```bash
+just alert-rules-test   # needs promtool (prometheus release) + yq on PATH
+```

@@ -117,6 +117,7 @@ e2e-local:
 
     # ---- teardown trap (KEEP_CLUSTER=1 to keep it for debugging) -------------
     cleanup() {
+        if [ -n "${PF_PID:-}" ]; then kill "${PF_PID}" 2>/dev/null || true; fi
         if [ "${KEEP_CLUSTER:-0}" = "1" ]; then
             log "KEEP_CLUSTER=1 set — leaving cluster '${CLUSTER}' running"
             return
@@ -228,8 +229,68 @@ e2e-local:
 
     log "Build Job complete"
     kubectl get jobs,pods -n "${APP_NS}" -l "${SELECTOR}" -o wide
+
+    # ---- operator /metrics assertion -----------------------------------------
+    # Port-forward the operator Deployment directly (NOT a Service — the
+    # metrics Service only exists with monitoring.enabled=true) and assert the
+    # frontendapp_* series a completed build must produce. Exposition format
+    # sorts labels alphabetically (name, namespace, phase/result).
+    APP_NAME="$(kubectl get -f "${SAMPLE}" -o jsonpath='{.metadata.name}')"
+    METRICS_PORT="${METRICS_PORT:-18080}"
+    OPERATOR_DEPLOY="$(kubectl get deploy \
+        -l "app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=operator" -o name)"
+
+    log "Asserting operator metrics via ${OPERATOR_DEPLOY} (:${METRICS_PORT})"
+    kubectl port-forward "${OPERATOR_DEPLOY}" "${METRICS_PORT}:8080" >/dev/null 2>&1 &
+    PF_PID=$!
+
+    want_builds="frontendapp_builds_total{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",result=\"Succeeded\"} 1"
+    want_phase="frontendapp_phase{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",phase=\"Ready\"} 1"
+    metrics=""
+    metrics_ok=""
+    # Retry: covers port-forward startup and the operator's post-Job reconcile lag.
+    for _ in $(seq 1 30); do
+        metrics="$(curl -fsS "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null || true)"
+        if grep -qxF "${want_builds}" <<<"${metrics}" && grep -qxF "${want_phase}" <<<"${metrics}"; then
+            metrics_ok=1; break
+        fi
+        sleep 2
+    done
+    kill "${PF_PID}" 2>/dev/null || true
+    PF_PID=""
+
+    if [ -z "${metrics_ok}" ]; then
+        echo "----- /metrics (frontendapp_* series) -----"
+        grep '^frontendapp_' <<<"${metrics}" || true
+        echo "FAIL: expected metrics lines not found:"
+        echo "  ${want_builds}"
+        echo "  ${want_phase}"
+        exit 1
+    fi
+    log "Operator metrics assertion passed"
+
     echo
     echo "PASS: e2e smoke build completed successfully on kind cluster '${CLUSTER}'"
+
+# Unit-test the chart's PrometheusRule alerts with promtool (MANUAL — needs
+# promtool from a prometheus release on PATH, plus helm + yq).
+alert-rules-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v promtool >/dev/null 2>&1; then
+        echo "alert-rules-test: promtool not found on PATH — install it from a" >&2
+        echo "prometheus release tarball (https://prometheus.io/download/)" >&2
+        exit 1
+    fi
+    CHART=deploy/helm/toggle-web-baker
+    TMP="$(mktemp -d)"
+    trap 'rm -rf "${TMP}"' EXIT
+    # promtool wants a plain rules file: top-level `groups:` = PrometheusRule .spec.groups.
+    helm template "${CHART}" --set monitoring.enabled=true \
+        -s templates/frontendapp-prometheusrule.yaml \
+        | yq '{"groups": .spec.groups}' > "${TMP}/rules.yaml"
+    cp "${CHART}/rules-test/frontendapp-rules-test.yaml" "${TMP}/"
+    promtool test rules "${TMP}/frontendapp-rules-test.yaml"
 
 # Lint the Helm chart.
 helm-lint:
