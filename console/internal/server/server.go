@@ -479,6 +479,7 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 		Name:        name,
 		Highlighted: highlightYAML(string(raw)),
 		HasHidden:   masked,
+		SetupHint:   setupHint(obj),
 	})
 }
 

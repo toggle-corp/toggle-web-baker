@@ -17,6 +17,7 @@
     <h2>Manifest</h2>
     <div class="body">
       {{if .HasHidden}}<p class="small muted">Annotation values and credentials are hidden for security reasons.</p>{{end}}
+      {{if .SetupHint}}<p class="small muted">{{.SetupHint}}</p>{{end}}
       <div class="manifest">{{.Highlighted}}</div>
     </div>
   </section>

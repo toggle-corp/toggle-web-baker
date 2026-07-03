@@ -194,6 +194,11 @@ type manifestData struct {
 	Name        string
 	Highlighted template.HTML
 	HasHidden   bool
+	// SetupHint is a static note about the setup phase (empty when there is
+	// nothing to say). It never names the operator's default command — the
+	// console does not know it (see setupHint) — only that one runs and where to
+	// read it, mirroring how an unset schedule renders as "operator default".
+	SetupHint string
 }
 
 // errorData carries its own Head (with the request's user) so an error page

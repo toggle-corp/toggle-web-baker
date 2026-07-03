@@ -193,6 +193,106 @@ func TestManifest_CopyButtonReadsManifestText(t *testing.T) {
 	}
 }
 
+// manifestServerWithSpec seeds one App carrying the given spec so the setup-hint
+// behaviour can be exercised across the meaningful pipeline shapes.
+func manifestServerWithSpec(t *testing.T, spec map[string]any) *Server {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "AppList"}
+	app := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "baker.toggle-corp.com/v1alpha1",
+		"kind":       "App",
+		"metadata": map[string]any{
+			"namespace": "mapswipe",
+			"name":      "mapswipe-uat",
+		},
+		"spec": spec,
+	}}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, app)
+	return New(newClient(t, dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+}
+
+func TestManifest_SetupOmittedWithNodeVersion_HintsDefaultInstall(t *testing.T) {
+	srv := manifestServerWithSpec(t, map[string]any{
+		"pipeline": map[string]any{
+			"nodeVersion":    int64(18),
+			"packageManager": "pnpm",
+			"phases": map[string]any{
+				"build": map[string]any{"command": []any{"yarn", "build"}},
+			},
+		},
+	})
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	text := stripTags(rec.Body.String())
+	want := "setup omitted — the operator runs its default install for pnpm; the exact command is echoed in the build logs"
+	if !strings.Contains(text, want) {
+		t.Errorf("expected default-install hint %q; text=%s", want, text)
+	}
+}
+
+func TestManifest_SetupSkip_HintsSkipped(t *testing.T) {
+	srv := manifestServerWithSpec(t, map[string]any{
+		"pipeline": map[string]any{
+			"nodeVersion":    int64(18),
+			"packageManager": "yarn",
+			"phases": map[string]any{
+				"setup": map[string]any{"skip": true},
+				"build": map[string]any{"command": []any{"yarn", "build"}},
+			},
+		},
+	})
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
+	text := stripTags(rec.Body.String())
+	if !strings.Contains(text, "setup skipped by spec") {
+		t.Errorf("expected skip hint; text=%s", text)
+	}
+	if strings.Contains(text, "default install") {
+		t.Errorf("skip must not also claim a default install runs; text=%s", text)
+	}
+}
+
+func TestManifest_ExplicitSetup_NoHint(t *testing.T) {
+	srv := manifestServerWithSpec(t, map[string]any{
+		"pipeline": map[string]any{
+			"nodeVersion":    int64(18),
+			"packageManager": "yarn",
+			"phases": map[string]any{
+				"setup": map[string]any{"command": []any{"yarn", "install"}},
+				"build": map[string]any{"command": []any{"yarn", "build"}},
+			},
+		},
+	})
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
+	text := stripTags(rec.Body.String())
+	for _, unwanted := range []string{"default install", "setup omitted", "setup skipped"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("explicit setup should get no hint, found %q; text=%s", unwanted, text)
+		}
+	}
+}
+
+func TestManifest_SetupOmittedNoNodeVersion_NoHint(t *testing.T) {
+	// BYO: no nodeVersion, so no default install runs and no setup phase exists.
+	srv := manifestServerWithSpec(t, map[string]any{
+		"pipeline": map[string]any{
+			"packageManager": "yarn",
+			"phases": map[string]any{
+				"build": map[string]any{"image": "node:18", "command": []any{"yarn", "build"}},
+			},
+		},
+	})
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
+	text := stripTags(rec.Body.String())
+	for _, unwanted := range []string{"default install", "setup omitted", "setup skipped"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("BYO (no nodeVersion) should get no hint, found %q; text=%s", unwanted, text)
+		}
+	}
+}
+
 func TestManifest_UnknownAppIs404(t *testing.T) {
 	srv := manifestFixtureServer(t)
 	rec := doGet(srv, "/ns/mapswipe/app/nope/manifest", "mapswipe", "nope")
