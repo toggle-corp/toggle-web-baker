@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -77,7 +79,34 @@ func run(configPath string, reporter *observability.Reporter) error {
 		return err
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restCfg := ctrl.GetConfigOrDie()
+
+	// Design Q5: hard-fail at startup if the operator-global git credential is
+	// configured but its source Secret is missing/incomplete — fail-closed rather
+	// than silently degrade to anonymous git. This runs BEFORE the manager so the
+	// manager cache isn't started yet; use a throwaway direct client.
+	if cfg.GitAuth.Enabled() {
+		// The operator's own namespace arrives via the downward API (POD_NAMESPACE);
+		// the chart sets it. Without it we cannot locate the Secret.
+		podNamespace := os.Getenv("POD_NAMESPACE")
+		if podNamespace == "" {
+			err := fmt.Errorf("gitAuth is enabled but POD_NAMESPACE is empty (set via the downward API)")
+			setupLog.Error(err, "invalid operator environment")
+			return err
+		}
+		directClient, cerr := client.New(restCfg, client.Options{Scheme: scheme})
+		if cerr != nil {
+			setupLog.Error(cerr, "unable to create startup client for gitAuth validation")
+			return cerr
+		}
+		if verr := controller.ValidateGitAuthSecret(context.Background(), directClient, podNamespace, cfg.GitAuth); verr != nil {
+			// verr names the Secret only, never its data.
+			setupLog.Error(verr, "gitAuth secret validation failed")
+			return verr
+		}
+	}
+
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: mgrOpts.MetricsBindAddress},
 		HealthProbeBindAddress: mgrOpts.HealthProbeBindAddress,

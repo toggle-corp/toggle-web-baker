@@ -313,3 +313,62 @@ func TestLoadConfig_NonPositiveDeadlineError(t *testing.T) {
 		t.Fatal("expected error for activeDeadlineSeconds <= 0")
 	}
 }
+
+// gitAuth is optional; an absent block leaves the feature off (Enabled() false),
+// which the operator treats as today's anonymous git behavior.
+func TestLoadConfig_GitAuthAbsentIsDisabled(t *testing.T) {
+	cfg, _, err := LoadConfig(writeConfig(t, validConfigYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.GitAuth.Enabled() {
+		t.Fatalf("gitAuth must be disabled when absent, got %+v", cfg.GitAuth)
+	}
+}
+
+// A well-formed gitAuth block populates the SecretName + Hosts and reads as enabled.
+func TestLoadConfig_GitAuthPopulated(t *testing.T) {
+	body := validConfigYAML + `
+gitAuth:
+  secretName: baker-git-credential
+  hosts: ["github.com", "gitlab.com"]
+`
+	cfg, _, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.GitAuth.Enabled() {
+		t.Fatal("gitAuth must be enabled when secretName+hosts set")
+	}
+	if cfg.GitAuth.SecretName != "baker-git-credential" {
+		t.Fatalf("secretName = %q", cfg.GitAuth.SecretName)
+	}
+	if len(cfg.GitAuth.Hosts) != 2 || cfg.GitAuth.Hosts[0] != "github.com" || cfg.GitAuth.Hosts[1] != "gitlab.com" {
+		t.Fatalf("hosts = %v", cfg.GitAuth.Hosts)
+	}
+}
+
+// Fail-closed like clusterCIDRs: a half-configured gitAuth (one field set, the
+// other empty) is a hard startup error rather than a silently-degraded feature.
+func TestLoadConfig_GitAuthHalfConfiguredError(t *testing.T) {
+	cases := map[string]string{
+		"secretName without hosts": `
+gitAuth:
+  secretName: baker-git-credential
+`,
+		"hosts without secretName": `
+gitAuth:
+  hosts: ["github.com"]
+`,
+		"secretName with empty hosts list": `
+gitAuth:
+  secretName: baker-git-credential
+  hosts: []
+`,
+	}
+	for name, extra := range cases {
+		if _, _, err := LoadConfig(writeConfig(t, validConfigYAML+extra)); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}

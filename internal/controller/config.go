@@ -85,6 +85,33 @@ type OperatorConfig struct {
 	// ActiveDeadlineSeconds is the operator default deadline bounding the whole
 	// build Job when spec.pipeline.timeout is unset.
 	ActiveDeadlineSeconds int64
+
+	// GitAuth is the operator-global git credential (clone + watchCommits). It is
+	// off unless BOTH SecretName and Hosts are set — see GitAuth.Enabled().
+	GitAuth GitAuth
+}
+
+// GitAuth is the operator-global git credential feature (design Q4/Q5). When
+// enabled, the operator forwards the credential in SecretName ONLY to repos
+// whose host is on the Hosts allowlist — an unconditional injection would leak
+// the token to attacker-controlled hosts via the git askpass helper
+// (credential-forwarding; see domain.RepoHostAllowed).
+type GitAuth struct {
+	// SecretName is the Secret in the OPERATOR's own namespace holding keys
+	// username/password. The operator copies it (owned, labeled) into each App's
+	// namespace where the short-lived build/watch pods mount it.
+	SecretName string
+	// Hosts is the exact-match host allowlist (e.g. ["github.com"]). A repo whose
+	// host is absent here receives no credential (anonymous, fail-closed).
+	Hosts []string
+}
+
+// Enabled reports whether the operator-global git credential is configured.
+// SecretName is the sentinel: LoadConfig has already rejected a half-configured
+// block (one field set, the other empty), so a non-empty SecretName here implies
+// a non-empty Hosts allowlist too.
+func (g GitAuth) Enabled() bool {
+	return g.SecretName != ""
 }
 
 // PhaseResourceDefaults holds the parsed, startup-validated operator resource
@@ -137,22 +164,31 @@ type FileConfig struct {
 	LeaderElect            *bool  `json:"leaderElect,omitempty"`
 
 	// Domain fields.
-	RegistryAllowlist []string                    `json:"registryAllowlist,omitempty"`
-	ClusterCIDRs      []string                    `json:"clusterCIDRs,omitempty"`
-	TraefikGroup      string                      `json:"traefikGroup,omitempty"`
-	TraefikNamespace  string                      `json:"traefikNamespace,omitempty"`
-	ImagePullSecret   string                      `json:"imagePullSecret,omitempty"`
-	StorageClass      string                      `json:"storageClass,omitempty"`
-	MeasureInterval   string                      `json:"measureInterval,omitempty"`
+	RegistryAllowlist []string `json:"registryAllowlist,omitempty"`
+	ClusterCIDRs      []string `json:"clusterCIDRs,omitempty"`
+	TraefikGroup      string   `json:"traefikGroup,omitempty"`
+	TraefikNamespace  string   `json:"traefikNamespace,omitempty"`
+	ImagePullSecret   string   `json:"imagePullSecret,omitempty"`
+	StorageClass      string   `json:"storageClass,omitempty"`
+	MeasureInterval   string   `json:"measureInterval,omitempty"`
 	// Trigger defaults for apps that enable a trigger without tuning it.
-	DefaultSchedule      string `json:"defaultSchedule,omitempty"`
-	DefaultWatchInterval string `json:"defaultWatchInterval,omitempty"`
-	Images            fileImages                  `json:"images,omitempty"`
-	NodeImages        map[string]domain.NodeImage `json:"nodeImages,omitempty"`
+	DefaultSchedule      string                      `json:"defaultSchedule,omitempty"`
+	DefaultWatchInterval string                      `json:"defaultWatchInterval,omitempty"`
+	Images               fileImages                  `json:"images,omitempty"`
+	NodeImages           map[string]domain.NodeImage `json:"nodeImages,omitempty"`
 
 	// New knobs (were never flags): per-phase resource defaults + job deadline.
 	PhaseResources        filePhaseResources `json:"phaseResources,omitempty"`
 	ActiveDeadlineSeconds int64              `json:"activeDeadlineSeconds,omitempty"`
+
+	// GitAuth is the optional operator-global git credential block. Absent =
+	// feature off (anonymous git). See GitAuth / LoadConfig fail-closed checks.
+	GitAuth fileGitAuth `json:"gitAuth,omitempty"`
+}
+
+type fileGitAuth struct {
+	SecretName string   `json:"secretName,omitempty"`
+	Hosts      []string `json:"hosts,omitempty"`
 }
 
 type fileImages struct {
@@ -242,10 +278,21 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("activeDeadlineSeconds must be > 0, got %d", fc.ActiveDeadlineSeconds)
 	}
 
+	// gitAuth is fail-closed like clusterCIDRs: a half-configured block (one field
+	// set, the other empty) is a hard error rather than a silently-degraded
+	// feature — a secretName with no host allowlist would leave the operator
+	// unable to decide which repos may receive the credential.
+	switch {
+	case fc.GitAuth.SecretName != "" && len(fc.GitAuth.Hosts) == 0:
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("gitAuth.secretName is set but gitAuth.hosts is empty (host allowlist is mandatory to avoid credential forwarding)")
+	case fc.GitAuth.SecretName == "" && len(fc.GitAuth.Hosts) > 0:
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("gitAuth.hosts is set but gitAuth.secretName is empty (no credential to forward)")
+	}
+
 	cfg := OperatorConfig{
-		RegistryAllowlist: fc.RegistryAllowlist,
-		ClusterCIDRs:      fc.ClusterCIDRs,
-		TraefikGroup:      fc.TraefikGroup,
+		RegistryAllowlist:    fc.RegistryAllowlist,
+		ClusterCIDRs:         fc.ClusterCIDRs,
+		TraefikGroup:         fc.TraefikGroup,
 		ImagePullSecret:      fc.ImagePullSecret,
 		MeasureInterval:      interval,
 		DefaultSchedule:      defaultSchedule,
@@ -262,6 +309,10 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		NodeImages:            fc.NodeImages,
 		PhaseResourceDefaults: prd,
 		ActiveDeadlineSeconds: fc.ActiveDeadlineSeconds,
+		GitAuth: GitAuth{
+			SecretName: fc.GitAuth.SecretName,
+			Hosts:      fc.GitAuth.Hosts,
+		},
 	}
 	cfg.Defaults()
 	// Validate LAST so Defaults() has filled TraefikGroup etc. This enforces the
