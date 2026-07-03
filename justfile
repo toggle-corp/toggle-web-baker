@@ -141,6 +141,9 @@ e2e-local:
         "ghcr.io/toggle-corp/toggle-web-baker-copier:${TAG}"
         "ghcr.io/toggle-corp/toggle-web-baker-du:${TAG}"
         "ghcr.io/toggle-corp/toggle-web-baker-cleanup:${TAG}"
+        "ghcr.io/toggle-corp/toggle-web-baker-clock:${TAG}"
+        # peak-memory wrapper injected into every user phase
+        "ghcr.io/toggle-corp/toggle-web-baker-shim:${TAG}"
         # node18 is the managed toolchain the sample's nodeVersion: 18 selects.
         "ghcr.io/toggle-corp/toggle-web-baker-node18:${TAG}"
     )
@@ -159,6 +162,8 @@ e2e-local:
         --set "platformImages.copier.tag=${TAG}" \
         --set "platformImages.du.tag=${TAG}" \
         --set "platformImages.cleanup.tag=${TAG}" \
+        --set "platformImages.clock.tag=${TAG}" \
+        --set "platformImages.shim.tag=${TAG}" \
         --set "operator.nodeImages.18.tag=${TAG}" \
         --set "operator.nodeImages.24.tag=${TAG}" \
         --set "console.enabled=false" \
