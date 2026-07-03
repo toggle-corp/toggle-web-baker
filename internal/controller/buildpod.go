@@ -254,7 +254,13 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 	// Resolve each phase's effective image/UID/HOME (nodeVersion mapping + BYO
 	// overrides). HOME is injected only for managed node phases. Resolved BEFORE
 	// clone because clone is pinned to the build phase's UID (below).
-	setupR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Setup.PhaseSpec)
+	// setup is resolved through effectiveSetup: it honors skip, injects the
+	// managed-toolchain default install command when setup is omitted, and reports
+	// whether a setup container exists at all (setupOn). The injected command is
+	// applied here only — never written back to the spec — so it can't leak into
+	// the staleness hash (buildSpecFrom reads the spec as-written).
+	setupSpec, setupOn := effectiveSetup(app, r.Config)
+	setupR := r.resolvePhase(app, setupSpec)
 	fetchR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Fetch.PhaseSpec)
 	buildR := r.resolvePhase(app, app.Spec.Pipeline.Phases.Build.PhaseSpec)
 
@@ -296,11 +302,11 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 	setup := corev1.Container{
 		Name:            "setup",
 		Image:           setupR.Image,
-		Command:         shimWrap(commandOrNoop(app.Spec.Pipeline.Phases.Setup.Command)),
+		Command:         shimWrap(commandOrNoop(setupSpec.Command)),
 		WorkingDir:      workMountPath,
-		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(app.Spec.Pipeline.Phases.Setup.Env)...)),
+		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(setupSpec.Env)...)),
 		VolumeMounts:    setupMounts,
-		Resources:       phaseResourceRequirements(r.Config, "setup", app.Spec.Pipeline.Phases.Setup.MemoryLimit),
+		Resources:       phaseResourceRequirements(r.Config, "setup", setupSpec.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(setupR),
 	}
 
@@ -373,7 +379,7 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 			RunAsNonRoot:   ptr.To(true),
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
-		InitContainers: []corev1.Container{shimInstall, clone, setup, fetch, build},
+		InitContainers: buildInitContainers(shimInstall, clone, setup, setupOn, fetch, build),
 		Containers:     []corev1.Container{copier},
 		Volumes:        volumes,
 	}
@@ -414,6 +420,17 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 			},
 		},
 	}
+}
+
+// buildInitContainers assembles the ordered init-container list, including the
+// setup container only when setupOn (skip:true or an omitted setup under a BYO
+// toolchain drops it). Order is always [shim-install, clone, (setup), fetch, build].
+func buildInitContainers(shimInstall, clone, setup corev1.Container, setupOn bool, fetch, build corev1.Container) []corev1.Container {
+	out := []corev1.Container{shimInstall, clone}
+	if setupOn {
+		out = append(out, setup)
+	}
+	return append(out, fetch, build)
 }
 
 // buildDeadlineSeconds derives the build Job's activeDeadlineSeconds.

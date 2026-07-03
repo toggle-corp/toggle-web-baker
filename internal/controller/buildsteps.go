@@ -19,13 +19,45 @@ func phaseConfigured(p bakerv1alpha1.PhaseSpec) bool {
 	return p.Image != "" || len(p.Command) > 0
 }
 
+// effectiveSetup resolves the setup phase actually run in the build pod and
+// whether a setup container exists at all. It is the SINGLE place the setup
+// decision lives (both the pod builder and the step timeline consult it):
+//   - skip:true → never a setup container.
+//   - configured explicitly (image or command) → run as written.
+//   - wholly omitted + managed toolchain (nodeVersion set) → run the operator's
+//     configured default install command for the package manager (injected here,
+//     never in the spec, so it can't leak into the staleness hash).
+//   - wholly omitted + BYO (nodeVersion unset) → no setup container (no image to
+//     run a default install on; nothing is injected).
+//
+// The returned PhaseSpec carries the effective command; image/env/runAsUser are
+// left as-written so managed-image resolution still applies to an injected default.
+func effectiveSetup(app *bakerv1alpha1.App, cfg OperatorConfig) (bakerv1alpha1.PhaseSpec, bool) {
+	setup := app.Spec.Pipeline.Phases.Setup
+	if setup.Skip {
+		return bakerv1alpha1.PhaseSpec{}, false
+	}
+	if phaseConfigured(setup.PhaseSpec) {
+		return setup.PhaseSpec, true
+	}
+	// Wholly omitted: inject the default install command only under the managed
+	// toolchain, where there is a resolvable image to run it on.
+	if app.Spec.Pipeline.NodeVersion == 0 {
+		return bakerv1alpha1.PhaseSpec{}, false
+	}
+	injected := setup.PhaseSpec
+	injected.Command = cfg.DefaultSetupCommand(string(app.Spec.Pipeline.PackageManager))
+	return injected, true
+}
+
 // applicableSteps returns the ordered pipeline step names that actually apply to
 // the app: clone/build/copier/release are always present; setup and fetch appear
-// only when the app configures that phase (Image or Command). release is the
-// SYNTHETIC step (the operator's release-pointer flip after copier succeeds).
-func applicableSteps(app *bakerv1alpha1.App) []string {
+// only when that phase runs. setup follows effectiveSetup (which honors skip and
+// the managed-toolchain default injection); fetch appears when configured. release
+// is the SYNTHETIC step (the operator's release-pointer flip after copier succeeds).
+func applicableSteps(app *bakerv1alpha1.App, cfg OperatorConfig) []string {
 	steps := []string{bakerv1alpha1.StepClone}
-	if phaseConfigured(app.Spec.Pipeline.Phases.Setup.PhaseSpec) {
+	if _, ok := effectiveSetup(app, cfg); ok {
 		steps = append(steps, bakerv1alpha1.StepSetup)
 	}
 	if phaseConfigured(app.Spec.Pipeline.Phases.Fetch.PhaseSpec) {

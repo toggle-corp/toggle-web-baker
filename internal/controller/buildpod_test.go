@@ -350,7 +350,10 @@ func TestBuildJob_MalformedMemoryLimitFallsBackToPhaseDefault(t *testing.T) {
 // operator defaults.
 func TestBuildJob_AllPhasesCarryResourceRequirements(t *testing.T) {
 	app := baseApp()
-	r := reconcilerForPod()
+	// Managed toolchain so the omitted setup phase is injected (all three phase
+	// containers exist and must carry resource requirements).
+	app.Spec.Pipeline.NodeVersion = 18
+	r := managedNodeReconciler()
 	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	prd := r.Config.PhaseResourceDefaults
 	perPhaseMem := map[string]resource.Quantity{
@@ -568,21 +571,23 @@ func shimmed(cmd ...string) []string {
 	return append([]string{"/baker/shim", "--"}, cmd...)
 }
 
-// Bug fix: optional phases (setup/fetch) with no command no-op via ["true"]
-// instead of falling through to the base image's clone entrypoint. The no-op,
-// like every user phase command, runs behind the peak-memory shim.
+// Bug fix: a fetch phase with no command no-ops via ["true"] instead of falling
+// through to the base image's clone entrypoint. The no-op, like every user phase
+// command, runs behind the peak-memory shim. (setup is handled by effectiveSetup:
+// an omitted setup is either injected or dropped, never a bare no-op container.)
 func TestBuildJob_OptionalPhasesNoOpWhenUnset(t *testing.T) {
 	app := baseApp()
+	// A configured setup command keeps the setup container present so this test
+	// exercises fetch's unset no-op without depending on setup semantics.
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"sh", "-c", "install"}
 	r := reconcilerForPod()
 	job := r.BuildJob(app, "tok", gitCredentialDecision{})
-	for _, name := range []string{"setup", "fetch"} {
-		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
-		if c == nil {
-			t.Fatalf("no %s container", name)
-		}
-		if !slices.Equal(c.Command, shimmed("true")) {
-			t.Fatalf("%s command must be the shimmed no-op %v when unset, got %v", name, shimmed("true"), c.Command)
-		}
+	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
+	if fetch == nil {
+		t.Fatal("no fetch container")
+	}
+	if !slices.Equal(fetch.Command, shimmed("true")) {
+		t.Fatalf("fetch command must be the shimmed no-op %v when unset, got %v", shimmed("true"), fetch.Command)
 	}
 }
 
@@ -624,7 +629,9 @@ func TestBuildJob_BuildCommandNotNoOped(t *testing.T) {
 // user phase) and user phases mount the shim volume read-only.
 func TestBuildJob_ShimInstallFirstAndMountsReadOnly(t *testing.T) {
 	app := baseApp()
-	r := reconcilerForPod()
+	// Managed toolchain so the injected setup container exists and is checked too.
+	app.Spec.Pipeline.NodeVersion = 18
+	r := managedNodeReconciler()
 	job := r.BuildJob(app, "tok", gitCredentialDecision{})
 	inits := job.Spec.Template.Spec.InitContainers
 	if len(inits) == 0 || inits[0].Name != "shim-install" {
@@ -688,6 +695,166 @@ func TestBuildJob_NoSubmodulesEnvByDefault(t *testing.T) {
 	}
 	if hasEnv(clone.Env, "SUBMODULES") {
 		t.Fatalf("clone container must NOT set SUBMODULES when spec.Submodules is false")
+	}
+}
+
+// managedNodeReconciler is reconcilerForPod with a node18 managed image and a
+// NON-DEFAULT setup command per package manager, so a test asserting the
+// injected command proves it came from config (not a hardcoded default).
+func managedNodeReconciler() *AppReconciler {
+	r := reconcilerForPod()
+	r.Config.NodeImages = map[string]domain.NodeImage{
+		"18": {Image: "ghcr.io/toggle-corp/toggle-web-baker-node18@sha256:aaa", RunAsUser: ptr.To(int64(1000))},
+	}
+	r.Config.DefaultSetupCommands = map[string][]string{
+		"yarn": {"yarn", "install", "--immutable"},
+		"pnpm": {"pnpm", "install", "--offline"},
+	}
+	return r
+}
+
+// Managed toolchain + setup wholly omitted: the setup container RUNS with the
+// operator's configured default install command for the package manager,
+// wrapped by the shim like every other user phase.
+func TestBuildJob_ManagedOmittedSetupInjectsDefaultCommand(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+	r := managedNodeReconciler()
+
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
+	if setup == nil {
+		t.Fatal("managed + omitted setup must still produce a setup container")
+	}
+	want := shimWrap([]string{"yarn", "install", "--immutable"})
+	if !slices.Equal(setup.Command, want) {
+		t.Fatalf("setup command = %v, want config default wrapped by shim %v", setup.Command, want)
+	}
+}
+
+// pnpm app under the managed toolchain gets the pnpm default, proving the
+// injected command branches on packageManager.
+func TestBuildJob_ManagedOmittedSetupPnpmDefault(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Command = []string{"pnpm", "build"}
+	r := managedNodeReconciler()
+
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
+	if setup == nil {
+		t.Fatal("managed + omitted pnpm setup must produce a setup container")
+	}
+	want := shimWrap([]string{"pnpm", "install", "--offline"})
+	if !slices.Equal(setup.Command, want) {
+		t.Fatalf("setup command = %v, want pnpm config default %v", setup.Command, want)
+	}
+}
+
+// setup.skip:true under the managed toolchain: NO setup container at all.
+func TestBuildJob_ManagedSkipNoSetupContainer(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Setup.Skip = true
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+	r := managedNodeReconciler()
+
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	if setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup"); setup != nil {
+		t.Fatalf("setup.skip must drop the setup container, got %+v", setup.Command)
+	}
+	// The rest of the pipeline is intact and ordered.
+	var names []string
+	for _, c := range job.Spec.Template.Spec.InitContainers {
+		names = append(names, c.Name)
+	}
+	want := []string{"shim-install", "clone", "fetch", "build"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("init containers = %v, want %v", names, want)
+	}
+}
+
+// An explicitly configured setup command is run verbatim (no injection).
+func TestBuildJob_ManagedExplicitSetupUntouched(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"yarn", "install", "--custom"}
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+	r := managedNodeReconciler()
+
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
+	if setup == nil {
+		t.Fatal("explicit setup must produce a setup container")
+	}
+	want := shimWrap([]string{"yarn", "install", "--custom"})
+	if !slices.Equal(setup.Command, want) {
+		t.Fatalf("explicit setup command = %v, want %v (untouched)", setup.Command, want)
+	}
+}
+
+// BYO toolchain (nodeVersion unset): omitted setup injects nothing (no setup
+// container), and skip:true is a harmless no-op (also no setup container).
+func TestBuildJob_BYONoSetupInjection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mut  func(*bakerv1alpha1.App)
+	}{
+		{"omitted", func(*bakerv1alpha1.App) {}},
+		{"skip", func(a *bakerv1alpha1.App) { a.Spec.Pipeline.Phases.Setup.Skip = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := baseApp() // no nodeVersion => BYO
+			app.Spec.Pipeline.Phases.Build.Image = "docker.io/library/node:18"
+			app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+			tc.mut(app)
+			r := managedNodeReconciler()
+
+			job := r.BuildJob(app, "tok", gitCredentialDecision{})
+			if setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup"); setup != nil {
+				t.Fatalf("BYO %s setup must not inject a setup container, got %+v", tc.name, setup.Command)
+			}
+		})
+	}
+}
+
+// The injected default setup command must NOT influence the staleness hash:
+// buildSpecFrom reads the spec as-written, so an app with omitted setup hashes
+// the same regardless of the operator's injection config.
+func TestBuildSpecHash_OmittedSetupUnaffectedByInjectionConfig(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.NodeVersion = 18 // managed => injection WOULD apply in the pod
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+
+	baseline := buildSpecFrom(app).Hash()
+
+	// Two reconcilers with DIFFERENT injected setup defaults must both leave the
+	// spec (and thus the hash) untouched — the injection lives only in the pod.
+	rA := managedNodeReconciler()
+	rA.Config.DefaultSetupCommands = map[string][]string{"yarn": {"yarn", "install", "--immutable"}, "pnpm": {"pnpm", "install"}}
+	rB := managedNodeReconciler()
+	rB.Config.DefaultSetupCommands = map[string][]string{"yarn": {"yarn", "install", "--production=false"}, "pnpm": {"pnpm", "install"}}
+
+	jobA := rA.BuildJob(app, "tok", gitCredentialDecision{})
+	jobB := rB.BuildJob(app, "tok", gitCredentialDecision{})
+
+	// The two pods genuinely differ (different injected setup commands)...
+	setupA := containerByName(jobA.Spec.Template.Spec.InitContainers, "setup")
+	setupB := containerByName(jobB.Spec.Template.Spec.InitContainers, "setup")
+	if slices.Equal(setupA.Command, setupB.Command) {
+		t.Fatalf("fixture broken: both configs injected the same setup command %v", setupA.Command)
+	}
+	// ...yet the spec hash is unchanged in both cases (injection never leaks).
+	hashA := jobA.Annotations[bakerv1alpha1.SpecHashAnnotation]
+	hashB := jobB.Annotations[bakerv1alpha1.SpecHashAnnotation]
+	if hashA != baseline || hashB != baseline {
+		t.Fatalf("injected setup command leaked into hash: baseline=%q A=%q B=%q", baseline, hashA, hashB)
+	}
+	// And the spec itself still carries no setup command.
+	if cmd := app.Spec.Pipeline.Phases.Setup.Command; len(cmd) != 0 {
+		t.Fatalf("omitted setup unexpectedly carries a command in the spec: %v", cmd)
 	}
 }
 

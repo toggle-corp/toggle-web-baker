@@ -230,11 +230,12 @@ func TestReconcile_StartsBuildAndRecordsToken(t *testing.T) {
 	if got.Status.LastProcessedRebuild != "tok-1" {
 		t.Fatalf("expected lastProcessedRebuild=tok-1, got %q", got.Status.LastProcessedRebuild)
 	}
-	// Build pod = one pod: initContainers [shim-install clone setup fetch build]
-	// + copier main.
+	// Build pod = one pod: initContainers [shim-install clone fetch build]
+	// + copier main. baseApp has no nodeVersion and omits setup, so the BYO path
+	// injects no setup container (4 init containers, not 5).
 	j := jobs.Items[0]
-	if n := len(j.Spec.Template.Spec.InitContainers); n != 5 {
-		t.Fatalf("expected 5 initContainers, got %d", n)
+	if n := len(j.Spec.Template.Spec.InitContainers); n != 4 {
+		t.Fatalf("expected 4 initContainers, got %d", n)
 	}
 	if n := len(j.Spec.Template.Spec.Containers); n != 1 || j.Spec.Template.Spec.Containers[0].Name != "copier" {
 		t.Fatalf("expected single copier main container, got %+v", j.Spec.Template.Spec.Containers)
@@ -586,7 +587,7 @@ func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 	if app.Status.Build.PodName != "" {
 		t.Fatalf("PodName must stay empty until pod observed, got %q", app.Status.Build.PodName)
 	}
-	want := applicableSteps(app) // clone, fetch, build, copier, release
+	want := applicableSteps(app, OperatorConfig{}) // clone, fetch, build, copier, release
 	if len(app.Status.Build.Steps) != len(want) {
 		t.Fatalf("seeded %d steps, want %d (%v)", len(app.Status.Build.Steps), len(want), want)
 	}

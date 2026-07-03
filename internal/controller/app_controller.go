@@ -565,7 +565,7 @@ func (r *AppReconciler) startBuild(ctx context.Context, app *bakerv1alpha1.App, 
 		Trigger:     trigger,
 		TriggeredBy: by,
 		Commit:      commit,
-		Steps:       deriveBuildSteps(applicableSteps(app), nil, false),
+		Steps:       deriveBuildSteps(applicableSteps(app, r.Config), nil, false),
 		// Record the exact image each container was created with (digest-pinned
 		// for managed toolchains), read from the Job spec itself so it reflects
 		// the build that actually ran — not a later operator-config change.
@@ -623,7 +623,7 @@ func (r *AppReconciler) observeBuild(ctx context.Context, app *bakerv1alpha1.App
 		app.Status.Build.Phase = bakerv1alpha1.BuildPhaseRunning
 		if pod := r.findBuildPod(ctx, app, job); pod != nil {
 			app.Status.Build.PodName = pod.Name
-			app.Status.Build.Steps = deriveBuildSteps(applicableSteps(app), pod, false)
+			app.Status.Build.Steps = deriveBuildSteps(applicableSteps(app, r.Config), pod, false)
 		}
 		return nil
 	}
@@ -679,7 +679,7 @@ func (r *AppReconciler) observeBuild(ctx context.Context, app *bakerv1alpha1.App
 	// exactly when the build (copier) succeeded — independent of whether the
 	// copier termination message populated status.release.current.
 	releaseDone := app.Status.Build.Result == bakerv1alpha1.BuildResultSucceeded
-	applicable := applicableSteps(app)
+	applicable := applicableSteps(app, r.Config)
 	pod := r.findBuildPod(ctx, app, job)
 	if pod != nil {
 		app.Status.Build.PodName = pod.Name
