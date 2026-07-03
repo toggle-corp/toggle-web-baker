@@ -1,0 +1,68 @@
+{{- if .Values.monitoring.enabled }}
+{{- /* severity + alerts.extraLabels for each rule; merge keeps severity when
+     extraLabels tries to override it. */}}
+{{- $critical := merge (dict "severity" "critical") .Values.monitoring.alerts.extraLabels }}
+{{- $warning := merge (dict "severity" "warning") .Values.monitoring.alerts.extraLabels }}
+{{- $graceSeconds := include "toggle-web-baker.durationSeconds" .Values.monitoring.alerts.stuckBuildGrace }}
+# Alert rules over the operator's frontendapp_* metrics. monitoring.labels
+# must match your Prometheus ruleSelector (e.g. release: kube-prometheus-stack).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "toggle-web-baker.fullname" . }}-frontendapp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: frontendapp.rules
+      rules:
+        - alert: FrontendAppDegraded
+          expr: frontendapp_degraded == 1
+          for: {{ .Values.monitoring.alerts.degradedFor }}
+          labels:
+            {{- toYaml $critical | nindent 12 }}
+          annotations:
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded ({{ $labels.reason }})` | quote }}
+            description: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded with reason {{ $labels.reason }}. Inspect the CR status conditions and the latest build history entry for details.` | quote }}
+        - alert: FrontendAppBuildFailed
+          expr: increase(frontendapp_builds_total{result="Failed"}[10m]) > 0
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build failed` | quote }}
+            description: {{ `A build for FrontendApp {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step.` | quote }}
+        - alert: FrontendAppBuildOOMKilled
+          expr: increase(frontendapp_build_oom_total[10m]) > 0
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build OOMKilled in step {{ $labels.step }}` | quote }}
+            description: {{ `A build for FrontendApp {{ $labels.namespace }}/{{ $labels.name }} was OOMKilled in the {{ $labels.step }} step within the last 10 minutes. Raise spec.pipeline.phases.{{ $labels.step }}.memoryLimit (or the operator's per-phase default).` | quote }}
+        - alert: FrontendAppStorageThreshold
+          expr: frontendapp_storage_used_bytes > frontendapp_storage_alert_bytes
+          for: 15m
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold` | quote }}
+            description: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents.` | quote }}
+        - alert: FrontendAppBuildStuck
+          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds + {{ $graceSeconds }}) and frontendapp_build_running_since_seconds > 0
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline` | quote }}
+            description: {{ printf "FrontendApp %s has had a build running for more than its deadline plus %s grace — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs." `{{ $labels.namespace }}/{{ $labels.name }}` .Values.monitoring.alerts.stuckBuildGrace | quote }}
+        - alert: FrontendAppNeverReady
+          expr: frontendapp_phase{phase="AwaitingFirstBuild"} == 1
+          for: {{ .Values.monitoring.alerts.neverReadyFor }}
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has never become Ready` | quote }}
+            description: {{ printf "FrontendApp %s has been AwaitingFirstBuild for over %s without a successful first build. Check whether builds are starting (webhook/schedule) and why they are not succeeding." `{{ $labels.namespace }}/{{ $labels.name }}` .Values.monitoring.alerts.neverReadyFor | quote }}
+{{- end }}

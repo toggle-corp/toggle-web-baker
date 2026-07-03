@@ -1,0 +1,15 @@
+# Prometheus Operator monitoring enabled: metrics Service, ServiceMonitor and
+# PrometheusRule render with discovery labels and extra alert labels.
+operator:
+  clusterCIDRs:
+    - 10.0.0.0/8
+    - 172.20.0.0/16
+  registryAllowlist:
+    - ghcr.io/toggle-corp/
+monitoring:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+  alerts:
+    extraLabels:
+      team: platform

@@ -1,0 +1,24 @@
+{{- if .Values.monitoring.enabled }}
+# Scrapes the operator's plain-HTTP /metrics on :8080 (cmd/main.go uses no
+# secure-serving/authn filter) via the operator-metrics Service. Requires the
+# monitoring.coreos.com CRDs; monitoring.labels must match your Prometheus
+# serviceMonitorSelector (e.g. release: kube-prometheus-stack).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "toggle-web-baker.operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "toggle-web-baker.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: operator-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+{{- end }}

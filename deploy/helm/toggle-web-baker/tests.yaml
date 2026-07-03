@@ -8,3 +8,5 @@ tests:
   console.yaml: []
   # crds.install=false — CRD must NOT render.
   no-crd.yaml: []
+  # monitoring.enabled — metrics Service + ServiceMonitor + PrometheusRule.
+  monitoring.yaml: []

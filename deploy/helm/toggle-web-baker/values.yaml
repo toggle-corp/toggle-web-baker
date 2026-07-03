@@ -172,3 +172,27 @@ console:
     resources:
       requests: { cpu: 10m, memory: 32Mi }
       limits: { cpu: 100m, memory: 64Mi }
+
+# Prometheus Operator integration (ServiceMonitor + PrometheusRule for the
+# operator's frontendapp_* metrics on :8080). Opt-in; requires the
+# monitoring.coreos.com CRDs (e.g. kube-prometheus-stack) on the cluster.
+monitoring:
+  enabled: false
+
+  # Extra labels stamped onto the ServiceMonitor and PrometheusRule so your
+  # Prometheus instance discovers them (match its serviceMonitorSelector /
+  # ruleSelector), e.g. { release: kube-prometheus-stack }.
+  labels: {}
+
+  alerts:
+    # Static labels merged into every alert rule's labels (next to severity),
+    # e.g. { team: platform } for Alertmanager routing.
+    extraLabels: {}
+    # How long an app must stay Degraded before FrontendAppDegraded fires.
+    degradedFor: 5m
+    # How long an app may sit in AwaitingFirstBuild before FrontendAppNeverReady fires.
+    neverReadyFor: 1h
+    # Slack past the build deadline before FrontendAppBuildStuck fires (the
+    # operator normally aborts at the deadline; firing means it did not).
+    # Duration like 90s/10m/1h — converted to seconds for the PromQL expr.
+    stuckBuildGrace: 10m

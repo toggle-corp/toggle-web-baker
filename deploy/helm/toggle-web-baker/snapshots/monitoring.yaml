@@ -1,0 +1,1571 @@
+---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-toggle-web-baker-operator
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: toggle-web-baker-helm/templates/operator-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-toggle-web-baker-operator-config
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator
+data:
+  config.yaml: |
+    metricsBindAddress: ":8080"
+    healthProbeBindAddress: ":8081"
+    leaderElect: true
+    registryAllowlist:
+      - "ghcr.io/toggle-corp/"
+    clusterCIDRs:
+      - "10.0.0.0/8"
+      - "172.20.0.0/16"
+    traefikGroup: "traefik.io"
+    traefikNamespace: "traefik"
+    imagePullSecret: ""
+    storageClass: ""
+    measureInterval: "1h"
+    images:
+      clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0"
+      copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0"
+      du: "ghcr.io/toggle-corp/toggle-web-baker-du:0.0.0"
+      cleanup: "ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.0.0"
+      clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.0.0"
+      shim: "ghcr.io/toggle-corp/toggle-web-baker-shim:0.0.0"
+      nginx: "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
+    nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:0.0.0","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:0.0.0","runAsUser":1000}}
+    phaseResources:
+      cpu:
+        request: "0.1"
+        limit: "4"
+      memory:
+        setup: "512Mi"
+        fetch: "512Mi"
+        build: "2Gi"
+    activeDeadlineSeconds: 1800
+
+---
+# Source: toggle-web-baker-helm/templates/crd.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+    # helm.sh/resource-policy keeps the CRD on `helm uninstall` so existing
+    # FrontendApp CRs are not cascade-deleted.
+    helm.sh/resource-policy: keep
+  name: frontendapps.baker.toggle-corp.com
+spec:
+  group: baker.toggle-corp.com
+  names:
+    kind: FrontendApp
+    listKind: FrontendAppList
+    plural: frontendapps
+    shortNames:
+    - fapp
+    singular: frontendapp
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.build.result
+      name: Result
+      type: string
+    - jsonPath: .status.url
+      name: URL
+      type: string
+    - jsonPath: .status.specStale
+      name: Stale
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - jsonPath: .status.storage.thresholdState
+      name: Storage
+      priority: 1
+      type: string
+    - jsonPath: .status.lastSuccessfulBuildTime
+      name: Last-Success
+      priority: 1
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FrontendApp is the Schema for the frontendapps API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: 'FrontendAppSpec is the desired state: operational tunables
+              for one app.'
+            properties:
+              auth:
+                description: |-
+                  AuthConfig configures optional HTTP basic auth. Exactly one of passwordHash or
+                  secretRef must be set.
+                properties:
+                  passwordHash:
+                    type: string
+                  secretRef:
+                    description: AuthSecretRef points at a Secret key holding a bcrypt/htpasswd
+                      line.
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: auth requires exactly one of passwordHash or secretRef
+                  rule: '(has(self.passwordHash) ? 1 : 0) + (has(self.secretRef) ?
+                    1 : 0) == 1'
+              group:
+                description: |-
+                  Group is an optional, purely-informational project label used by the
+                  console to group and filter apps (e.g. all instances of one site).
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              ingress:
+                description: IngressConfig describes the public ingress for the served
+                  bundle.
+                properties:
+                  className:
+                    type: string
+                  host:
+                    type: string
+                  tls:
+                    description: TLSConfig configures TLS termination at the Ingress.
+                    properties:
+                      secretName:
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                required:
+                - host
+                type: object
+              keepReleases:
+                default: 0
+                description: |-
+                  KeepReleases is the total number of releases retained on the output
+                  volume, newest first; the copier prunes after each publish and the manual
+                  release-prune uses the same budget. The current and previous release are
+                  ALWAYS protected (and count toward the budget), so 0 — the default —
+                  means "keep only the protected releases".
+                minimum: 0
+                type: integer
+              pipeline:
+                description: |-
+                  Pipeline is HOW the app is built: toolchain, timeout, and the ordered
+                  setup/fetch/build phases. Required — every app must build something.
+                properties:
+                  nodeVersion:
+                    description: |-
+                      NodeVersion selects an operator-managed node toolchain by MAJOR version
+                      (e.g. 18). The operator resolves it to a digest-pinned image + numeric UID +
+                      writable HOME, so the app need not set image/runAsUser. A phase may still
+                      override with its own image (fully BYO for that phase). Available majors are
+                      operator/chart config; an unknown version fails the app at reconcile. Omit
+                      to supply build.image yourself.
+                    minimum: 1
+                    type: integer
+                  packageManager:
+                    default: yarn
+                    description: PackageManager selects the JS package manager (drives
+                      the volume layout).
+                    enum:
+                    - yarn
+                    - pnpm
+                    type: string
+                  phases:
+                    description: |-
+                      PhasesSpec is the ordered build pipeline: setup → fetch → build. setup and
+                      fetch are optional (an app may install/fetch nothing); build is required (it
+                      produces the served bundle). The operator runs them in this fixed order
+                      regardless of map/field order.
+                    properties:
+                      build:
+                        description: |-
+                          BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
+                          copier publishes. build carries more than setup/fetch, so it has its own type
+                          (setup/fetch stay plain PhaseSpec).
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            items:
+                              description: |-
+                                EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                                reach the built bundle, so it must never carry secrets.
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                valueFrom:
+                                  description: |-
+                                    EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                                    ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                                    secrets can never leak into setup/build env via this type.
+                                  properties:
+                                    configMapKeyRef:
+                                      description: ConfigMapKeySelector selects a
+                                        key from a ConfigMap in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  type: object
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          image:
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                              "2Gi"). When omitted the operator supplies a per-phase default (operator
+                              config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                              memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                              Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                              Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+                              quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+                              than resource.Quantity (no exponents, no milli), which is nonsensical for
+                              a memory ceiling. The operator still falls back to its default on any
+                              value that fails to parse (defense for pre-rule objects).
+                            pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
+                            type: string
+                          outputDir:
+                            default: dist
+                            description: |-
+                              OutputDir is the subdir of the workspace holding the built bundle (the
+                              copier's OUTPUT_DIR). The "dist" default is declared here so it shows in
+                              kubectl explain / the stored spec; the copier still treats empty as
+                              "dist" for objects admitted before the default. Must be a safe relative
+                              path. Two layers: the RE2 pattern restricts the character set (rejecting
+                              spaces/shell metachars and a leading "/"), and a CEL rule on this type
+                              rejects any empty, "." or ".." path SEGMENT (RE2 has no lookaround and can't
+                              do a per-segment check). The segment rule also blocks the "." whole-dir
+                              footgun (which would publish the entire workspace) and trailing/duplicate
+                              slashes, while still allowing dotted names like "assets..min".
+                            maxLength: 256
+                            pattern: ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$
+                            type: string
+                          runAsUser:
+                            description: |-
+                              RunAsUser pins this phase container's numeric UID. The build pod sets
+                              runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                              (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                              cannot verify a named user is non-root (CreateContainerConfigError). Set
+                              this to the image's numeric non-root UID to satisfy the constraint. Must
+                              be > 0 (non-root).
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        type: object
+                        x-kubernetes-validations:
+                        - message: pipeline.phases.build.command is required
+                          rule: has(self.command) && size(self.command) > 0
+                        - message: build.outputDir must be a relative path with no
+                            empty, '.' or '..' segments
+                          rule: '!has(self.outputDir) || self.outputDir.split(''/'').all(s,
+                            s != '''' && s != ''.'' && s != ''..'')'
+                      fetch:
+                        description: |-
+                          FetchPhaseSpec is the fetch phase: a PhaseSpec plus the Secret-sourced env it
+                          alone may consume. Secrets live here (not spec-wide) so the "secrets are
+                          fetch-only" boundary is STRUCTURAL — no other phase type can carry them.
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            items:
+                              description: |-
+                                EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                                reach the built bundle, so it must never carry secrets.
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                valueFrom:
+                                  description: |-
+                                    EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                                    ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                                    secrets can never leak into setup/build env via this type.
+                                  properties:
+                                    configMapKeyRef:
+                                      description: ConfigMapKeySelector selects a
+                                        key from a ConfigMap in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  type: object
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          image:
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                              "2Gi"). When omitted the operator supplies a per-phase default (operator
+                              config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                              memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                              Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                              Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+                              quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+                              than resource.Quantity (no exponents, no milli), which is nonsensical for
+                              a memory ceiling. The operator still falls back to its default on any
+                              value that fails to parse (defense for pre-rule objects).
+                            pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
+                            type: string
+                          runAsUser:
+                            description: |-
+                              RunAsUser pins this phase container's numeric UID. The build pod sets
+                              runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                              (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                              cannot verify a named user is non-root (CreateContainerConfigError). Set
+                              this to the image's numeric non-root UID to satisfy the constraint. Must
+                              be > 0 (non-root).
+                            format: int64
+                            minimum: 1
+                            type: integer
+                          secrets:
+                            description: Secrets are Secret-sourced env injected into
+                              the FETCH phase ONLY.
+                            items:
+                              description: |-
+                                EnvVarWithSecret is a Secret-sourced environment variable, intended for the
+                                FETCH phase ONLY. The operator injects these solely into the fetch container.
+                              properties:
+                                name:
+                                  type: string
+                                valueFrom:
+                                  description: EnvVarWithSecretSource is the inline
+                                    source for a secret-backed env var.
+                                  properties:
+                                    secretKeyRef:
+                                      description: SecretKeySelector selects a key
+                                        from a Secret in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  required:
+                                  - secretKeyRef
+                                  type: object
+                              required:
+                              - name
+                              - valueFrom
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                        x-kubernetes-validations:
+                        - message: secrets require a fetch.command to consume them
+                          rule: '!has(self.secrets) || size(self.secrets) == 0 ||
+                            (has(self.command) && size(self.command) > 0)'
+                      setup:
+                        description: |-
+                          PhaseSpec describes one pipeline phase container (setup / fetch / build). The
+                          public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
+                          secretKeyRef field, so a CEL rule would be tautological — none is declared.
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            items:
+                              description: |-
+                                EnvVar is a PUBLIC environment variable (literal or ConfigMap-sourced). It can
+                                reach the built bundle, so it must never carry secrets.
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                valueFrom:
+                                  description: |-
+                                    EnvVarSource is the inline (NO $ref) source for a public EnvVar. Only a
+                                    ConfigMap key reference is permitted; secretKeyRef is intentionally absent so
+                                    secrets can never leak into setup/build env via this type.
+                                  properties:
+                                    configMapKeyRef:
+                                      description: ConfigMapKeySelector selects a
+                                        key from a ConfigMap in the app namespace.
+                                      properties:
+                                        key:
+                                          type: string
+                                        name:
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  type: object
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          image:
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the per-phase container memory ceiling (a k8s quantity, e.g.
+                              "2Gi"). When omitted the operator supplies a per-phase default (operator
+                              config owns the defaults, NOT the CRD — no kubebuilder default here). The
+                              memory REQUEST is always pinned equal to the limit (incompressible ⇒
+                              Guaranteed QoS), so a heavy build cannot OOM the node with a low request.
+                              Shared by setup/fetch/build via PhaseSpec. The pattern admits a memory
+                              quantity (plain bytes or a binary/decimal suffix) — deliberately narrower
+                              than resource.Quantity (no exponents, no milli), which is nonsensical for
+                              a memory ceiling. The operator still falls back to its default on any
+                              value that fails to parse (defense for pre-rule objects).
+                            pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$
+                            type: string
+                          runAsUser:
+                            description: |-
+                              RunAsUser pins this phase container's numeric UID. The build pod sets
+                              runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
+                              (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
+                              cannot verify a named user is non-root (CreateContainerConfigError). Set
+                              this to the image's numeric non-root UID to satisfy the constraint. Must
+                              be > 0 (non-root).
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        type: object
+                    required:
+                    - build
+                    type: object
+                  submodules:
+                    type: boolean
+                  timeout:
+                    description: |-
+                      Timeout bounds the WHOLE build pipeline (all phases) as a Go duration
+                      string (e.g. "1h", "90m", "1h30m"; max unit is hours — no days). When unset
+                      the operator supplies the default from its config (NO kubebuilder default
+                      here — operator config owns it). A pointer so unset is truly absent: a
+                      value type would always serialize as "0s", defeating the has() guard in
+                      the positive-duration CEL rule on PipelineSpec.
+                    type: string
+                required:
+                - phases
+                type: object
+                x-kubernetes-validations:
+                - message: 'build needs an image: set nodeVersion or build.image under
+                    pipeline'
+                  rule: has(self.nodeVersion) || has(self.phases.build.image)
+                - message: pipeline.timeout must be a positive duration; omit it to
+                    use the operator default
+                  rule: '!has(self.timeout) || duration(self.timeout) > duration(''0s'')'
+              ref:
+                default: HEAD
+                type: string
+              repo:
+                description: |-
+                  Repo is the clone URL, handed verbatim to `git clone`. The pattern is a
+                  loose shape check (https / ssh / scp-style) that catches garbage at
+                  admission instead of minutes later at clone time — it must stay wide
+                  enough to never reject a URL git can clone.
+                minLength: 1
+                pattern: ^(https?://|git@|ssh://)[^\s]+$
+                type: string
+              schedule:
+                default: 0 */12 * * *
+                type: string
+              storage:
+                description: |-
+                  StorageConfig groups the per-volume absolute-byte thresholds. The operator
+                  also calls domain.ValidateStorage at reconcile time (cleanup < alert < cap).
+                properties:
+                  cache:
+                    description: |-
+                      CacheThresholds are absolute-byte thresholds for the regenerable cache
+                      volume. All byte fields are non-negative; 0 means unset/disabled.
+                    properties:
+                      alertBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      cleanupBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                  dataCache:
+                    description: |-
+                      DataCacheThresholds adds a per-run delta budget on top of cache thresholds.
+                      All byte fields are non-negative; 0 means unset/disabled.
+                    properties:
+                      alertBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      cleanupBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      runDeltaBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                  output:
+                    description: |-
+                      OutputThresholds bound the served-bundle volume. All byte fields are
+                      non-negative; 0 means unset/disabled.
+                    properties:
+                      alertBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      capBytes:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: cache.cleanupBytes must be < cache.alertBytes
+                  rule: '!has(self.cache) || !has(self.cache.cleanupBytes) || !has(self.cache.alertBytes)
+                    || self.cache.cleanupBytes < self.cache.alertBytes'
+                - message: dataCache.cleanupBytes must be < dataCache.alertBytes
+                  rule: '!has(self.dataCache) || !has(self.dataCache.cleanupBytes)
+                    || !has(self.dataCache.alertBytes) || self.dataCache.cleanupBytes
+                    < self.dataCache.alertBytes'
+                - message: output.alertBytes must be < output.capBytes
+                  rule: '!has(self.output) || !has(self.output.alertBytes) || !has(self.output.capBytes)
+                    || self.output.alertBytes < self.output.capBytes'
+            required:
+            - ingress
+            - pipeline
+            - repo
+            type: object
+          status:
+            description: FrontendAppStatus is the operator-owned observed state.
+            properties:
+              build:
+                description: |-
+                  BuildStatus is the unified per-build record. It mirrors the current/last
+                  build Job in status.build, and the SAME shape is reused for every entry of
+                  status.buildHistory — one type, one renderer.
+                properties:
+                  attempts:
+                    type: integer
+                  completionTime:
+                    format: date-time
+                    type: string
+                  failedStep:
+                    description: |-
+                      FailedStep names the step whose failure ended the build, when Result is
+                      Failed or Aborted.
+                    type: string
+                  jobName:
+                    type: string
+                  logsRef:
+                    type: string
+                  message:
+                    type: string
+                  phase:
+                    description: BuildPhase is the lifecycle of the current/last build
+                      pod.
+                    type: string
+                  podName:
+                    description: |-
+                      PodName is the build pod for this Job, persisted so the read-only console
+                      (which can get but not list pods) can fetch logs, and so a Loki query can
+                      be scoped by pod label.
+                    type: string
+                  resolvedImages:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      ResolvedImages maps each pipeline container (shim-install/clone/setup/
+                      fetch/build/copier) to the exact image reference the build Job was
+                      created with — digest-pinned for operator-managed toolchains. Captured at
+                      Job CREATION (like SpecHashAnnotation) so it records the build that
+                      actually ran, not a later operator-config change. Bounded by the fixed
+                      pipeline shape: 6 containers today (shim-install/clone/setup/fetch/build/
+                      copier), 8 leaves headroom for new pipeline steps without an API bump.
+                    maxProperties: 8
+                    type: object
+                  result:
+                    description: BuildResult is the terminal outcome of a build pod.
+                    type: string
+                  startTime:
+                    format: date-time
+                    type: string
+                  steps:
+                    description: Steps is the ordered per-step timeline (only applicable
+                      steps).
+                    items:
+                      description: |-
+                        BuildStep is one entry of a build's ordered per-step timeline. Only steps
+                        that actually apply to the app appear (no phantom skipped slots).
+                      properties:
+                        finishedAt:
+                          description: |-
+                            FinishedAt is when the step's container terminated. Absent while the step
+                            is still running (the console derives a live duration from StartedAt).
+                          format: date-time
+                          type: string
+                        memoryLimit:
+                          description: |-
+                            MemoryLimit is the memory ceiling the step's container ran with, as its
+                            Kubernetes quantity string (e.g. "2Gi"), read from the build pod SPEC so
+                            it reflects the build that actually ran. Only stamped once the container
+                            has started (Running or Terminated). Rendered next to PeakMemoryBytes so
+                            peak-vs-allocated is visible per step. Empty for the synthetic release
+                            step, a step that has not started yet, or when the pod was already reaped.
+                          type: string
+                        message:
+                          type: string
+                        name:
+                          type: string
+                        peakMemoryBytes:
+                          description: |-
+                            PeakMemoryBytes is the phase's TRUE peak memory: the kernel-tracked
+                            cgroup high-water mark (memory.peak — the max of memory.current, the
+                            value the OOM killer compares against the limit), recorded by the shim
+                            wrapper via the container termination message when the step ends. It is
+                            the number to tune spec.pipeline.phases.<p>.memoryLimit against. 0/absent
+                            when unmeasured (shim-less steps like clone/copier, pod reaped before
+                            terminal observe, or no cgroup v2 peak available).
+                          format: int64
+                          type: integer
+                        startedAt:
+                          description: |-
+                            StartedAt is when the step's container started, read from the kubelet's
+                            container state (Running.StartedAt or Terminated.StartedAt). Absent for a
+                            step not yet reached, the synthetic release step, or a pod reaped before
+                            terminal observe.
+                          format: date-time
+                          type: string
+                        status:
+                          description: |-
+                            StepStatus is the state of one ordered step in a build's pipeline. Pending
+                            renders greyed (not yet reached); the others map to their obvious icons.
+                          type: string
+                      required:
+                      - name
+                      - status
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  termination:
+                    description: |-
+                      Termination records how a build container abnormally terminated (currently
+                      OOMKilled), captured from the failed pod's container state at terminal
+                      observe so the fact survives the pod being reaped. Nil unless a container
+                      terminated with a non-empty reason.
+                    properties:
+                      container:
+                        description: Container is the build step/container that terminated
+                          (e.g. "build").
+                        type: string
+                      exitCode:
+                        description: ExitCode is the container's exit code (137 for
+                          an OOM kill).
+                        format: int32
+                        type: integer
+                      finishedAt:
+                        description: FinishedAt is when the container terminated.
+                        format: date-time
+                        type: string
+                      memoryLimit:
+                        description: |-
+                          MemoryLimit is the memory limit that container ran with, as the Kubernetes
+                          quantity string it was configured with (e.g. "512Mi"). Read from the pod
+                          spec so it reflects the build that actually ran, not a later spec edit.
+                        type: string
+                      reason:
+                        description: Reason is the container's terminated reason (e.g.
+                          "OOMKilled").
+                        type: string
+                    type: object
+                  trigger:
+                    description: Trigger records why this build ran.
+                    type: string
+                  triggeredBy:
+                    description: TriggeredBy is the user who requested a manual build
+                      (empty for scheduled).
+                    type: string
+                type: object
+              buildHistory:
+                description: |-
+                  BuildHistory is a newest-first ring buffer of recent terminal builds
+                  (Jobs that ran). The operator caps it; CEL bounds it defensively.
+                items:
+                  description: |-
+                    BuildStatus is the unified per-build record. It mirrors the current/last
+                    build Job in status.build, and the SAME shape is reused for every entry of
+                    status.buildHistory — one type, one renderer.
+                  properties:
+                    attempts:
+                      type: integer
+                    completionTime:
+                      format: date-time
+                      type: string
+                    failedStep:
+                      description: |-
+                        FailedStep names the step whose failure ended the build, when Result is
+                        Failed or Aborted.
+                      type: string
+                    jobName:
+                      type: string
+                    logsRef:
+                      type: string
+                    message:
+                      type: string
+                    phase:
+                      description: BuildPhase is the lifecycle of the current/last
+                        build pod.
+                      type: string
+                    podName:
+                      description: |-
+                        PodName is the build pod for this Job, persisted so the read-only console
+                        (which can get but not list pods) can fetch logs, and so a Loki query can
+                        be scoped by pod label.
+                      type: string
+                    resolvedImages:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        ResolvedImages maps each pipeline container (shim-install/clone/setup/
+                        fetch/build/copier) to the exact image reference the build Job was
+                        created with — digest-pinned for operator-managed toolchains. Captured at
+                        Job CREATION (like SpecHashAnnotation) so it records the build that
+                        actually ran, not a later operator-config change. Bounded by the fixed
+                        pipeline shape: 6 containers today (shim-install/clone/setup/fetch/build/
+                        copier), 8 leaves headroom for new pipeline steps without an API bump.
+                      maxProperties: 8
+                      type: object
+                    result:
+                      description: BuildResult is the terminal outcome of a build
+                        pod.
+                      type: string
+                    startTime:
+                      format: date-time
+                      type: string
+                    steps:
+                      description: Steps is the ordered per-step timeline (only applicable
+                        steps).
+                      items:
+                        description: |-
+                          BuildStep is one entry of a build's ordered per-step timeline. Only steps
+                          that actually apply to the app appear (no phantom skipped slots).
+                        properties:
+                          finishedAt:
+                            description: |-
+                              FinishedAt is when the step's container terminated. Absent while the step
+                              is still running (the console derives a live duration from StartedAt).
+                            format: date-time
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the memory ceiling the step's container ran with, as its
+                              Kubernetes quantity string (e.g. "2Gi"), read from the build pod SPEC so
+                              it reflects the build that actually ran. Only stamped once the container
+                              has started (Running or Terminated). Rendered next to PeakMemoryBytes so
+                              peak-vs-allocated is visible per step. Empty for the synthetic release
+                              step, a step that has not started yet, or when the pod was already reaped.
+                            type: string
+                          message:
+                            type: string
+                          name:
+                            type: string
+                          peakMemoryBytes:
+                            description: |-
+                              PeakMemoryBytes is the phase's TRUE peak memory: the kernel-tracked
+                              cgroup high-water mark (memory.peak — the max of memory.current, the
+                              value the OOM killer compares against the limit), recorded by the shim
+                              wrapper via the container termination message when the step ends. It is
+                              the number to tune spec.pipeline.phases.<p>.memoryLimit against. 0/absent
+                              when unmeasured (shim-less steps like clone/copier, pod reaped before
+                              terminal observe, or no cgroup v2 peak available).
+                            format: int64
+                            type: integer
+                          startedAt:
+                            description: |-
+                              StartedAt is when the step's container started, read from the kubelet's
+                              container state (Running.StartedAt or Terminated.StartedAt). Absent for a
+                              step not yet reached, the synthetic release step, or a pod reaped before
+                              terminal observe.
+                            format: date-time
+                            type: string
+                          status:
+                            description: |-
+                              StepStatus is the state of one ordered step in a build's pipeline. Pending
+                              renders greyed (not yet reached); the others map to their obvious icons.
+                            type: string
+                        required:
+                        - name
+                        - status
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    termination:
+                      description: |-
+                        Termination records how a build container abnormally terminated (currently
+                        OOMKilled), captured from the failed pod's container state at terminal
+                        observe so the fact survives the pod being reaped. Nil unless a container
+                        terminated with a non-empty reason.
+                      properties:
+                        container:
+                          description: Container is the build step/container that
+                            terminated (e.g. "build").
+                          type: string
+                        exitCode:
+                          description: ExitCode is the container's exit code (137
+                            for an OOM kill).
+                          format: int32
+                          type: integer
+                        finishedAt:
+                          description: FinishedAt is when the container terminated.
+                          format: date-time
+                          type: string
+                        memoryLimit:
+                          description: |-
+                            MemoryLimit is the memory limit that container ran with, as the Kubernetes
+                            quantity string it was configured with (e.g. "512Mi"). Read from the pod
+                            spec so it reflects the build that actually ran, not a later spec edit.
+                          type: string
+                        reason:
+                          description: Reason is the container's terminated reason
+                            (e.g. "OOMKilled").
+                          type: string
+                      type: object
+                    trigger:
+                      description: Trigger records why this build ran.
+                      type: string
+                    triggeredBy:
+                      description: TriggeredBy is the user who requested a manual
+                        build (empty for scheduled).
+                      type: string
+                  type: object
+                maxItems: 5
+                type: array
+                x-kubernetes-list-type: atomic
+              cleanup:
+                description: Cleanup records the per-action cleanup state (cache prune
+                  / release prune).
+                properties:
+                  cache:
+                    description: |-
+                      CleanupActionStatus is the per-action record for one cleanup kind (cache or
+                      release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
+                      mirrors the triggering annotation so the operator can detect a fresh request.
+                    properties:
+                      completedAt:
+                        description: |-
+                          CompletedAt is when the cleanup helper last finished. Together with
+                          StartedAt it makes the prune duration observable (was: lastCompleted, a
+                          hand-formatted string — every other status timestamp is a metav1.Time).
+                        format: date-time
+                        type: string
+                      message:
+                        type: string
+                      phase:
+                        description: 'Phase is the lifecycle of the cleanup helper:
+                          Pending|Running|Succeeded|Failed.'
+                        type: string
+                      reclaimedBytes:
+                        description: ReclaimedBytes is the space reclaimed by the
+                          last completed cleanup.
+                        format: int64
+                        type: integer
+                      requestedAt:
+                        description: RequestedAt mirrors the cleanup request annotation's
+                          token.
+                        type: string
+                      requestedBy:
+                        description: RequestedBy is the user who requested the cleanup.
+                        type: string
+                      startedAt:
+                        description: StartedAt is when the cleanup helper Job was
+                          last created.
+                        format: date-time
+                        type: string
+                    type: object
+                  releases:
+                    description: |-
+                      CleanupActionStatus is the per-action record for one cleanup kind (cache or
+                      release prune). Phase tracks the lifecycle of the helper pod; RequestedAt
+                      mirrors the triggering annotation so the operator can detect a fresh request.
+                    properties:
+                      completedAt:
+                        description: |-
+                          CompletedAt is when the cleanup helper last finished. Together with
+                          StartedAt it makes the prune duration observable (was: lastCompleted, a
+                          hand-formatted string — every other status timestamp is a metav1.Time).
+                        format: date-time
+                        type: string
+                      message:
+                        type: string
+                      phase:
+                        description: 'Phase is the lifecycle of the cleanup helper:
+                          Pending|Running|Succeeded|Failed.'
+                        type: string
+                      reclaimedBytes:
+                        description: ReclaimedBytes is the space reclaimed by the
+                          last completed cleanup.
+                        format: int64
+                        type: integer
+                      requestedAt:
+                        description: RequestedAt mirrors the cleanup request annotation's
+                          token.
+                        type: string
+                      requestedBy:
+                        description: RequestedBy is the user who requested the cleanup.
+                        type: string
+                      startedAt:
+                        description: StartedAt is when the cleanup helper Job was
+                          last created.
+                        format: date-time
+                        type: string
+                    type: object
+                type: object
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastBuildTime:
+                format: date-time
+                type: string
+              lastBuiltSpecHash:
+                type: string
+              lastManualTrigger:
+                description: ManualTrigger records the last manual rebuild request.
+                properties:
+                  time:
+                    format: date-time
+                    type: string
+                  triggeredBy:
+                    type: string
+                type: object
+              lastProcessedRebuild:
+                type: string
+              lastSuccessfulBuildTime:
+                format: date-time
+                type: string
+              nodeName:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the derived top-level lifecycle phase (computed
+                  from conditions).
+                type: string
+              release:
+                description: ReleaseStatus tracks the served release pointers.
+                properties:
+                  current:
+                    type: string
+                  previous:
+                    type: string
+                  servingSince:
+                    format: date-time
+                    type: string
+                type: object
+              specStale:
+                type: boolean
+              storage:
+                description: StorageStatus records the most recent du measurement.
+                properties:
+                  capacities:
+                    additionalProperties:
+                      format: int64
+                      type: integer
+                    description: |-
+                      Capacities maps each PVC-backed volume (cache / dataCache / output) to
+                      its provisioned capacity in bytes, read from the bound PVC's
+                      status.capacity. The console draws the storage fill bars against these
+                      when no explicit spec.storage cap applies (outputTotal in particular is
+                      physically bounded by the output PVC). Bounded by the fixed volume set;
+                      8 leaves headroom, mirroring resolvedImages.
+                    maxProperties: 8
+                    type: object
+                  lastRunDeltas:
+                    additionalProperties:
+                      format: int64
+                      type: integer
+                    type: object
+                  measuredAt:
+                    format: date-time
+                    type: string
+                  releaseCount:
+                    description: |-
+                      ReleaseCount is the number of release directories retained on the output
+                      PVC, counted by the copier AFTER its retention sweep and flip (so it is
+                      the real on-disk count, not spec.keepReleases). 0/absent when no copier
+                      has reported yet.
+                    format: int64
+                    type: integer
+                  sizes:
+                    additionalProperties:
+                      format: int64
+                      type: integer
+                    type: object
+                  thresholdState:
+                    type: string
+                type: object
+              url:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+
+---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+# Operator ClusterRole — kept in sync with config/rbac/role.yaml
+# (regenerate that file with `just manifests`, then mirror changes here).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-toggle-web-baker-operator
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - persistentvolumeclaims
+  - serviceaccounts
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baker.toggle-corp.com
+  resources:
+  - frontendapps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baker.toggle-corp.com
+  resources:
+  - frontendapps/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - baker.toggle-corp.com
+  resources:
+  - frontendapps/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - traefik.io
+  resources:
+  - middlewares
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-toggle-web-baker-operator
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-toggle-web-baker-operator
+subjects:
+  - kind: ServiceAccount
+    name: release-name-toggle-web-baker-operator
+    namespace: default
+
+---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+# Leader-election Role — lease + event access, scoped to the operator's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-toggle-web-baker-operator-leader-election
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+# Source: toggle-web-baker-helm/templates/operator-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-toggle-web-baker-operator-leader-election
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-toggle-web-baker-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: release-name-toggle-web-baker-operator
+    namespace: default
+---
+# Source: toggle-web-baker-helm/templates/operator-metrics-service.yaml
+# Headless-of-purpose ClusterIP Service in front of the operator's metrics
+# port, existing solely as the ServiceMonitor's scrape target. The
+# operator-metrics component label distinguishes it for the ServiceMonitor
+# selector without matching the operator pods themselves.
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-toggle-web-baker-operator-metrics
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: operator
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+      protocol: TCP
+
+---
+# Source: toggle-web-baker-helm/templates/operator-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-toggle-web-baker-operator
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: toggle-web-baker
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      annotations:
+        # Roll the operator pod whenever the config ConfigMap content changes.
+        checksum/config: 3840b690d0404fb676361cf6f58a0ca8a2bc598d916668ed4a9992cae925a83f
+      labels:
+        app.kubernetes.io/name: toggle-web-baker
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: release-name-toggle-web-baker-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: ghcr.io/toggle-corp/toggle-web-baker-operator:0.0.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config=/etc/baker/config.yaml
+          volumeMounts:
+            - { name: config, mountPath: /etc/baker, readOnly: true }
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+      volumes:
+        - { name: config, configMap: { name: release-name-toggle-web-baker-operator-config } }
+
+---
+# Source: toggle-web-baker-helm/templates/frontendapp-prometheusrule.yaml
+# Alert rules over the operator's frontendapp_* metrics. monitoring.labels
+# must match your Prometheus ruleSelector (e.g. release: kube-prometheus-stack).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: release-name-toggle-web-baker-frontendapp
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: frontendapp.rules
+      rules:
+        - alert: FrontendAppDegraded
+          expr: frontendapp_degraded == 1
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded ({{ $labels.reason }})"
+            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded with reason {{ $labels.reason }}. Inspect the CR status conditions and the latest build history entry for details."
+        - alert: FrontendAppBuildFailed
+          expr: increase(frontendapp_builds_total{result="Failed"}[10m]) > 0
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build failed"
+            description: "A build for FrontendApp {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step."
+        - alert: FrontendAppBuildOOMKilled
+          expr: increase(frontendapp_build_oom_total[10m]) > 0
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build OOMKilled in step {{ $labels.step }}"
+            description: "A build for FrontendApp {{ $labels.namespace }}/{{ $labels.name }} was OOMKilled in the {{ $labels.step }} step within the last 10 minutes. Raise spec.pipeline.phases.{{ $labels.step }}.memoryLimit (or the operator's per-phase default)."
+        - alert: FrontendAppStorageThreshold
+          expr: frontendapp_storage_used_bytes > frontendapp_storage_alert_bytes
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold"
+            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents."
+        - alert: FrontendAppBuildStuck
+          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds + 600) and frontendapp_build_running_since_seconds > 0
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline"
+            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has had a build running for more than its deadline plus 10m grace — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
+        - alert: FrontendAppNeverReady
+          expr: frontendapp_phase{phase="AwaitingFirstBuild"} == 1
+          for: 1h
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has never become Ready"
+            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been AwaitingFirstBuild for over 1h without a successful first build. Check whether builds are starting (webhook/schedule) and why they are not succeeding."
+
+---
+# Source: toggle-web-baker-helm/templates/operator-servicemonitor.yaml
+# Scrapes the operator's plain-HTTP /metrics on :8080 (cmd/main.go uses no
+# secure-serving/authn filter) via the operator-metrics Service. Requires the
+# monitoring.coreos.com CRDs; monitoring.labels must match your Prometheus
+# serviceMonitorSelector (e.g. release: kube-prometheus-stack).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: release-name-toggle-web-baker-operator
+  namespace: default
+  labels:
+    helm.sh/chart: toggle-web-baker-helm-0.0.0
+    app.kubernetes.io/name: toggle-web-baker
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "0.0.0"
+    app.kubernetes.io/managed-by: Helm
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: toggle-web-baker
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: operator-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics

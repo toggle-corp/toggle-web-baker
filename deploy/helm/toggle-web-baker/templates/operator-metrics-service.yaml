@@ -1,0 +1,24 @@
+{{- if .Values.monitoring.enabled }}
+# Headless-of-purpose ClusterIP Service in front of the operator's metrics
+# port, existing solely as the ServiceMonitor's scrape target. The
+# operator-metrics component label distinguishes it for the ServiceMonitor
+# selector without matching the operator pods themselves.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "toggle-web-baker.operator.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-metrics
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "toggle-web-baker.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

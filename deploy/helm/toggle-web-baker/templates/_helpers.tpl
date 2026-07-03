@@ -82,6 +82,22 @@ Usage: include "toggle-web-baker.nodeImagesJSON" $
 {{- end -}}
 
 {{/*
+Convert a duration string like "90s", "10m" or "1h" to integer seconds (for
+PromQL arithmetic, which has no duration literals in expressions). Fails the
+render on anything else.
+Usage: include "toggle-web-baker.durationSeconds" .Values.monitoring.alerts.stuckBuildGrace
+*/}}
+{{- define "toggle-web-baker.durationSeconds" -}}
+{{- $d := printf "%v" . -}}
+{{- if not (regexMatch "^[0-9]+[smh]$" $d) -}}
+{{- fail (printf "unparsable duration %q: expected <integer><s|m|h>, e.g. 90s, 10m, 1h" $d) -}}
+{{- end -}}
+{{- $n := regexFind "^[0-9]+" $d | int64 -}}
+{{- $unit := regexFind "[smh]$" $d -}}
+{{- if eq $unit "h" -}}{{ mul $n 3600 }}{{- else if eq $unit "m" -}}{{ mul $n 60 }}{{- else -}}{{ $n }}{{- end -}}
+{{- end -}}
+
+{{/*
 The three SENTRY_* env list items shared by the operator and console
 containers. Callers gate on .Values.sentry.dsn and provide the per-binary
 image tag for SENTRY_RELEASE (falls back to the chart appVersion).
