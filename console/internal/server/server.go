@@ -100,6 +100,17 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Cache not warm yet: render the "warming up" state instead of running the
+	// facet/filter/pagination/storage pipeline over an empty set (which would
+	// render as a healthy-looking empty cluster). See listData.Warming.
+	if !s.apps.Synced() {
+		render(w, "list", listData{
+			Head:    head{Title: "Apps", User: sentryhttp.UserFrom(r)},
+			Warming: true,
+		})
+		return
+	}
+
 	apps, err := s.apps.List(r.Context())
 	if err != nil {
 		s.renderError(w, r, http.StatusBadGateway, "Could not list FrontendApps", err)
@@ -144,7 +155,10 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 
 	render(w, "list", listData{
 		Head: head{Title: "Apps", User: sentryhttp.UserFrom(r)},
-		Apps: pageApps,
+		// Stale: synced but the watch is currently erroring, so the list may be
+		// out of date — the template shows a banner above the table.
+		Stale: s.apps.Stale(),
+		Apps:  pageApps,
 		// Matched is the filtered (pre-pagination) count; the storage roll-up
 		// spans the SAME set, so the heading count and storage describe one set.
 		// Filtered flips the count to "Matched of Total" when a filter narrowed it.

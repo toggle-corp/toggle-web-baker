@@ -69,6 +69,76 @@ func TestList_ServesSeededAppsFromCache(t *testing.T) {
 	}
 }
 
+// Synced must flip to true once NewWithDynamic's warm-up completes (objects
+// seeded synchronously), and List must then return them. Before sync the server
+// renders a "warming" state instead of an empty list.
+func TestSynced_TrueAfterWarmup(t *testing.T) {
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		scheme, listKinds, fappObj("mapswipe", "mapswipe-uat"))
+
+	c := NewWithDynamic(dyn)
+	t.Cleanup(c.Close)
+
+	if !c.Synced() {
+		t.Fatal("Synced() should be true after NewWithDynamic warm-up")
+	}
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(apps) != 1 || apps[0].Name != "mapswipe-uat" {
+		t.Fatalf("want the seeded app, got %+v", apps)
+	}
+}
+
+// Stale()'s time-window logic: a watch error read through recordWatchErr with a
+// frozen clock is stale within staleWindow and clears once the clock advances
+// past it. This drives the recorded-error path directly (recordWatchErr is the
+// same seam the WatchErrorHandler uses), with view.Now frozen for determinism.
+func TestStale_WindowFromRecordedError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, fappObj("ns", "a"))
+	c := NewWithDynamic(dyn)
+	t.Cleanup(c.Close)
+
+	if c.Stale() {
+		t.Fatal("Stale() should be false before any watch error")
+	}
+
+	base := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	old := view.Now
+	t.Cleanup(func() { view.Now = old })
+
+	view.Now = func() time.Time { return base }
+	c.recordWatchErr() // stamp the error at base
+	if !c.Stale() {
+		t.Error("Stale() should be true immediately after a watch error")
+	}
+
+	// Just inside the window: still stale.
+	view.Now = func() time.Time { return base.Add(staleWindow - time.Second) }
+	if !c.Stale() {
+		t.Error("Stale() should stay true within staleWindow")
+	}
+
+	// Past the window: recovered / errors stopped → not stale.
+	view.Now = func() time.Time { return base.Add(staleWindow + time.Second) }
+	if c.Stale() {
+		t.Error("Stale() should be false once the clock passes staleWindow")
+	}
+}
+
+// recentWatchErr is Stale()'s pure predicate; a zero last (no error ever) is
+// never recent.
+func TestRecentWatchErr_ZeroNeverRecent(t *testing.T) {
+	if recentWatchErr(time.Time{}, time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)) {
+		t.Error("zero last-error time must not read as recent")
+	}
+}
+
 // Close must be idempotent under concurrent callers: it closes c.stop, so two
 // racing closes would panic ("close of closed channel") without the sync.Once
 // guard. Run with -race to exercise the TOCTOU window. A prior double Close (the

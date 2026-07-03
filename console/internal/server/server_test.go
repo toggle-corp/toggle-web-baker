@@ -88,6 +88,30 @@ func (f *fakeLokiTailer) Tail(_ context.Context, _, _, _ string, _, _ time.Time,
 	return f.lines, f.err
 }
 
+// fakeLister implements k8s.FrontendAppPatcher with configurable Synced/Stale so
+// the warming and staleness rendering paths can be driven deterministically
+// (the real Client always syncs and is never stale in tests). Only List/Synced/
+// Stale are exercised by the list handler; the write/get methods are stubs.
+type fakeLister struct {
+	apps   []view.App
+	synced bool
+	stale  bool
+}
+
+func (f *fakeLister) List(context.Context) ([]view.App, error) { return f.apps, nil }
+func (f *fakeLister) Synced() bool                             { return f.synced }
+func (f *fakeLister) Stale() bool                              { return f.stale }
+func (f *fakeLister) Get(context.Context, string, string) (*unstructured.Unstructured, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (f *fakeLister) RequestRebuild(context.Context, string, string, string) error { return nil }
+func (f *fakeLister) RequestCleanupCache(context.Context, string, string, string) error {
+	return nil
+}
+func (f *fakeLister) RequestCleanupReleases(context.Context, string, string, string) error {
+	return nil
+}
+
 // newClient wraps k8s.NewWithDynamic and registers Close via t.Cleanup so the
 // informer goroutine it starts does not leak past the test. Every server-test
 // helper (and inline server build) constructs its client through this so no test
@@ -809,6 +833,70 @@ func TestList_RendersSeededApp(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/oauth2/sign_out?rd=/signed-out"`) {
 		t.Error("authenticated page should show the logout link")
+	}
+}
+
+// When the cache is not synced yet, the list page must show the warming notice
+// and NOT the table nor the empty-cluster "No FrontendApps match." row (which
+// would look like a healthy empty cluster).
+func TestList_WarmingWhenNotSynced(t *testing.T) {
+	srv := New(&fakeLister{synced: false}, &fakePodReader{}, &fakeLokiTailer{}, nil)
+	rec := getList(srv, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Cache warming up") {
+		t.Errorf("warming page should show the warming notice; body=%s", body)
+	}
+	if strings.Contains(body, "No FrontendApps match") {
+		t.Errorf("warming page must not show the empty-cluster row; body=%s", body)
+	}
+	if strings.Contains(body, "<table>") {
+		t.Errorf("warming page must not render the table; body=%s", body)
+	}
+}
+
+// When synced and not stale, the list renders the normal table with no warming
+// notice and no staleness banner.
+func TestList_SyncedNormalNoBanners(t *testing.T) {
+	srv := New(&fakeLister{synced: true, apps: []view.App{{Namespace: "ns", Name: "app-a"}}},
+		&fakePodReader{}, &fakeLokiTailer{}, nil)
+	rec := getList(srv, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "app-a") {
+		t.Errorf("synced list should render the app row; body=%s", body)
+	}
+	if strings.Contains(body, "Cache warming up") {
+		t.Errorf("synced list must not show the warming notice; body=%s", body)
+	}
+	if strings.Contains(body, "may be out of date") {
+		t.Errorf("synced, non-stale list must not show the staleness banner; body=%s", body)
+	}
+}
+
+// When synced but stale, the list renders the staleness banner above the table,
+// with the table still present.
+func TestList_StaleBannerAboveTable(t *testing.T) {
+	srv := New(&fakeLister{synced: true, stale: true, apps: []view.App{{Namespace: "ns", Name: "app-a"}}},
+		&fakePodReader{}, &fakeLokiTailer{}, nil)
+	rec := getList(srv, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	banner := "may be out of date"
+	if !strings.Contains(body, banner) {
+		t.Errorf("stale list should show the staleness banner; body=%s", body)
+	}
+	if !strings.Contains(body, "app-a") {
+		t.Errorf("stale list should still render the table rows; body=%s", body)
+	}
+	if strings.Index(body, banner) > strings.Index(body, "app-a") {
+		t.Errorf("staleness banner should appear above the table; body=%s", body)
 	}
 }
 

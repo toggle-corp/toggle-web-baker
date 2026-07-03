@@ -100,6 +100,14 @@ type signedOutData struct {
 
 type listData struct {
 	Head head
+	// Warming is true when the informer cache has not synced yet: the template
+	// then shows a "cache warming up" notice INSTEAD of the table (an empty table
+	// would look like a healthy empty cluster). The filter/pagination fields are
+	// left zero in this mode — there is nothing to show yet.
+	Warming bool
+	// Stale is true when synced but the watch is currently erroring, so the cached
+	// list may be out of date: the template renders a banner above the table.
+	Stale bool
 	// Apps is the filtered, health-ranked row set; Total is the unfiltered
 	// count. Matched is len(filtered) — the count AFTER status/group/search but
 	// BEFORE pagination, which is also the population the storage roll-up spans.

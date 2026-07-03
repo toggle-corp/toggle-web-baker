@@ -1,6 +1,12 @@
 {{define "list.gohtml"}}
 {{template "head" .Head}}
 <main>
+{{if .Warming}}
+{{/* Cache not synced yet: show a warming notice, NOT the (empty) table, so an
+     unwarmed cache is never mistaken for a healthy empty cluster. */}}
+<div class="banner banner-warn" role="status">Cache warming up — data will appear shortly.</div>
+{{else}}
+{{if .Stale}}<div class="banner banner-warn" role="alert">⚠ Lost contact with the cluster API — this list may be out of date.</div>{{end}}
 <div class="listhead">
   <h2>FrontendApps <span class="count">· {{if .Filtered}}{{.Matched}} of {{.Total}}{{else}}{{.Total}}{{end}}</span> <span class="count storage-total">· {{.Storage.GrandHuman}} (Cache: {{.Storage.CacheHuman}}, Data cache: {{.Storage.DataCacheHuman}}, Output: {{.Storage.OutputHuman}} (active {{.Storage.ActiveHuman}}))</span></h2>
   {{/* Plain GET search form — status/group ride along as hidden inputs so a
@@ -69,6 +75,7 @@
   <span class="small muted">Page {{.Page}} of {{.TotalPages}}</span>
   {{if .HasNext}}<a class="chip" href="{{.NextURL}}" rel="next">Next ›</a>{{else}}<span class="chip chip-disabled" aria-disabled="true">Next ›</span>{{end}}
 </nav>
+{{end}}
 {{end}}
 </main>
 {{template "foot"}}

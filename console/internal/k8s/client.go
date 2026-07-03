@@ -31,17 +31,19 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
-// cacheSyncTimeout bounds how long a constructor blocks waiting for the informer
-// to warm before List can serve from it. On timeout New() fails (crash-loop
-// rather than serve an empty list).
-const cacheSyncTimeout = 30 * time.Second
-
-// testCacheSyncTimeout bounds NewWithDynamic's warm-up. It is much shorter than
-// the production cacheSyncTimeout because that constructor is the test/inline
-// path (fake dynamic client, objects seeded synchronously): a completed sync is
-// near-instant, so a miswired fake (missing listKind, wrong GVR) should surface
-// fast — a warning after 5s, not a silent 30s stall then an empty cache.
+// testCacheSyncTimeout bounds NewWithDynamic's warm-up. It is short because that
+// constructor is the test/inline path (fake dynamic client, objects seeded
+// synchronously): a completed sync is near-instant, so a miswired fake (missing
+// listKind, wrong GVR) should surface fast — a warning after 5s, not a silent
+// stall then an empty cache. The production New() never blocks on sync at all.
 const testCacheSyncTimeout = 5 * time.Second
+
+// staleWindow is how recently a watch error must have fired for Stale() to be
+// true. It is a heuristic: while the informer's watch keeps erroring the cache
+// stops receiving updates and its snapshot drifts from the cluster, so a recent
+// watch error is treated as "the list may be out of date". A quiet window past
+// staleWindow means the watch recovered (or the errors stopped), so we clear it.
+const staleWindow = 60 * time.Second
 
 // GVR addresses the FrontendApp custom resource. The resource (plural) name is
 // the lowercase-plural of the kind, matching the CRD's spec.names.plural.
@@ -64,12 +66,20 @@ type Client struct {
 	dyn       dynamic.Interface
 	clientset kubernetes.Interface
 
-	factory dynamicinformer.DynamicSharedInformerFactory
-	lister  cache.GenericLister
-	stop    chan struct{} // closed by Close to stop the informer goroutines
+	factory  dynamicinformer.DynamicSharedInformerFactory
+	informer cache.SharedIndexInformer // used for HasSynced + the watch-error handler
+	lister   cache.GenericLister
+	stop     chan struct{} // closed by Close to stop the informer goroutines
 	// closeOnce makes Close idempotent: concurrent callers race to close(stop),
 	// and a double close panics. sync.Once collapses them to a single close.
 	closeOnce sync.Once
+
+	// lastWatchErr is the time of the most recent informer watch error, guarded
+	// by watchMu. Zero means no error seen. Set from the WatchErrorHandler using
+	// view.Now (injectable clock) so Stale()'s window is testable. Stale() reads
+	// it; both take watchMu.
+	watchMu      sync.Mutex
+	lastWatchErr time.Time
 }
 
 // FrontendAppPatcher is the narrow capability the server depends on; tests
@@ -80,6 +90,12 @@ type FrontendAppPatcher interface {
 	RequestRebuild(ctx context.Context, namespace, name, user string) error
 	RequestCleanupCache(ctx context.Context, namespace, name, user string) error
 	RequestCleanupReleases(ctx context.Context, namespace, name, user string) error
+	// Synced reports whether the informer's initial list has populated the cache
+	// (List before this returns an empty, not authoritative, set). Stale reports
+	// whether the watch is currently erroring, so the cached list may be out of
+	// date. Both let the server render honest "warming"/"stale" states.
+	Synced() bool
+	Stale() bool
 }
 
 var _ FrontendAppPatcher = (*Client)(nil)
@@ -103,16 +119,11 @@ func New() (*Client, error) {
 	c := newWithInformer(dyn)
 	c.clientset = cs
 
-	// Warm the cache before serving. A bounded wait means a wedged watch (bad
-	// RBAC, unreachable API) crash-loops startup rather than serving an empty
-	// list. WaitForCacheSync stops early if either the timeout ctx or c.stop
-	// fires; a false result means the sync did not complete.
-	ctx, cancel := context.WithTimeout(context.Background(), cacheSyncTimeout)
-	defer cancel()
-	if !c.waitForSync(ctx.Done()) {
-		c.Close()
-		return nil, fmt.Errorf("frontendapp informer cache did not sync within %s", cacheSyncTimeout)
-	}
+	// Do NOT block on cache sync. The console must start serving immediately so
+	// /healthz and the detail/pod-log routes answer even while the CRD/apiserver
+	// is briefly unavailable — a blocking wait would crash-loop startup. The
+	// informer warms in the background; until it does, the list page renders a
+	// "warming up" state (Synced()==false) instead of a misleading empty list.
 	return c, nil
 }
 
@@ -144,18 +155,65 @@ func NewWithDynamic(dyn dynamic.Interface) *Client {
 
 // newWithInformer builds a Client with a started shared dynamic informer for GVR
 // across all namespaces (resync 0 — we rely on the watch, not periodic relist).
-// It does NOT wait for sync; callers decide how to block on readiness.
+// It does NOT wait for sync; callers decide how (and whether) to block on
+// readiness.
 func newWithInformer(dyn dynamic.Interface) *Client {
 	factory := dynamicinformer.NewDynamicSharedInformerFactory(dyn, 0)
-	informer := factory.ForResource(GVR)
+	gi := factory.ForResource(GVR)
+	informer := gi.Informer()
 	c := &Client{
-		dyn:     dyn,
-		factory: factory,
-		lister:  informer.Lister(),
-		stop:    make(chan struct{}),
+		dyn:      dyn,
+		factory:  factory,
+		informer: informer,
+		lister:   gi.Lister(),
+		stop:     make(chan struct{}),
 	}
+	// SetWatchErrorHandler must be called BEFORE factory.Start; the handler
+	// records the time of the latest watch error (used by Stale) and logs it for
+	// visibility (replacing, not chaining, the default handler).
+	_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
+		c.recordWatchErr()
+		log.Printf("k8s: frontendapp informer watch error: %v", err)
+	})
 	factory.Start(c.stop)
 	return c
+}
+
+// recordWatchErr stamps the time of the latest informer watch error using the
+// injectable view.Now clock (so Stale()'s window is testable).
+func (c *Client) recordWatchErr() {
+	c.watchMu.Lock()
+	c.lastWatchErr = view.Now()
+	c.watchMu.Unlock()
+}
+
+// Synced reports whether the informer's initial list has populated the cache.
+// The server renders a "warming up" state until this is true rather than an
+// empty list (which would look like a healthy empty cluster).
+func (c *Client) Synced() bool {
+	return c.informer != nil && c.informer.HasSynced()
+}
+
+// Stale reports whether a watch error fired within staleWindow of now — i.e. the
+// watch is currently failing so the cached list has likely stopped tracking the
+// cluster. This is a HEURISTIC (watch-erroring ⇒ likely stale), not proof of
+// divergence: a brief error the informer immediately recovered from can still
+// read stale until the window elapses.
+func (c *Client) Stale() bool {
+	c.watchMu.Lock()
+	last := c.lastWatchErr
+	c.watchMu.Unlock()
+	return recentWatchErr(last, view.Now())
+}
+
+// recentWatchErr is Stale()'s time-window predicate, factored out so it can be
+// unit-tested without wiring a live informer's error path. A zero last means no
+// error was ever recorded.
+func recentWatchErr(last, now time.Time) bool {
+	if last.IsZero() {
+		return false
+	}
+	return now.Sub(last) < staleWindow
 }
 
 // waitForSync blocks until the informer cache is synced, or stopCh (a bounded
