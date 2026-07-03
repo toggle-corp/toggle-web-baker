@@ -37,6 +37,11 @@ const (
 	// FinalizerName guards a best-effort abort of an in-flight build Job on delete.
 	FinalizerName = "baker.toggle-corp.com/finalizer"
 
+	// AppResource is the CRD plural — the single source for everything that
+	// addresses the resource by name (clock RBAC, the kubectl target env-passed
+	// to trigger CronJobs). Must match the kubebuilder-generated CRD names.
+	AppResource = "apps"
+
 	// SpecHashAnnotation stamps the build-relevant spec hash onto the build Job at
 	// CREATION time, so on success the operator records the hash of the spec the
 	// build ACTUALLY ran — not the (possibly edited) live spec at observe-time.
@@ -206,8 +211,11 @@ type PhaseSpec struct {
 // BuildPhaseSpec is the build phase: a PhaseSpec plus the output directory the
 // copier publishes. build carries more than setup/fetch, so it has its own type
 // (setup/fetch stay plain PhaseSpec).
+// The empty-segment check is size(s) > 0, NOT a comparison against an empty
+// CEL string literal: gofmt's doc-comment formatter curls two adjacent single
+// quotes into a Unicode right quote, which silently corrupts the rule.
 // +kubebuilder:validation:XValidation:rule="has(self.command) && size(self.command) > 0",message="pipeline.phases.build.command is required"
-// +kubebuilder:validation:XValidation:rule="!has(self.outputDir) || self.outputDir.split('/').all(s, s != ” && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
+// +kubebuilder:validation:XValidation:rule="!has(self.outputDir) || self.outputDir.split('/').all(s, size(s) > 0 && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
 type BuildPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// OutputDir is the subdir of the workspace holding the built bundle (the

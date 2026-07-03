@@ -4,98 +4,101 @@ import (
 	"bytes"
 	"html/template"
 
+	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/yaml"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// hiddenValue is the literal replacing every annotation value, so the manifest
-// page can show which annotations exist without leaking their (often sensitive)
-// contents.
+// hiddenValue is the literal replacing every masked value (annotation values
+// and the inline basic-auth credential), so the manifest page can show which
+// fields exist without leaking their contents.
 const hiddenValue = "(hidden)"
 
 // pruneManifest reduces the raw cluster object to "what the user applied": the
-// identifying fields plus spec, dropping status and all server-managed metadata.
-// Annotation KEYS are kept but every value is replaced with hiddenValue. Empty
-// labels/annotations are omitted rather than rendered as an empty map.
-func pruneManifest(obj *unstructured.Unstructured) map[string]any {
-	src := obj.Object
+// identifying fields plus spec, dropping status and all server-managed
+// metadata. Annotation KEYS are kept but every value is replaced with
+// hiddenValue, as is spec.auth.passwordHash (an inline htpasswd credential).
+// Empty labels/annotations are omitted rather than rendered as an empty map.
+// masked reports whether anything was hidden, driving the security note.
+// The source object is never mutated (it may come from a shared cache).
+func pruneManifest(obj *unstructured.Unstructured) (pruned map[string]any, masked bool) {
 	out := map[string]any{}
-	if v, ok := src["apiVersion"]; ok {
+	if v, ok := obj.Object["apiVersion"]; ok {
 		out["apiVersion"] = v
 	}
-	if v, ok := src["kind"]; ok {
+	if v, ok := obj.Object["kind"]; ok {
 		out["kind"] = v
 	}
 
-	if meta, ok := src["metadata"].(map[string]any); ok {
-		m := map[string]any{}
-		if v, ok := meta["name"]; ok {
-			m["name"] = v
+	m := map[string]any{}
+	if v := obj.GetName(); v != "" {
+		m["name"] = v
+	}
+	if v := obj.GetNamespace(); v != "" {
+		m["namespace"] = v
+	}
+	if labels := obj.GetLabels(); len(labels) > 0 {
+		m["labels"] = labels
+	}
+	if ann := obj.GetAnnotations(); len(ann) > 0 {
+		hidden := map[string]any{}
+		for k := range ann {
+			hidden[k] = hiddenValue
 		}
-		if v, ok := meta["namespace"]; ok {
-			m["namespace"] = v
-		}
-		if labels, ok := meta["labels"].(map[string]any); ok && len(labels) > 0 {
-			m["labels"] = labels
-		}
-		if ann, ok := meta["annotations"].(map[string]any); ok && len(ann) > 0 {
-			hidden := map[string]any{}
-			for k := range ann {
-				hidden[k] = hiddenValue
-			}
-			m["annotations"] = hidden
-		}
+		m["annotations"] = hidden
+		masked = true
+	}
+	if len(m) > 0 {
 		out["metadata"] = m
 	}
 
-	if v, ok := src["spec"]; ok {
-		out["spec"] = v
+	if spec, ok := obj.Object["spec"].(map[string]any); ok {
+		if auth, ok := spec["auth"].(map[string]any); ok {
+			if _, ok := auth["passwordHash"]; ok {
+				spec = runtime.DeepCopyJSON(spec)
+				spec["auth"].(map[string]any)["passwordHash"] = hiddenValue
+				masked = true
+			}
+		}
+		out["spec"] = spec
 	}
-	return out
+	return out, masked
 }
 
-// manifestHasAnnotations reports whether the pruned manifest carries any
-// annotations, driving the security note.
-func manifestHasAnnotations(pruned map[string]any) bool {
-	meta, ok := pruned["metadata"].(map[string]any)
-	if !ok {
-		return false
-	}
-	ann, ok := meta["annotations"].(map[string]any)
-	return ok && len(ann) > 0
-}
+// yamlLexer/yamlFormatter are package-level so the formatter's style cache
+// amortizes the token-class CSS derivation across requests, and Coalesce
+// merges adjacent same-type tokens into one span per run.
+var (
+	yamlLexer = func() chroma.Lexer {
+		if l := lexers.Get("yaml"); l != nil {
+			return chroma.Coalesce(l)
+		}
+		return nil
+	}()
+	yamlFormatter = html.New(html.WithClasses(true))
+)
 
-// highlightYAML syntax-highlights YAML into class-based HTML (colours come from
-// CSS, not inline styles). On ANY chroma error it falls back to the plain
+// highlightYAML syntax-highlights YAML into class-based HTML (colours come
+// from CSS, not inline styles). On ANY chroma error it falls back to the plain
 // escaped YAML wrapped in a <pre> so the page never breaks.
 func highlightYAML(raw string) template.HTML {
-	fallback := template.HTML("<pre>" + template.HTMLEscapeString(raw) + "</pre>")
-
-	lexer := lexers.Get("yaml")
-	if lexer == nil {
-		return fallback
+	if yamlLexer == nil {
+		return plainPre(raw)
 	}
-	iterator, err := lexer.Tokenise(nil, raw)
+	iterator, err := yamlLexer.Tokenise(nil, raw)
 	if err != nil {
-		return fallback
+		return plainPre(raw)
 	}
-	formatter := html.New(html.WithClasses(true), html.PreventSurroundingPre(false))
 	var buf bytes.Buffer
-	if err := formatter.Format(&buf, styles.Fallback, iterator); err != nil {
-		return fallback
+	if err := yamlFormatter.Format(&buf, styles.Fallback, iterator); err != nil {
+		return plainPre(raw)
 	}
 	return template.HTML(buf.String())
 }
 
-// marshalManifest renders the pruned object to YAML text (the exact bytes the
-// Copy button offers), returning "" on marshal error.
-func marshalManifest(pruned map[string]any) string {
-	b, err := yaml.Marshal(pruned)
-	if err != nil {
-		return ""
-	}
-	return string(b)
+func plainPre(raw string) template.HTML {
+	return template.HTML("<pre>" + template.HTMLEscapeString(raw) + "</pre>")
 }

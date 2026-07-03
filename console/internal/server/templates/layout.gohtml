@@ -291,7 +291,7 @@
 {{if not .Bare}}
 <header>
   <h1><a href="/">BAKER · App Console</a></h1>
-  <div class="user">{{if .User}}<span>signed in as <span class="mono">{{.User}}</span></span> <a href="/oauth2/sign_out?rd=/signed-out">Log out</a>{{else if not .Anon}}<span class="b-false">no user header</span>{{end}}<select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+  <div class="user">{{if .User}}<span>signed in as <span class="mono">{{.User}}</span></span> <a href="/oauth2/sign_out?rd=/signed-out">Log out</a>{{else if not .Anon}}<span class="b-false">no user header</span>{{end}}{{template "themeselect"}}</div>
 </header>
 {{end}}
 {{end}}
@@ -343,3 +343,6 @@ setInterval(function(){try{window.bakerLocalizeTimes();}catch(e){}},30000);
 {{end}}
 
 {{define "statusbadge"}}<span class="badge b-{{.HealthClass}}">{{.HealthLabel}}</span>{{end}}
+
+{{/* The theme picker; the foot script binds it by id wherever the page put it. */}}
+{{define "themeselect"}}<select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>{{end}}

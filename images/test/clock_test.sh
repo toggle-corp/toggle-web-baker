@@ -93,15 +93,22 @@ run_clock() {
 	err="$(bash "$ENTRY" 2>&1 1>/dev/null)" || rc=$?
 }
 
+RES="apps.baker.toggle-corp.com"
+
 # ---- 1. missing APP fails ---------------------------------------------------
-unset APP REQUESTED_AT_ANNOTATION BY_ANNOTATION COMMIT_ANNOTATION 2>/dev/null || true
-export REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
+unset APP RESOURCE REQUESTED_AT_ANNOTATION BY_ANNOTATION COMMIT_ANNOTATION 2>/dev/null || true
+export RESOURCE="$RES" REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
 run_clock
 assert_rc 1 "missing APP: exits 1"
 assert_contains "$err" "APP" "missing APP: reports APP required"
 
-# ---- 2. missing annotation keys fail ----------------------------------------
+# ---- 2. missing resource / annotation keys fail -------------------------------
 export APP=demo
+unset RESOURCE
+run_clock
+assert_rc 1 "missing RESOURCE: exits 1"
+
+export RESOURCE="$RES"
 unset REQUESTED_AT_ANNOTATION
 export BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
 run_clock
@@ -113,7 +120,7 @@ run_clock
 assert_rc 1 "missing COMMIT_ANNOTATION: exits 1"
 
 # ---- 3. valid env: exact annotate contract ----------------------------------
-export APP=demo REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
+export APP=demo RESOURCE="$RES" REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTATION="$CM"
 run_clock
 assert_rc 0 "valid env: exits 0"
 line="$(cat "$KUBECTL_LOG")"

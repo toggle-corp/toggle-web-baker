@@ -20,6 +20,8 @@ import (
 	"github.com/toggle-corp/toggle-web-baker/console/internal/view"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 )
 
 // PodReader is the pod-log capability the log handler depends on. The real
@@ -399,12 +401,22 @@ func searchApps(apps []view.App, term string) []view.App {
 	return out
 }
 
-func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
-	ns := r.PathValue("namespace")
-	name := r.PathValue("name")
+// getApp resolves the {namespace}/{name} path values and fetches the App,
+// rendering the shared not-found page (and reporting ok=false) on any miss.
+func (s *Server) getApp(w http.ResponseWriter, r *http.Request) (obj *unstructured.Unstructured, ns, name string, ok bool) {
+	ns = r.PathValue("namespace")
+	name = r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
 		s.renderError(w, r, http.StatusNotFound, "App not found", err)
+		return nil, ns, name, false
+	}
+	return obj, ns, name, true
+}
+
+func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
+	obj, ns, name, ok := s.getApp(w, r)
+	if !ok {
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -423,33 +435,30 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 // object pruned to apiVersion/kind/name/namespace/labels/spec (annotations kept
 // but values hidden), marshaled to YAML and syntax-highlighted server-side.
 func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
-	ns := r.PathValue("namespace")
-	name := r.PathValue("name")
-	obj, err := s.apps.Get(r.Context(), ns, name)
-	if err != nil {
-		s.renderError(w, r, http.StatusNotFound, "App not found", err)
+	obj, ns, name, ok := s.getApp(w, r)
+	if !ok {
 		return
 	}
-	pruned := pruneManifest(obj)
-	raw := marshalManifest(pruned)
+	pruned, masked := pruneManifest(obj)
+	raw, err := yaml.Marshal(pruned)
+	if err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, "Could not render manifest", err)
+		return
+	}
 	render(w, "manifest", manifestData{
-		Head:           head{Title: name + " · manifest", User: sentryhttp.UserFrom(r), Bare: true},
-		Namespace:      ns,
-		Name:           name,
-		YAML:           raw,
-		Highlighted:    highlightYAML(raw),
-		HasAnnotations: manifestHasAnnotations(pruned),
+		Head:        head{Title: name + " · manifest", User: sentryhttp.UserFrom(r), Bare: true},
+		Namespace:   ns,
+		Name:        name,
+		Highlighted: highlightYAML(string(raw)),
+		HasHidden:   masked,
 	})
 }
 
 // handlePartial returns just the dynamic detail region (flow strip + recent
 // builds + storage) for the poller. It is an HTML fragment, not a full page.
 func (s *Server) handlePartial(w http.ResponseWriter, r *http.Request) {
-	ns := r.PathValue("namespace")
-	name := r.PathValue("name")
-	obj, err := s.apps.Get(r.Context(), ns, name)
-	if err != nil {
-		s.renderError(w, r, http.StatusNotFound, "App not found", err)
+	obj, ns, _, ok := s.getApp(w, r)
+	if !ok {
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -538,11 +547,8 @@ func containerMemLimit(pod *corev1.Pod, container string) int64 {
 // source (live pod / Loki / retained pod / unavailable) and renders the
 // container badge buttons, a one-line source note, and the lines (or a note).
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	ns := r.PathValue("namespace")
-	name := r.PathValue("name")
-	obj, err := s.apps.Get(r.Context(), ns, name)
-	if err != nil {
-		s.renderError(w, r, http.StatusNotFound, "App not found", err)
+	obj, ns, _, ok := s.getApp(w, r)
+	if !ok {
 		return
 	}
 	app := view.FromUnstructured(obj)

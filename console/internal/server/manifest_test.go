@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -45,6 +46,7 @@ func manifestFixtureServer(t *testing.T) *Server {
 		"spec": map[string]any{
 			"group":  "grp-a",
 			"source": map[string]any{"repo": "SENTINEL-REPO"},
+			"auth":   map[string]any{"passwordHash": "SENTINEL-HTPASSWD"},
 		},
 		"status": map[string]any{
 			"phase": "SENTINEL-PHASE",
@@ -54,18 +56,24 @@ func manifestFixtureServer(t *testing.T) *Server {
 	return New(newClient(t, dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
 }
 
+// stripTags reduces rendered HTML to its text content (what the Copy button
+// reads via textContent), so assertions see the YAML as the user would.
+var tagRe = regexp.MustCompile(`<[^>]*>`)
+
+func stripTags(s string) string { return tagRe.ReplaceAllString(s, "") }
+
 func TestManifest_RendersKindAndSpec(t *testing.T) {
 	srv := manifestFixtureServer(t)
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "kind: App") {
-		t.Errorf("manifest should render the kind; body=%s", body)
+	text := stripTags(rec.Body.String())
+	if !strings.Contains(text, "kind: App") {
+		t.Errorf("manifest should render the kind; text=%s", text)
 	}
-	if !strings.Contains(body, "SENTINEL-REPO") {
-		t.Errorf("manifest should render a spec field; body=%s", body)
+	if !strings.Contains(text, "SENTINEL-REPO") {
+		t.Errorf("manifest should render a spec field; text=%s", text)
 	}
 }
 
@@ -103,9 +111,25 @@ func TestManifest_HidesAnnotationValuesAndShowsNote(t *testing.T) {
 			t.Errorf("real annotation value %q must not leak; body=%s", secret, body)
 		}
 	}
-	// The security note shows when annotations exist.
-	if !strings.Contains(body, "Annotation values are hidden for security reasons.") {
+	// The security note shows when anything is masked.
+	if !strings.Contains(body, "Annotation values and credentials are hidden for security reasons.") {
 		t.Errorf("security note should show when annotations exist; body=%s", body)
+	}
+}
+
+func TestManifest_MasksInlineAuthCredential(t *testing.T) {
+	srv := manifestFixtureServer(t)
+	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
+	body := rec.Body.String()
+	if strings.Contains(body, "SENTINEL-HTPASSWD") {
+		t.Errorf("spec.auth.passwordHash must not leak; body=%s", body)
+	}
+	// The key stays visible (masked), and the rest of spec is untouched.
+	if !strings.Contains(body, "passwordHash") {
+		t.Errorf("passwordHash key should remain visible; body=%s", body)
+	}
+	if !strings.Contains(body, "SENTINEL-REPO") {
+		t.Errorf("masking the credential must not drop other spec fields; body=%s", body)
 	}
 }
 
@@ -117,8 +141,8 @@ func TestManifest_NoAnnotationsNoNoteNoKey(t *testing.T) {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, "Annotation values are hidden") {
-		t.Errorf("no security note when there are no annotations; body=%s", body)
+	if strings.Contains(body, "hidden for security reasons") {
+		t.Errorf("no security note when nothing is masked; body=%s", body)
 	}
 	if strings.Contains(body, "annotations:") {
 		t.Errorf("annotations key must be omitted when empty; body=%s", body)
@@ -152,7 +176,7 @@ func TestDetail_HasShowManifestLink(t *testing.T) {
 	}
 }
 
-func TestManifest_CopyButtonHasRawYAML(t *testing.T) {
+func TestManifest_CopyButtonReadsManifestText(t *testing.T) {
 	srv := manifestFixtureServer(t)
 	rec := doGet(srv, "/ns/mapswipe/app/mapswipe-uat/manifest", "mapswipe", "mapswipe-uat")
 	body := rec.Body.String()
@@ -162,13 +186,10 @@ func TestManifest_CopyButtonHasRawYAML(t *testing.T) {
 	if !strings.Contains(body, "navigator.clipboard") {
 		t.Errorf("Copy button should use the clipboard API; body=%s", body)
 	}
-	// The raw YAML (with the (hidden) placeholder, not HTML) must be available to
-	// the button via the hidden textarea.
-	if !strings.Contains(body, `<textarea id="raw-yaml"`) {
-		t.Errorf("raw YAML source should be present for the copy button; body=%s", body)
-	}
-	if !strings.Contains(body, "kind: App") {
-		t.Errorf("raw YAML should carry the plain manifest text; body=%s", body)
+	// The button copies the highlighted block's textContent — the document must
+	// ship exactly once, not in a second hidden copy.
+	if got := strings.Count(body, "SENTINEL-REPO"); got != 1 {
+		t.Errorf("manifest text should appear exactly once, got %d; body=%s", got, body)
 	}
 }
 

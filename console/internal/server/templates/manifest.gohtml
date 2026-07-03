@@ -8,7 +8,7 @@
   <span class="sb-spacer"></span>
   <div class="sb-actions">
     <button type="button" id="copy-yaml" class="btn btn-ghost">Copy YAML</button>
-    <select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+    {{template "themeselect"}}
   </div>
 </div>
 
@@ -16,11 +16,7 @@
   <section class="card">
     <h2>Manifest</h2>
     <div class="body">
-      {{if .HasAnnotations}}<p class="small muted">Annotation values are hidden for security reasons.</p>{{end}}
-      {{/* The raw (un-highlighted) YAML — including the (hidden) placeholders —
-           lives in a hidden textarea so the Copy button copies exact text, not
-           the highlighted HTML. */}}
-      <textarea id="raw-yaml" hidden aria-hidden="true">{{.YAML}}</textarea>
+      {{if .HasHidden}}<p class="small muted">Annotation values and credentials are hidden for security reasons.</p>{{end}}
       <div class="manifest">{{.Highlighted}}</div>
     </div>
   </section>
@@ -29,15 +25,22 @@
 <script>
 (function(){
   var btn=document.getElementById('copy-yaml');
-  var src=document.getElementById('raw-yaml');
-  if(!btn||!src){return;}
+  var pane=document.querySelector('.manifest');
+  if(!btn||!pane){return;}
+  // The highlighted block's textContent IS the exact YAML (chroma only wraps
+  // escaped text in spans), so there is no second copy of the document.
+  // Insecure contexts have no clipboard API: select the text instead so the
+  // user can copy manually, and say so on the button.
+  function select(){var r=document.createRange();r.selectNodeContents(pane);
+    var s=window.getSelection();s.removeAllRanges();s.addRange(r);
+    flash('Press Ctrl+C');}
+  function flash(msg){var old=btn.textContent;btn.textContent=msg;
+    setTimeout(function(){btn.textContent=old;},1500);}
   btn.addEventListener('click',function(){
-    var text=src.value;
-    function done(){var old=btn.textContent;btn.textContent='Copied';
-      setTimeout(function(){btn.textContent=old;},1500);}
     if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(text).then(done).catch(function(){});
-    }
+      navigator.clipboard.writeText(pane.textContent)
+        .then(function(){flash('Copied');}).catch(select);
+    }else{select();}
   });
 })();
 </script>

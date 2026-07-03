@@ -53,7 +53,7 @@ func (r *AppReconciler) clockRole(app *bakerv1alpha1.App) *rbacv1.Role {
 		ObjectMeta: metav1.ObjectMeta{Name: clockRoleName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
 		Rules: []rbacv1.PolicyRule{{
 			APIGroups:     []string{bakerv1alpha1.GroupVersion.Group},
-			Resources:     []string{"apps"},
+			Resources:     []string{bakerv1alpha1.AppResource},
 			Verbs:         []string{"get", "patch"},
 			ResourceNames: []string{app.Name}, // scoped to THIS app only
 		}},
@@ -117,6 +117,9 @@ func (r *AppReconciler) watchCronJob(app *bakerv1alpha1.App) (*batchv1.CronJob, 
 func (r *AppReconciler) triggerCronJob(app *bakerv1alpha1.App, name, schedule string, extraEnv []corev1.EnvVar) *batchv1.CronJob {
 	env := []corev1.EnvVar{
 		{Name: "APP", Value: app.Name},
+		// The group-qualified kubectl target — env-passed like the annotation
+		// keys so the clock image never hardcodes the CRD's name.
+		{Name: "RESOURCE", Value: bakerv1alpha1.AppResource + "." + bakerv1alpha1.GroupVersion.Group},
 		{Name: "REQUESTED_AT_ANNOTATION", Value: bakerv1alpha1.RebuildAnnotation},
 		{Name: "BY_ANNOTATION", Value: bakerv1alpha1.RebuildByAnnotation},
 		{Name: "COMMIT_ANNOTATION", Value: bakerv1alpha1.RebuildCommitAnnotation},
