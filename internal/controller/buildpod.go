@@ -372,6 +372,15 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: outputPVCName(app)},
 	}})
 
+	// Ordered init containers: [shim-install, clone, (setup), fetch, build] —
+	// setup is present only when it runs (skip:true, or an omitted setup under a
+	// BYO toolchain, drops it).
+	inits := []corev1.Container{shimInstall, clone}
+	if setupOn {
+		inits = append(inits, setup)
+	}
+	inits = append(inits, fetch, build)
+
 	podSpec := corev1.PodSpec{
 		RestartPolicy:                corev1.RestartPolicyNever,
 		AutomountServiceAccountToken: ptr.To(false),
@@ -379,7 +388,7 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 			RunAsNonRoot:   ptr.To(true),
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
-		InitContainers: buildInitContainers(shimInstall, clone, setup, setupOn, fetch, build),
+		InitContainers: inits,
 		Containers:     []corev1.Container{copier},
 		Volumes:        volumes,
 	}
@@ -420,17 +429,6 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 			},
 		},
 	}
-}
-
-// buildInitContainers assembles the ordered init-container list, including the
-// setup container only when setupOn (skip:true or an omitted setup under a BYO
-// toolchain drops it). Order is always [shim-install, clone, (setup), fetch, build].
-func buildInitContainers(shimInstall, clone, setup corev1.Container, setupOn bool, fetch, build corev1.Container) []corev1.Container {
-	out := []corev1.Container{shimInstall, clone}
-	if setupOn {
-		out = append(out, setup)
-	}
-	return append(out, fetch, build)
 }
 
 // buildDeadlineSeconds derives the build Job's activeDeadlineSeconds.

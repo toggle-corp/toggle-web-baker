@@ -19,31 +19,38 @@ func phaseConfigured(p bakerv1alpha1.PhaseSpec) bool {
 	return p.Image != "" || len(p.Command) > 0
 }
 
-// effectiveSetup resolves the setup phase actually run in the build pod and
-// whether a setup container exists at all. It is the SINGLE place the setup
-// decision lives (both the pod builder and the step timeline consult it):
+// setupRuns reports whether a setup container exists at all for the app. It is
+// the SINGLE predicate behind the setup decision (effectiveSetup and the step
+// timeline both consult it) and deliberately takes no operator config — config
+// shapes only WHAT an injected default runs, never WHETHER setup runs:
 //   - skip:true → never a setup container.
-//   - configured explicitly (image or command) → run as written.
-//   - wholly omitted + managed toolchain (nodeVersion set) → run the operator's
-//     configured default install command for the package manager (injected here,
-//     never in the spec, so it can't leak into the staleness hash).
+//   - configured explicitly (image or command) → runs as written.
+//   - wholly omitted + managed toolchain (nodeVersion set) → runs the operator's
+//     default install.
 //   - wholly omitted + BYO (nodeVersion unset) → no setup container (no image to
-//     run a default install on; nothing is injected).
-//
-// The returned PhaseSpec carries the effective command; image/env/runAsUser are
-// left as-written so managed-image resolution still applies to an injected default.
-func effectiveSetup(app *bakerv1alpha1.App, cfg OperatorConfig) (bakerv1alpha1.PhaseSpec, bool) {
+//     run a default install on).
+func setupRuns(app *bakerv1alpha1.App) bool {
 	setup := app.Spec.Pipeline.Phases.Setup
 	if setup.Skip {
+		return false
+	}
+	return phaseConfigured(setup.PhaseSpec) || app.Spec.Pipeline.NodeVersion != 0
+}
+
+// effectiveSetup resolves the setup phase actually run in the build pod (see
+// setupRuns for the existence rule). An explicitly configured setup runs as
+// written; a wholly omitted one under the managed toolchain gets the operator's
+// configured default install command for the package manager, injected here and
+// never into the spec, so it can't leak into the staleness hash. The returned
+// PhaseSpec carries the effective command; image/env/runAsUser are left
+// as-written so managed-image resolution still applies to an injected default.
+func effectiveSetup(app *bakerv1alpha1.App, cfg OperatorConfig) (bakerv1alpha1.PhaseSpec, bool) {
+	if !setupRuns(app) {
 		return bakerv1alpha1.PhaseSpec{}, false
 	}
+	setup := app.Spec.Pipeline.Phases.Setup
 	if phaseConfigured(setup.PhaseSpec) {
 		return setup.PhaseSpec, true
-	}
-	// Wholly omitted: inject the default install command only under the managed
-	// toolchain, where there is a resolvable image to run it on.
-	if app.Spec.Pipeline.NodeVersion == 0 {
-		return bakerv1alpha1.PhaseSpec{}, false
 	}
 	injected := setup.PhaseSpec
 	injected.Command = cfg.DefaultSetupCommand(string(app.Spec.Pipeline.PackageManager))
@@ -52,12 +59,12 @@ func effectiveSetup(app *bakerv1alpha1.App, cfg OperatorConfig) (bakerv1alpha1.P
 
 // applicableSteps returns the ordered pipeline step names that actually apply to
 // the app: clone/build/copier/release are always present; setup and fetch appear
-// only when that phase runs. setup follows effectiveSetup (which honors skip and
-// the managed-toolchain default injection); fetch appears when configured. release
+// only when that phase runs. setup follows setupRuns (which honors skip and the
+// managed-toolchain default injection); fetch appears when configured. release
 // is the SYNTHETIC step (the operator's release-pointer flip after copier succeeds).
-func applicableSteps(app *bakerv1alpha1.App, cfg OperatorConfig) []string {
+func applicableSteps(app *bakerv1alpha1.App) []string {
 	steps := []string{bakerv1alpha1.StepClone}
-	if _, ok := effectiveSetup(app, cfg); ok {
+	if setupRuns(app) {
 		steps = append(steps, bakerv1alpha1.StepSetup)
 	}
 	if phaseConfigured(app.Spec.Pipeline.Phases.Fetch.PhaseSpec) {

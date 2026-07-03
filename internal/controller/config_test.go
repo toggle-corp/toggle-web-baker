@@ -449,3 +449,44 @@ gitAuth:
 		}
 	}
 }
+
+// Every packageManager value the CRD admits must have a compiled-in default
+// setup command: DefaultSetupCommand returning nil degrades to a silent noop
+// setup container (commandOrNoop's ["true"]), so enum growth without a matching
+// fallback entry must fail HERE, not in a user's build.
+func TestDefaultSetupCommands_CoverCRDPackageManagerEnum(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", "baker.toggle-corp.com_apps.yaml"))
+	if err != nil {
+		t.Fatalf("read CRD: %v", err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	var enum []string
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "packageManager:" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			s := strings.TrimSpace(lines[j])
+			switch {
+			case s == "enum:":
+				continue
+			case strings.HasPrefix(s, "- "):
+				enum = append(enum, strings.TrimPrefix(s, "- "))
+			case strings.HasPrefix(s, "type:"):
+				j = len(lines)
+			}
+			if strings.HasPrefix(s, "type:") {
+				break
+			}
+		}
+		break
+	}
+	if len(enum) == 0 {
+		t.Fatal("could not locate the packageManager enum in the generated CRD")
+	}
+	for _, pm := range enum {
+		if len(defaultSetupCommandFallbacks[pm]) == 0 {
+			t.Errorf("CRD enum value %q has no compiled-in default setup command", pm)
+		}
+	}
+}

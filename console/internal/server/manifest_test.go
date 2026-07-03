@@ -293,6 +293,44 @@ func TestManifest_SetupOmittedNoNodeVersion_NoHint(t *testing.T) {
 	}
 }
 
+// setupHint must mirror the operator's phaseConfigured predicate (image or
+// command only): a setup block carrying just env/memoryLimit/runAsUser still
+// gets the default install injected, so it still needs the hint. Table-driven
+// on the pure function — the HTTP tests above prove the hint reaches the page.
+func TestSetupHint_OperatorParity(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup map[string]any
+		want  string // substring; "" means no hint at all
+	}{
+		{"env-only setup still hints", map[string]any{"env": []any{map[string]any{"name": "CI", "value": "true"}}}, "default install for yarn"},
+		{"memoryLimit-only setup still hints", map[string]any{"memoryLimit": "1Gi"}, "default install for yarn"},
+		{"explicit skip false hints", map[string]any{"skip": false}, "default install for yarn"},
+		{"image-only setup is explicit", map[string]any{"image": "node:18"}, ""},
+		{"command-only setup is explicit", map[string]any{"command": []any{"yarn", "install"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := &unstructured.Unstructured{Object: map[string]any{
+				"spec": map[string]any{
+					"pipeline": map[string]any{
+						"nodeVersion":    int64(18),
+						"packageManager": "yarn",
+						"phases":         map[string]any{"setup": tc.setup},
+					},
+				},
+			}}
+			got := setupHint(obj)
+			if tc.want == "" && got != "" {
+				t.Fatalf("want no hint, got %q", got)
+			}
+			if tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Fatalf("want hint containing %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestManifest_UnknownAppIs404(t *testing.T) {
 	srv := manifestFixtureServer(t)
 	rec := doGet(srv, "/ns/mapswipe/app/nope/manifest", "mapswipe", "nope")

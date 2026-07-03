@@ -80,7 +80,7 @@ func TestApplicableSteps(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := baseApp()
 			tc.mut(app)
-			got := applicableSteps(app, OperatorConfig{})
+			got := applicableSteps(app)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("applicableSteps = %v, want %v", got, tc.want)
 			}
@@ -274,7 +274,7 @@ func stepStatus(steps []bakerv1alpha1.BuildStep, name string) bakerv1alpha1.Step
 func TestDeriveBuildSteps_NilPod(t *testing.T) {
 	app := baseApp()
 	app.Spec.Pipeline.Phases.Setup.Command = []string{"true"}
-	steps := deriveBuildSteps(applicableSteps(app, OperatorConfig{}), nil, false)
+	steps := deriveBuildSteps(applicableSteps(app), nil, false)
 	for _, s := range steps {
 		if s.Status != bakerv1alpha1.StepStatusPending {
 			t.Fatalf("step %s = %s, want Pending (nil pod)", s.Name, s.Status)
@@ -300,7 +300,7 @@ func TestDeriveBuildSteps_MapsContainerStates(t *testing.T) {
 			ContainerStatuses: []corev1.ContainerStatus{waiting("copier")},
 		},
 	}
-	steps := deriveBuildSteps(applicableSteps(app, OperatorConfig{}), pod, false)
+	steps := deriveBuildSteps(applicableSteps(app), pod, false)
 	want := map[string]bakerv1alpha1.StepStatus{
 		bakerv1alpha1.StepClone:   bakerv1alpha1.StepStatusSucceeded,
 		bakerv1alpha1.StepSetup:   bakerv1alpha1.StepStatusSucceeded,
@@ -330,7 +330,7 @@ func TestDeriveBuildSteps_FailureLeavesDownstreamPending(t *testing.T) {
 			ContainerStatuses: nil,
 		},
 	}
-	steps := deriveBuildSteps(applicableSteps(app, OperatorConfig{}), pod, false)
+	steps := deriveBuildSteps(applicableSteps(app), pod, false)
 	if got := stepStatus(steps, bakerv1alpha1.StepBuild); got != bakerv1alpha1.StepStatusFailed {
 		t.Fatalf("build = %s, want Failed", got)
 	}
@@ -352,7 +352,7 @@ func TestDeriveBuildSteps_ReleaseDone(t *testing.T) {
 			ContainerStatuses:     []corev1.ContainerStatus{term("copier", 0)},
 		},
 	}
-	steps := deriveBuildSteps(applicableSteps(app, OperatorConfig{}), pod, true)
+	steps := deriveBuildSteps(applicableSteps(app), pod, true)
 	if got := stepStatus(steps, bakerv1alpha1.StepCopier); got != bakerv1alpha1.StepStatusSucceeded {
 		t.Fatalf("copier = %s, want Succeeded", got)
 	}
@@ -397,7 +397,7 @@ func TestDeriveBuildSteps_TimesAndMemoryLimit(t *testing.T) {
 			InitContainerStatuses: []corev1.ContainerStatus{cloneCS, buildCS},
 		},
 	}
-	steps := deriveBuildSteps(applicableSteps(app, OperatorConfig{}), pod, false)
+	steps := deriveBuildSteps(applicableSteps(app), pod, false)
 	byName := map[string]bakerv1alpha1.BuildStep{}
 	for _, s := range steps {
 		byName[s.Name] = s
@@ -484,7 +484,7 @@ func TestDeriveBuildSteps_HarvestsPeakMemory(t *testing.T) {
 			ContainerStatuses: []corev1.ContainerStatus{waiting("copier")},
 		},
 	}
-	steps := deriveBuildSteps(applicableSteps(app, OperatorConfig{}), pod, false)
+	steps := deriveBuildSteps(applicableSteps(app), pod, false)
 	peaks := map[string]int64{}
 	for _, s := range steps {
 		peaks[s.Name] = s.PeakMemoryBytes

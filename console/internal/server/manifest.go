@@ -72,48 +72,38 @@ func pruneManifest(obj *unstructured.Unstructured) (pruned map[string]any, maske
 // console deliberately does NOT compute or render the operator's default install
 // command (no operator-config coupling — same precedent as an unset schedule
 // rendering "operator default" rather than guessing a cron). Three shapes:
-//   - setup.skip:true          → the spec opts out; nothing runs.
-//   - setup omitted/empty AND pipeline.nodeVersion set → the operator injects a
-//     default install for the packageManager; the exact command is echoed in the
-//     build logs, so we point there rather than guessing it.
-//   - anything else (explicit setup, or omitted with no nodeVersion / BYO) → no
+//   - setup.skip:true → the spec opts out; nothing runs.
+//   - no setup image/command AND pipeline.nodeVersion set → the operator injects
+//     a default install for the packageManager; the exact command is echoed in
+//     the build logs, so we point there rather than guessing it. This MIRRORS the
+//     operator's phaseConfigured predicate (image or command only): a setup block
+//     carrying just env/memoryLimit/runAsUser still gets the injected default, so
+//     it still needs the hint.
+//   - explicit image/command, or unconfigured with no nodeVersion (BYO) → no
 //     hint: the YAML already speaks for itself, or nothing runs to explain.
 func setupHint(obj *unstructured.Unstructured) string {
-	spec, _ := obj.Object["spec"].(map[string]any)
-	pipeline, _ := spec["pipeline"].(map[string]any)
-	if pipeline == nil {
+	pipeline, found, _ := unstructured.NestedMap(obj.Object, "spec", "pipeline")
+	if !found {
 		return ""
 	}
-	setup, _ := nestedMap(pipeline, "phases", "setup")
-	if skip, _ := setup["skip"].(bool); skip {
+	setup, _, _ := unstructured.NestedMap(pipeline, "phases", "setup")
+	if skip, _, _ := unstructured.NestedBool(setup, "skip"); skip {
 		return "setup skipped by spec"
 	}
-	if len(setup) > 0 {
-		return "" // explicit BYO setup — the YAML shows it
+	image, _, _ := unstructured.NestedString(setup, "image")
+	command, _, _ := unstructured.NestedSlice(setup, "command")
+	if image != "" || len(command) > 0 {
+		return "" // explicitly configured setup — the YAML shows what runs
 	}
-	// Setup is absent/empty. A default install only runs when nodeVersion is set;
+	// No image/command. A default install only runs when nodeVersion is set;
 	// without it the app is BYO and no setup phase exists, so there is nothing to
 	// say.
-	if _, ok := pipeline["nodeVersion"]; !ok {
+	if _, found, _ := unstructured.NestedFieldNoCopy(pipeline, "nodeVersion"); !found {
 		return ""
 	}
-	pm, _ := pipeline["packageManager"].(string)
+	pm, _, _ := unstructured.NestedString(pipeline, "packageManager")
 	return "setup omitted — the operator runs its default install for " + pm +
 		"; the exact command is echoed in the build logs"
-}
-
-// nestedMap walks a chain of map keys, returning the map at the end (or an empty
-// map if any hop is missing or not a map, so callers can len()-test uniformly).
-func nestedMap(m map[string]any, keys ...string) (map[string]any, bool) {
-	cur := m
-	for _, k := range keys {
-		next, ok := cur[k].(map[string]any)
-		if !ok {
-			return map[string]any{}, false
-		}
-		cur = next
-	}
-	return cur, true
 }
 
 // yamlLexer/yamlFormatter are package-level so the formatter's style cache

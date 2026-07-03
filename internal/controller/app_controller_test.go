@@ -587,7 +587,7 @@ func TestStartBuild_SeedsTriggerAndSteps(t *testing.T) {
 	if app.Status.Build.PodName != "" {
 		t.Fatalf("PodName must stay empty until pod observed, got %q", app.Status.Build.PodName)
 	}
-	want := applicableSteps(app, OperatorConfig{}) // clone, fetch, build, copier, release
+	want := applicableSteps(app) // clone, fetch, build, copier, release
 	if len(app.Status.Build.Steps) != len(want) {
 		t.Fatalf("seeded %d steps, want %d (%v)", len(app.Status.Build.Steps), len(want), want)
 	}

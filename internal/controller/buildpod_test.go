@@ -858,6 +858,22 @@ func TestBuildSpecHash_OmittedSetupUnaffectedByInjectionConfig(t *testing.T) {
 	}
 }
 
+// Flipping setup.skip is a real pipeline change (the setup phase disappears),
+// so it MUST flow through buildSpecFrom into the staleness hash — this guards
+// the controller-level mapping, not just the domain field (which the domain
+// tests exercise directly).
+func TestBuildSpecFrom_SetupSkipFlipsHash(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+
+	baseline := buildSpecFrom(app).Hash()
+	app.Spec.Pipeline.Phases.Setup.Skip = true
+	if got := buildSpecFrom(app).Hash(); got == baseline {
+		t.Fatalf("setup.skip flip did not change the build-spec hash (%q)", got)
+	}
+}
+
 func hasEnv(env []corev1.EnvVar, name string) bool {
 	for _, e := range env {
 		if e.Name == name {

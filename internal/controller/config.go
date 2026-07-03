@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 
+	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
@@ -408,9 +409,12 @@ func validateNodeImages(m map[string]domain.NodeImage) error {
 // package-manager key the operator config file omits; the Helm chart supplies
 // the same values via values.yaml. The keys here are the ONLY package managers
 // the operator recognises — an unknown key in the config file is rejected.
+// Keyed off the API enum constants so a new PackageManager value fails the
+// enum-coverage test in config_test.go instead of silently injecting a noop
+// setup command (nil from DefaultSetupCommand → commandOrNoop's ["true"]).
 var defaultSetupCommandFallbacks = map[string][]string{
-	"yarn": {"yarn", "install", "--frozen-lockfile"},
-	"pnpm": {"pnpm", "install", "--frozen-lockfile"},
+	string(bakerv1alpha1.PackageManagerYarn): {"yarn", "install", "--frozen-lockfile"},
+	string(bakerv1alpha1.PackageManagerPnpm): {"pnpm", "install", "--frozen-lockfile"},
 }
 
 // mergeSetupCommands returns the effective per-package-manager setup commands:
