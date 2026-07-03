@@ -631,6 +631,22 @@ func (a App) StorageTotalBytes() int64 {
 	return a.StorageCacheBytes() + a.StorageDataCacheBytes() + a.StorageOutputTotalBytes()
 }
 
+// StorageTotalHuman is the app's non-overlapping footprint (StorageTotalBytes)
+// humanized — the value shown in the list-row Storage cell.
+func (a App) StorageTotalHuman() string { return HumanizeBytes(a.StorageTotalBytes()) }
+
+// StorageTooltip is the list-row Storage cell's title=, breaking the total down
+// by category: "Cache 4.0 GiB · Data cache 2.0 GiB · Output 6.4 GiB (active
+// 3.0 GiB)". Active is a subset of Output, shown parenthetically.
+func (a App) StorageTooltip() string {
+	return fmt.Sprintf("Cache %s · Data cache %s · Output %s (active %s)",
+		HumanizeBytes(a.StorageCacheBytes()),
+		HumanizeBytes(a.StorageDataCacheBytes()),
+		HumanizeBytes(a.StorageOutputTotalBytes()),
+		HumanizeBytes(a.StorageOutputActiveBytes()),
+	)
+}
+
 // StorageTotals is a cross-app storage roll-up by category. Grand is the
 // non-overlapping footprint (Cache + DataCache + OutputTotal); OutputActive is
 // informational only (a subset of OutputTotal) and is NOT part of Grand.

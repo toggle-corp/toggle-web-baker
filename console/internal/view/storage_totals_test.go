@@ -98,3 +98,25 @@ func TestAggregateStorageGrandExcludesActive(t *testing.T) {
 		t.Errorf("OutputActive = %d, want 40 (still reported)", got.OutputActive)
 	}
 }
+
+func TestStorageTooltip(t *testing.T) {
+	a := App{Storage: Storage{Volumes: []StorageVolume{
+		{Name: "cache", Bytes: 4 * 1024 * 1024 * 1024},
+		{Name: "dataCache", Bytes: 2 * 1024 * 1024 * 1024},
+		{Name: "outputTotal", Bytes: 6871947674},
+		{Name: "output", Bytes: 3 * 1024 * 1024 * 1024},
+	}}}
+	want := "Cache 4.0 GiB · Data cache 2.0 GiB · Output 6.4 GiB (active 3.0 GiB)"
+	if got := a.StorageTooltip(); got != want {
+		t.Errorf("StorageTooltip() = %q, want %q", got, want)
+	}
+}
+
+func TestStorageTotalHuman(t *testing.T) {
+	a := App{Storage: Storage{Volumes: []StorageVolume{
+		{Name: "cache", Bytes: 100}, {Name: "outputTotal", Bytes: 924},
+	}}}
+	if got := a.StorageTotalHuman(); got != "1.0 KiB" {
+		t.Errorf("StorageTotalHuman() = %q, want %q", got, "1.0 KiB")
+	}
+}

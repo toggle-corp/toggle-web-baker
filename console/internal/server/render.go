@@ -108,6 +108,9 @@ type listData struct {
 	// are computed from the unfiltered set (see handleList).
 	StatusFacets []statusFacet
 	GroupChips   []groupChip
+	// Storage is the humanized storage roll-up over the FILTERED, PRE-pagination
+	// set (see handleList), rendered in the heading after the count.
+	Storage storageHeading
 	// Search is the active search term (echoed into the input and empty-state
 	// copy); ClearSearchURL drops search while keeping status/group. Status /
 	// Group are the active filters, carried as hidden inputs so submitting a
@@ -127,6 +130,13 @@ type listData struct {
 	HasNext    bool
 	PrevURL    string
 	NextURL    string
+}
+
+// storageHeading is the humanized storage roll-up shown in the list heading;
+// figures are precomputed from view.AggregateStorage so the template stays
+// logic-free.
+type storageHeading struct {
+	Grand, Cache, DataCache, Output, Active string
 }
 
 type detailData struct {

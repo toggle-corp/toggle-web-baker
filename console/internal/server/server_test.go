@@ -1665,10 +1665,10 @@ func TestDetail_RendersCommitTriggerAndWatchConfig(t *testing.T) {
 	for _, want := range []string{
 		"Commit · cafebab", // trigger label with short SHA (current build + history)
 		`href="https://github.com/mapswipe/website/commit/cafebabe1234567890"`, // linked commit
-		"operator default",  // enabled scheduledBuilds without explicit schedule
-		">Watch commits</",  // trigger-config row label
-		"5m",                // watch interval
-		"cafebab",           // last-seen short SHA
+		"operator default", // enabled scheduledBuilds without explicit schedule
+		">Watch commits</", // trigger-config row label
+		"5m",               // watch interval
+		"cafebab",          // last-seen short SHA
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail page should contain %q", want)
@@ -1827,5 +1827,144 @@ func TestDetail_RendersDisabledTriggers(t *testing.T) {
 	}
 	if !strings.Contains(body, "Disabled") {
 		t.Errorf("detail page should say Disabled for absent triggers")
+	}
+}
+
+// storageListFixtureServer seeds apps carrying real status.storage.sizes so the
+// list-page storage roll-up is assertable. Byte sizes are chosen to humanize to
+// clean, distinct figures (see the per-test asserts). group/name let the
+// filter+search aggregation tests select a subset.
+func storageListFixtureServer(t *testing.T, objs ...*unstructured.Unstructured) *Server {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	rt := make([]runtime.Object, len(objs))
+	for i, o := range objs {
+		rt[i] = o
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, rt...)
+	return New(k8s.NewWithDynamic(dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
+}
+
+// storageApp builds a Ready app in group carrying the given per-volume byte sizes.
+func storageApp(ns, name, group string, cache, dataCache, outputTotal, output int64) *unstructured.Unstructured {
+	return fappObj(ns, name,
+		map[string]any{"group": group},
+		map[string]any{
+			"phase":      "Ready",
+			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+			"storage": map[string]any{
+				"sizes": map[string]any{
+					"cache":       cache,
+					"dataCache":   dataCache,
+					"outputTotal": outputTotal,
+					"output":      output,
+				},
+			},
+		})
+}
+
+const (
+	gib4  = 4 * 1024 * 1024 * 1024 // "4.0 GiB"
+	gib2  = 2 * 1024 * 1024 * 1024 // "2.0 GiB"
+	gib64 = 6871947674             // ≈ "6.4 GiB"
+	gib3  = 3 * 1024 * 1024 * 1024 // "3.0 GiB" (active)
+)
+
+func TestList_HeaderStorageGrandTotal(t *testing.T) {
+	srv := storageListFixtureServer(t, storageApp("a", "one", "g", gib4, gib2, gib64, gib3))
+	body := getList(srv, "/").Body.String()
+	// Grand = cache+dataCache+outputTotal = 12.4 GiB (active excluded).
+	if !strings.Contains(body, "12.4 GiB") {
+		t.Errorf("header should show the grand storage total 12.4 GiB; body=%s", body)
+	}
+}
+
+func TestList_HeaderStorageBreakdown(t *testing.T) {
+	srv := storageListFixtureServer(t, storageApp("a", "one", "g", gib4, gib2, gib64, gib3))
+	body := getList(srv, "/").Body.String()
+	for _, want := range []string{"Cache: 4.0 GiB", "Data cache: 2.0 GiB", "Output: 6.4 GiB", "active 3.0 GiB"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("header breakdown should contain %q; body=%s", want, body)
+		}
+	}
+}
+
+func TestList_HeaderStorageReflectsFilteredSet(t *testing.T) {
+	srv := storageListFixtureServer(t,
+		storageApp("a", "one", "grp-a", gib4, gib2, gib64, gib3), // grand 12.4 GiB
+		storageApp("b", "two", "grp-b", gib2, 0, 0, 0),           // grand 2.0 GiB
+	)
+	// Unfiltered: grand = 12.4 + 2.0 = 14.4 GiB.
+	body := getList(srv, "/").Body.String()
+	if !strings.Contains(body, "14.4 GiB") {
+		t.Errorf("unfiltered header should sum both apps to 14.4 GiB; body=%s", body)
+	}
+	// Filter to grp-b: only the 2.0 GiB app remains, header shrinks.
+	body = getList(srv, "/?group=grp-b").Body.String()
+	if strings.Contains(body, "14.4 GiB") {
+		t.Errorf("filtered header must not show the unfiltered total; body=%s", body)
+	}
+	if !strings.Contains(body, "· 2.0 GiB (Cache: 2.0 GiB") {
+		t.Errorf("filtered header should show only grp-b's 2.0 GiB; body=%s", body)
+	}
+}
+
+func TestList_HeaderStorageIsPrePagination(t *testing.T) {
+	// 60 apps × 2 GiB cache each = 120 GiB grand — spans both pages, so the
+	// header must reflect all 60, not just the 50 on page 1.
+	objs := make([]*unstructured.Unstructured, 60)
+	for i := range objs {
+		objs[i] = storageApp("pag", fmt.Sprintf("app-%03d", i), "grp-p", gib2, 0, 0, 0)
+	}
+	srv := storageListFixtureServer(t, objs...)
+	body := getList(srv, "/").Body.String()
+	// 60 × 2 GiB = 120 GiB (page 1 alone would be 50 × 2 = 100 GiB).
+	if !strings.Contains(body, "120.0 GiB") {
+		t.Errorf("header total should cover all 60 matches (120.0 GiB), not just the page; body=%s", body)
+	}
+	if strings.Contains(body, "· 100.0 GiB (Cache") {
+		t.Errorf("header total must not be the per-page sum (100.0 GiB); body=%s", body)
+	}
+}
+
+func TestList_PerAppStorageColumn(t *testing.T) {
+	srv := storageListFixtureServer(t,
+		storageApp("a", "one", "grp-a", gib4, gib2, gib64, gib3), // total 12.4 GiB
+		storageApp("b", "two", "grp-b", gib2, 0, 0, 0),           // total 2.0 GiB
+	)
+	body := getList(srv, "/").Body.String()
+	if !strings.Contains(body, `<th class="c-storage">Storage</th>`) {
+		t.Errorf("table should carry a Storage column header; body=%s", body)
+	}
+	// Each row's storage cell shows that app's own total.
+	if !strings.Contains(body, `<td class="c-storage"`) {
+		t.Errorf("each row should carry a storage cell; body=%s", body)
+	}
+	// The smaller app's own total (2.0 GiB) must render even though the header
+	// grand (14.4 GiB) differs.
+	if !strings.Contains(body, "14.4 GiB") {
+		t.Fatalf("precondition: header grand should be 14.4 GiB; body=%s", body)
+	}
+}
+
+func TestList_PerAppStorageTooltip(t *testing.T) {
+	srv := storageListFixtureServer(t, storageApp("a", "one", "grp-a", gib4, gib2, gib64, gib3))
+	body := getList(srv, "/").Body.String()
+	want := `title="Cache 4.0 GiB · Data cache 2.0 GiB · Output 6.4 GiB (active 3.0 GiB)"`
+	if !strings.Contains(body, want) {
+		t.Errorf("row storage cell should carry the breakdown tooltip %q; body=%s", want, body)
+	}
+}
+
+func TestList_EmptyStateSpansStorageColumn(t *testing.T) {
+	srv := storageListFixtureServer(t, storageApp("a", "one", "grp-a", gib4, gib2, gib64, gib3))
+	// A search matching nothing yields the empty-state row.
+	body := getList(srv, "/?search=zzzznomatch").Body.String()
+	if !strings.Contains(body, `colspan="6"`) {
+		t.Errorf("empty-state row should span all 6 columns; body=%s", body)
+	}
+	if strings.Contains(body, `colspan="5"`) {
+		t.Errorf("empty-state colspan should be updated from 5 to 6; body=%s", body)
 	}
 }

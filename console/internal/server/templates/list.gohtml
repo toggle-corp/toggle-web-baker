@@ -2,7 +2,7 @@
 {{template "head" .Head}}
 <main>
 <div class="listhead">
-  <h2>FrontendApps <span class="count">· {{.Total}}</span></h2>
+  <h2>FrontendApps <span class="count">· {{.Total}}</span> <span class="count storage-total">· {{.Storage.Grand}} (Cache: {{.Storage.Cache}}, Data cache: {{.Storage.DataCache}}, Output: {{.Storage.Output}} (active {{.Storage.Active}}))</span></h2>
   {{/* Plain GET search form — status/group ride along as hidden inputs so a
        search submit preserves the active chips; the clear link drops only search. */}}
   <form method="get" class="listsearch" role="search">
@@ -31,7 +31,7 @@
 <div class="tablewrap">
 <table>
   <thead>
-    <tr><th>Health</th><th>Name</th><th class="c-url">URL</th><th>Last build</th><th>Next build</th></tr>
+    <tr><th>Health</th><th>Name</th><th class="c-url">URL</th><th class="c-storage">Storage</th><th>Last build</th><th>Next build</th></tr>
   </thead>
   <tbody>
   {{range .Apps}}
@@ -45,6 +45,7 @@
         {{if .ShowFlow}}{{template "flowstrip" .Build}}{{end}}
       </td>
       <td class="c-url">{{if .URL}}<a href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener">{{.URLHost}} ↗</a>{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="c-storage" title="{{.StorageTooltip}}">{{.StorageTotalHuman}}</td>
       <td class="c-last">
         {{if .BuildActive}}<span class="last-run">Running</span> · started {{timetag .Build.StartTime}}
         {{else if .Build.Result}}<span{{if eq .Build.Result "Failed"}} class="last-fail"{{end}}>{{.Build.Result}}</span> · {{timetag .LastBuildTime}}
@@ -54,7 +55,7 @@
       <td class="c-next">{{timetag .NextScheduledBuildTime}}</td>
     </tr>
   {{else}}
-    <tr><td colspan="5" class="muted">{{if .Search}}No FrontendApps match "{{.Search}}".{{else}}No FrontendApps match.{{end}}</td></tr>
+    <tr><td colspan="6" class="muted">{{if .Search}}No FrontendApps match "{{.Search}}".{{else}}No FrontendApps match.{{end}}</td></tr>
   {{end}}
   </tbody>
 </table>

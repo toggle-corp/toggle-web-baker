@@ -142,10 +142,21 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	pageApps := filtered[lo:hi]
 
+	// Storage roll-up spans the whole FILTERED set (pre-pagination), so the
+	// heading figure reflects every match, not just the visible page.
+	st := view.AggregateStorage(filtered)
+
 	render(w, "list", listData{
-		Head:           head{Title: "Apps", User: sentryhttp.UserFrom(r)},
-		Apps:           pageApps,
-		Total:          len(apps),
+		Head:  head{Title: "Apps", User: sentryhttp.UserFrom(r)},
+		Apps:  pageApps,
+		Total: len(apps),
+		Storage: storageHeading{
+			Grand:     view.HumanizeBytes(st.Grand),
+			Cache:     view.HumanizeBytes(st.Cache),
+			DataCache: view.HumanizeBytes(st.DataCache),
+			Output:    view.HumanizeBytes(st.OutputTotal),
+			Active:    view.HumanizeBytes(st.OutputActive),
+		},
 		StatusFacets:   facets,
 		GroupChips:     chips,
 		Search:         search,
