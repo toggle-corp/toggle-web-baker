@@ -173,6 +173,10 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
+	// 9b2. Refresh the provisioned PVC capacities the console draws the storage
+	// fill bars against (best-effort; bound capacities change only on resize).
+	r.recordPVCCapacities(ctx, app)
+
 	// 9c. On-demand cleanup (cache prune / release prune). Observe finished
 	// cleanup Jobs, then start any fresh request — serialized against the build
 	// (which takes precedence) and against each other via domain.DecideCleanup.
@@ -619,6 +623,9 @@ func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app 
 		app.Status.Release.Previous = app.Status.Release.Current
 		app.Status.Release.Current = blob.Release.Current
 		app.Status.Release.ServingSince = ptr.To(metav1.NewTime(r.now()))
+	}
+	if blob.ReleaseCount > 0 {
+		app.Status.Storage.ReleaseCount = blob.ReleaseCount
 	}
 	if len(blob.Sizes) > 0 {
 		if app.Status.Storage.Sizes == nil {

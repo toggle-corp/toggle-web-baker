@@ -3,8 +3,11 @@ package controller
 import (
 	"slices"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
@@ -298,6 +301,84 @@ func TestDeriveBuildSteps_ReleaseDone(t *testing.T) {
 	}
 	if got := stepStatus(steps, bakerv1alpha1.StepRelease); got != bakerv1alpha1.StepStatusSucceeded {
 		t.Fatalf("release = %s, want Succeeded when releaseDone", got)
+	}
+}
+
+// deriveBuildSteps: harvests each real container's start/finish timestamps
+// (per-step runtime) and the memory limit it ran with (peak-vs-allocated) from
+// the pod; a Running container carries only StartedAt; a Pending step (its
+// container never started) carries no limit even when the pod spec sets one;
+// the synthetic release step carries neither.
+func TestDeriveBuildSteps_TimesAndMemoryLimit(t *testing.T) {
+	app := baseApp()
+
+	t0 := metav1.NewTime(time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC))
+	t1 := metav1.NewTime(t0.Add(90 * time.Second))
+	cloneCS := term("clone", 0)
+	cloneCS.State.Terminated.StartedAt = t0
+	cloneCS.State.Terminated.FinishedAt = t1
+	buildCS := running("build")
+	buildCS.State.Running.StartedAt = t1
+
+	pod := &corev1.Pod{
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{Name: "clone"}, // platform container: no memory limit set
+				{Name: "build", Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+				}},
+			},
+			// copier has a spec limit but no container status yet (init phase
+			// still running): the Pending step must NOT pick the limit up.
+			Containers: []corev1.Container{
+				{Name: "copier", Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")},
+				}},
+			},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{cloneCS, buildCS},
+		},
+	}
+	steps := deriveBuildSteps(applicableSteps(app), pod, false)
+	byName := map[string]bakerv1alpha1.BuildStep{}
+	for _, s := range steps {
+		byName[s.Name] = s
+	}
+
+	clone := byName[bakerv1alpha1.StepClone]
+	if clone.StartedAt == nil || !clone.StartedAt.Equal(&t0) {
+		t.Errorf("clone.StartedAt = %v, want %v", clone.StartedAt, t0)
+	}
+	if clone.FinishedAt == nil || !clone.FinishedAt.Equal(&t1) {
+		t.Errorf("clone.FinishedAt = %v, want %v", clone.FinishedAt, t1)
+	}
+	if clone.MemoryLimit != "" {
+		t.Errorf("clone.MemoryLimit = %q, want empty (no limit set)", clone.MemoryLimit)
+	}
+
+	build := byName[bakerv1alpha1.StepBuild]
+	if build.StartedAt == nil || !build.StartedAt.Equal(&t1) {
+		t.Errorf("build.StartedAt = %v, want %v", build.StartedAt, t1)
+	}
+	if build.FinishedAt != nil {
+		t.Errorf("build.FinishedAt = %v, want nil while Running", build.FinishedAt)
+	}
+	if build.MemoryLimit != "2Gi" {
+		t.Errorf("build.MemoryLimit = %q, want 2Gi", build.MemoryLimit)
+	}
+
+	copier := byName[bakerv1alpha1.StepCopier]
+	if copier.Status != bakerv1alpha1.StepStatusPending {
+		t.Errorf("copier.Status = %s, want Pending (no container status)", copier.Status)
+	}
+	if copier.MemoryLimit != "" {
+		t.Errorf("copier.MemoryLimit = %q, want empty for a Pending step", copier.MemoryLimit)
+	}
+
+	release := byName[bakerv1alpha1.StepRelease]
+	if release.StartedAt != nil || release.FinishedAt != nil || release.MemoryLimit != "" {
+		t.Errorf("release step must carry no times/limit: %+v", release)
 	}
 }
 

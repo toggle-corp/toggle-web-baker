@@ -210,6 +210,33 @@ func (r *FrontendAppReconciler) readMeasurement(ctx context.Context, app *bakerv
 	return n, true
 }
 
+// recordPVCCapacities reads the app's three PVCs' bound capacities into
+// status.storage.capacities (keyed cache / dataCache / output — the same keys
+// the sizes map uses) so the console can draw storage fill bars against the
+// REAL provisioned size when no spec.storage cap applies; outputTotal in
+// particular has no spec cap but is physically bounded by the output PVC.
+// Best-effort: an unbound or unreadable PVC simply leaves its key absent.
+func (r *FrontendAppReconciler) recordPVCCapacities(ctx context.Context, app *bakerv1alpha1.FrontendApp) {
+	targets := map[string]string{
+		"cache":     cacheePVCName(app),
+		"dataCache": dataCachePVCName(app),
+		"output":    outputPVCName(app),
+	}
+	caps := map[string]int64{}
+	for key, name := range targets {
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: app.Namespace, Name: name}, pvc); err != nil {
+			continue
+		}
+		if q, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok && q.Value() > 0 {
+			caps[key] = q.Value()
+		}
+	}
+	if len(caps) > 0 {
+		app.Status.Storage.Capacities = caps
+	}
+}
+
 // recordSize merges one measured size into status.storage.sizes, records the
 // delta from the prior measurement (so the console can show growth), and
 // refreshes MeasuredAt. It never clobbers other keys.

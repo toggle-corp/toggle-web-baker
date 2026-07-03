@@ -466,6 +466,24 @@ type BuildStep struct {
 	// terminal observe, or no cgroup v2 peak available).
 	// +optional
 	PeakMemoryBytes int64 `json:"peakMemoryBytes,omitempty"`
+	// StartedAt is when the step's container started, read from the kubelet's
+	// container state (Running.StartedAt or Terminated.StartedAt). Absent for a
+	// step not yet reached, the synthetic release step, or a pod reaped before
+	// terminal observe.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// FinishedAt is when the step's container terminated. Absent while the step
+	// is still running (the console derives a live duration from StartedAt).
+	// +optional
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+	// MemoryLimit is the memory ceiling the step's container ran with, as its
+	// Kubernetes quantity string (e.g. "2Gi"), read from the build pod SPEC so
+	// it reflects the build that actually ran. Only stamped once the container
+	// has started (Running or Terminated). Rendered next to PeakMemoryBytes so
+	// peak-vs-allocated is visible per step. Empty for the synthetic release
+	// step, a step that has not started yet, or when the pod was already reaped.
+	// +optional
+	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
 
 // BuildTrigger records why a build ran, for the history list.
@@ -587,6 +605,21 @@ type StorageStatus struct {
 	LastRunDeltas map[string]int64 `json:"lastRunDeltas,omitempty"`
 	// +optional
 	ThresholdState string `json:"thresholdState,omitempty"`
+	// ReleaseCount is the number of release directories retained on the output
+	// PVC, counted by the copier AFTER its retention sweep and flip (so it is
+	// the real on-disk count, not spec.keepReleases). 0/absent when no copier
+	// has reported yet.
+	// +optional
+	ReleaseCount int64 `json:"releaseCount,omitempty"`
+	// Capacities maps each PVC-backed volume (cache / dataCache / output) to
+	// its provisioned capacity in bytes, read from the bound PVC's
+	// status.capacity. The console draws the storage fill bars against these
+	// when no explicit spec.storage cap applies (outputTotal in particular is
+	// physically bounded by the output PVC). Bounded by the fixed volume set;
+	// 8 leaves headroom, mirroring resolvedImages.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=8
+	Capacities map[string]int64 `json:"capacities,omitempty"`
 }
 
 // CleanupActionStatus is the per-action record for one cleanup kind (cache or

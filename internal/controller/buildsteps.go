@@ -125,33 +125,75 @@ func failedStep(steps []bakerv1alpha1.BuildStep) string {
 // container never ran is left Pending (we never invent a status for a container
 // the kubelet didn't reach). A nil/absent pod yields all-Pending. For shim-
 // wrapped steps (setup/fetch/build) the terminated container's message carries
-// the phase's peak memory, harvested into PeakMemoryBytes.
+// the phase's peak memory, harvested into PeakMemoryBytes. Every real container
+// also records its start/finish timestamps (per-step runtime) and — once it has
+// actually started (Running or Terminated) — the memory limit it ran with
+// (peak-vs-allocated), both read from the pod. A Pending step carries no limit:
+// "allocated" describes a run, not a plan.
 func deriveBuildSteps(applicable []string, pod *corev1.Pod, releaseDone bool) []bakerv1alpha1.BuildStep {
 	out := make([]bakerv1alpha1.BuildStep, 0, len(applicable))
 	for _, name := range applicable {
-		status := bakerv1alpha1.StepStatusPending
-		peak := int64(0)
+		step := bakerv1alpha1.BuildStep{Name: name, Status: bakerv1alpha1.StepStatusPending}
 		switch name {
 		case bakerv1alpha1.StepRelease:
 			if releaseDone {
-				status = bakerv1alpha1.StepStatusSucceeded
+				step.Status = bakerv1alpha1.StepStatusSucceeded
 			}
 		case bakerv1alpha1.StepCopier:
 			if pod != nil {
-				status = containerStepStatus(findContainerStatus(pod.Status.ContainerStatuses, name))
+				cs := findContainerStatus(pod.Status.ContainerStatuses, name)
+				step.Status = containerStepStatus(cs)
+				stampStepTimes(&step, cs)
+				if containerRan(cs) {
+					step.MemoryLimit = containerMemoryLimit(pod, name)
+				}
 			}
 		default: // clone / setup / fetch / build are init containers
 			if pod != nil {
 				cs := findContainerStatus(pod.Status.InitContainerStatuses, name)
-				status = containerStepStatus(cs)
+				step.Status = containerStepStatus(cs)
+				stampStepTimes(&step, cs)
+				if containerRan(cs) {
+					step.MemoryLimit = containerMemoryLimit(pod, name)
+				}
 				if cs != nil && cs.State.Terminated != nil {
-					peak = parsePeakMemory(cs.State.Terminated.Message)
+					step.PeakMemoryBytes = parsePeakMemory(cs.State.Terminated.Message)
 				}
 			}
 		}
-		out = append(out, bakerv1alpha1.BuildStep{Name: name, Status: status, PeakMemoryBytes: peak})
+		out = append(out, step)
 	}
 	return out
+}
+
+// containerRan reports whether the container actually started, i.e. its status
+// exists and is Running or Terminated. Waiting/absent means the kubelet never
+// launched it, so callers must not stamp run-derived facts (MemoryLimit) onto a
+// still-Pending step.
+func containerRan(cs *corev1.ContainerStatus) bool {
+	return cs != nil && (cs.State.Running != nil || cs.State.Terminated != nil)
+}
+
+// stampStepTimes copies the container's start/finish timestamps onto the step:
+// a Running container has only StartedAt; a Terminated one has both. Zero-valued
+// kubelet timestamps are skipped so the status never carries a bogus epoch.
+func stampStepTimes(step *bakerv1alpha1.BuildStep, cs *corev1.ContainerStatus) {
+	if cs == nil {
+		return
+	}
+	switch {
+	case cs.State.Terminated != nil:
+		if !cs.State.Terminated.StartedAt.IsZero() {
+			step.StartedAt = cs.State.Terminated.StartedAt.DeepCopy()
+		}
+		if !cs.State.Terminated.FinishedAt.IsZero() {
+			step.FinishedAt = cs.State.Terminated.FinishedAt.DeepCopy()
+		}
+	case cs.State.Running != nil:
+		if !cs.State.Running.StartedAt.IsZero() {
+			step.StartedAt = cs.State.Running.StartedAt.DeepCopy()
+		}
+	}
 }
 
 // peakMemoryKey is the termination-message key the shim wrapper emits (one

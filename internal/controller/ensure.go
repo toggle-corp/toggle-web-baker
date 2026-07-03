@@ -19,6 +19,9 @@ type CopierMessage struct {
 		Current string `json:"current,omitempty"`
 	} `json:"release,omitempty"`
 	Sizes map[string]int64 `json:"sizes,omitempty"`
+	// ReleaseCount is the number of release dirs retained on the output PVC,
+	// counted by the copier post retention-sweep (0 = not reported / old copier).
+	ReleaseCount int64 `json:"releaseCount,omitempty"`
 }
 
 func parseCopierMessage(s string) (CopierMessage, bool) {

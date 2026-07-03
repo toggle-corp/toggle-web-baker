@@ -383,6 +383,16 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 			if res.Action != "skip" && res.Before > 0 {
 				r.recordSize(app, sizeKeyForCleanupMode(mode), res.After)
 			}
+			// A release prune changes the retained-release count the copier last
+			// reported; res.Kept is the fresh on-disk count, so keep the console's
+			// "Output (N releases)" label honest between builds. kept=0 is a real
+			// count too — a prune that deleted everything (deleted>0) or found no
+			// releases dir at all (before=0, e.g. a wiped PVC) must reset a stale
+			// non-zero count rather than preserve it.
+			if mode == cleanupModeReleases && res.Action == "release-prune" &&
+				(res.Kept > 0 || res.Deleted > 0 || res.Before == 0) {
+				app.Status.Storage.ReleaseCount = int64(res.Kept)
+			}
 		} else {
 			st.Phase = "Failed"
 			st.ReclaimedBytes = 0

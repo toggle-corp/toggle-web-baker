@@ -668,6 +668,21 @@ spec:
                         BuildStep is one entry of a build's ordered per-step timeline. Only steps
                         that actually apply to the app appear (no phantom skipped slots).
                       properties:
+                        finishedAt:
+                          description: |-
+                            FinishedAt is when the step's container terminated. Absent while the step
+                            is still running (the console derives a live duration from StartedAt).
+                          format: date-time
+                          type: string
+                        memoryLimit:
+                          description: |-
+                            MemoryLimit is the memory ceiling the step's container ran with, as its
+                            Kubernetes quantity string (e.g. "2Gi"), read from the build pod SPEC so
+                            it reflects the build that actually ran. Only stamped once the container
+                            has started (Running or Terminated). Rendered next to PeakMemoryBytes so
+                            peak-vs-allocated is visible per step. Empty for the synthetic release
+                            step, a step that has not started yet, or when the pod was already reaped.
+                          type: string
                         message:
                           type: string
                         name:
@@ -683,6 +698,14 @@ spec:
                             terminal observe, or no cgroup v2 peak available).
                           format: int64
                           type: integer
+                        startedAt:
+                          description: |-
+                            StartedAt is when the step's container started, read from the kubelet's
+                            container state (Running.StartedAt or Terminated.StartedAt). Absent for a
+                            step not yet reached, the synthetic release step, or a pod reaped before
+                            terminal observe.
+                          format: date-time
+                          type: string
                         status:
                           description: |-
                             StepStatus is the state of one ordered step in a build's pipeline. Pending
@@ -797,6 +820,21 @@ spec:
                           BuildStep is one entry of a build's ordered per-step timeline. Only steps
                           that actually apply to the app appear (no phantom skipped slots).
                         properties:
+                          finishedAt:
+                            description: |-
+                              FinishedAt is when the step's container terminated. Absent while the step
+                              is still running (the console derives a live duration from StartedAt).
+                            format: date-time
+                            type: string
+                          memoryLimit:
+                            description: |-
+                              MemoryLimit is the memory ceiling the step's container ran with, as its
+                              Kubernetes quantity string (e.g. "2Gi"), read from the build pod SPEC so
+                              it reflects the build that actually ran. Only stamped once the container
+                              has started (Running or Terminated). Rendered next to PeakMemoryBytes so
+                              peak-vs-allocated is visible per step. Empty for the synthetic release
+                              step, a step that has not started yet, or when the pod was already reaped.
+                            type: string
                           message:
                             type: string
                           name:
@@ -812,6 +850,14 @@ spec:
                               terminal observe, or no cgroup v2 peak available).
                             format: int64
                             type: integer
+                          startedAt:
+                            description: |-
+                              StartedAt is when the step's container started, read from the kubelet's
+                              container state (Running.StartedAt or Terminated.StartedAt). Absent for a
+                              step not yet reached, the synthetic release step, or a pod reaped before
+                              terminal observe.
+                            format: date-time
+                            type: string
                           status:
                             description: |-
                               StepStatus is the state of one ordered step in a build's pipeline. Pending
@@ -1047,6 +1093,19 @@ spec:
               storage:
                 description: StorageStatus records the most recent du measurement.
                 properties:
+                  capacities:
+                    additionalProperties:
+                      format: int64
+                      type: integer
+                    description: |-
+                      Capacities maps each PVC-backed volume (cache / dataCache / output) to
+                      its provisioned capacity in bytes, read from the bound PVC's
+                      status.capacity. The console draws the storage fill bars against these
+                      when no explicit spec.storage cap applies (outputTotal in particular is
+                      physically bounded by the output PVC). Bounded by the fixed volume set;
+                      8 leaves headroom, mirroring resolvedImages.
+                    maxProperties: 8
+                    type: object
                   lastRunDeltas:
                     additionalProperties:
                       format: int64
@@ -1055,6 +1114,14 @@ spec:
                   measuredAt:
                     format: date-time
                     type: string
+                  releaseCount:
+                    description: |-
+                      ReleaseCount is the number of release directories retained on the output
+                      PVC, counted by the copier AFTER its retention sweep and flip (so it is
+                      the real on-disk count, not spec.keepReleases). 0/absent when no copier
+                      has reported yet.
+                    format: int64
+                    type: integer
                   sizes:
                     additionalProperties:
                       format: int64
