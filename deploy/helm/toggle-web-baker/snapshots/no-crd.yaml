@@ -38,6 +38,8 @@ data:
     imagePullSecret: ""
     storageClass: ""
     measureInterval: "1h"
+    defaultSchedule: "0 */12 * * *"
+    defaultWatchInterval: "10m"
     images:
       clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0"
       copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0"
@@ -307,7 +309,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 4ed7d791d7f5fe343d7adf77f4db80ffcebd9e105d9947d177cdab3176a01d15
+        checksum/config: f44a48b4fc0205ca93d3dfca65718c27696c2fa74f3a3ba242489e3fa12e9a5d
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

@@ -66,6 +66,13 @@ operator:
   # Debounce floor between post-build du storage measurements.
   measureInterval: "1h"
 
+  # Trigger defaults for apps that enable a trigger without tuning it:
+  # spec.scheduledBuilds.schedule empty -> defaultSchedule (cron);
+  # spec.watchCommits.interval empty -> defaultWatchInterval (whole minutes or
+  # whole hours — a CronJob schedule can't express anything finer).
+  defaultSchedule: "0 */12 * * *"
+  defaultWatchInterval: "10m"
+
   # Per-phase build-pod resource defaults (operator-owned). memory is per-phase
   # (a phase's spec.pipeline.phases.<phase>.memoryLimit overrides its ceiling; request is pinned
   # == limit); cpu request/limit are global (same for every phase container).

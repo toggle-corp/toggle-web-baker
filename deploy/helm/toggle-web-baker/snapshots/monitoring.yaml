@@ -40,6 +40,8 @@ data:
     imagePullSecret: ""
     storageClass: ""
     measureInterval: "1h"
+    defaultSchedule: "0 */12 * * *"
+    defaultWatchInterval: "10m"
     images:
       clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.0.0"
       copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.0.0"
@@ -535,9 +537,27 @@ spec:
                 minLength: 1
                 pattern: ^(https?://|git@|ssh://)[^\s]+$
                 type: string
-              schedule:
-                default: 0 */12 * * *
-                type: string
+              scheduledBuilds:
+                description: |-
+                  ScheduledBuilds enables time-based rebuilds (the clock CronJob). Absent
+                  means DISABLED — apps that need periodic data-refresh builds must opt in
+                  explicitly. Deliberately a struct with a required Enabled rather than a
+                  defaulted flat field, so `scheduledBuilds: {schedule: ...}` without an
+                  explicit enabled is rejected at admission instead of silently doing nothing.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled must be stated explicitly (no default): false keeps the config
+                      around while pausing the clock CronJob.
+                    type: boolean
+                  schedule:
+                    description: |-
+                      Schedule is the clock CronJob's cron expression. Empty means the operator
+                      default (config defaultSchedule, chart-owned; the CRD cannot know it).
+                    type: string
+                required:
+                - enabled
+                type: object
               storage:
                 description: |-
                   StorageConfig groups the per-volume absolute-byte thresholds. The operator
@@ -601,6 +621,29 @@ spec:
                 - message: output.alertBytes must be < output.capBytes
                   rule: '!has(self.output) || !has(self.output.alertBytes) || !has(self.output.capBytes)
                     || self.output.alertBytes < self.output.capBytes'
+              watchCommits:
+                description: |-
+                  WatchCommits enables commit-triggered rebuilds: a per-app watcher CronJob
+                  polls `git ls-remote` on Repo/Ref and requests a rebuild when the SHA
+                  changes. Absent means DISABLED. Coexists with ScheduledBuilds (data-driven
+                  apps still need time-based rebuilds; pure-source apps can go watch-only).
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled must be stated explicitly (no default): false keeps the config
+                      around while pausing the watcher CronJob.
+                    type: boolean
+                  interval:
+                    description: |-
+                      Interval is how often the watcher polls the remote, as a Go duration in
+                      whole minutes or whole hours (e.g. "5m", "1h") — CronJob schedules cannot
+                      express anything finer, and the pattern rejects sub-minute units at
+                      admission. Empty means the operator default (config defaultWatchInterval).
+                    pattern: ^([0-9]+[mh])+$
+                    type: string
+                required:
+                - enabled
+                type: object
             required:
             - ingress
             - pipeline
@@ -617,6 +660,11 @@ spec:
                 properties:
                   attempts:
                     type: integer
+                  commit:
+                    description: |-
+                      Commit is the SHA that triggered a commit-watch build (empty for other
+                      triggers), captured from RebuildCommitAnnotation at Job creation.
+                    type: string
                   completionTime:
                     format: date-time
                     type: string
@@ -768,6 +816,11 @@ spec:
                   properties:
                     attempts:
                       type: integer
+                    commit:
+                      description: |-
+                        Commit is the SHA that triggered a commit-watch build (empty for other
+                        triggers), captured from RebuildCommitAnnotation at Job creation.
+                      type: string
                     completionTime:
                       format: date-time
                       type: string
@@ -1419,7 +1472,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 3840b690d0404fb676361cf6f58a0ca8a2bc598d916668ed4a9992cae925a83f
+        checksum/config: 9792cc7216dfd5c4c6f6520e424ca74da62bae2bb0d564c09548fd099f5f47b0
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

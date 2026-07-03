@@ -24,7 +24,12 @@ spec:
   repo: https://github.com/octocat/Hello-World
   ref: master
   group: mapswipe  # informational label the console uses to group/filter apps
-  schedule: "0 6 * * *"
+  scheduledBuilds:      # opt-in; enabled is REQUIRED when the struct is present
+    enabled: true
+    schedule: "0 6 * * *"   # omit to use the operator's defaultSchedule
+  watchCommits:         # opt-in commit polling; rebuilds when the ref's SHA changes
+    enabled: true
+    interval: 5m            # omit to use the operator's defaultWatchInterval
   keepReleases: 2
   ingress:
     host: smoke.local.test

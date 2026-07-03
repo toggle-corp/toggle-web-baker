@@ -24,6 +24,8 @@ data:
     imagePullSecret: {{ .Values.operator.imagePullSecret | quote }}
     storageClass: {{ .Values.operator.storageClass | quote }}
     measureInterval: {{ .Values.operator.measureInterval | quote }}
+    defaultSchedule: {{ .Values.operator.defaultSchedule | quote }}
+    defaultWatchInterval: {{ .Values.operator.defaultWatchInterval | quote }}
     images:
       clone: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.clone "root" $) | quote }}
       copier: {{ include "toggle-web-baker.image" (dict "image" .Values.platformImages.copier "root" $) | quote }}
