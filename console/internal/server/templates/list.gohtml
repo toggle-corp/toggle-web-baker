@@ -3,6 +3,14 @@
 <main>
 <div class="listhead">
   <h2>FrontendApps <span class="count">· {{.Total}}</span></h2>
+  {{/* Plain GET search form — status/group ride along as hidden inputs so a
+       search submit preserves the active chips; the clear link drops only search. */}}
+  <form method="get" class="listsearch" role="search">
+    {{if .Status}}<input type="hidden" name="status" value="{{.Status}}">{{end}}
+    {{if .Group}}<input type="hidden" name="group" value="{{.Group}}">{{end}}
+    <input type="search" name="search" value="{{.Search}}" placeholder="search name, ns, group, url…" aria-label="Search apps">
+    {{if .Search}}<a class="small" href="{{.ClearSearchURL}}">✕ clear</a>{{end}}
+  </form>
   <span class="small muted" style="margin-left:auto">degraded first</span>
 </div>
 
@@ -46,7 +54,7 @@
       <td class="c-next">{{timetag .NextScheduledBuildTime}}</td>
     </tr>
   {{else}}
-    <tr><td colspan="5" class="muted">No FrontendApps match.</td></tr>
+    <tr><td colspan="5" class="muted">{{if .Search}}No FrontendApps match "{{.Search}}".{{else}}No FrontendApps match.{{end}}</td></tr>
   {{end}}
   </tbody>
 </table>

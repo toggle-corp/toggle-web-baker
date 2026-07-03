@@ -508,6 +508,155 @@ func TestList_GroupChipsAndFilter(t *testing.T) {
 	}
 }
 
+func TestList_SearchMatchesName(t *testing.T) {
+	srv := listFixtureServer(t)
+	// "ungrouped" is a substring of the web-ungrouped name; the other rows drop.
+	body := getList(srv, "/?search=ungrouped").Body.String()
+	if !strings.Contains(body, "web-ungrouped") {
+		t.Errorf("search should keep the matching app; body=%s", body)
+	}
+	if strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ready") {
+		t.Errorf("search should drop non-matching apps; body=%s", body)
+	}
+}
+
+func TestList_SearchMatchesNamespace(t *testing.T) {
+	srv := listFixtureServer(t)
+	// "beta" is the namespace of web-ready only.
+	body := getList(srv, "/?search=beta").Body.String()
+	if !strings.Contains(body, "web-ready") {
+		t.Errorf("search should match on namespace; body=%s", body)
+	}
+	if strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ungrouped") {
+		t.Errorf("namespace search should drop other apps; body=%s", body)
+	}
+}
+
+func TestList_SearchMatchesGroup(t *testing.T) {
+	srv := listFixtureServer(t)
+	// "grp-b" is the group of web-ready only.
+	body := getList(srv, "/?search=grp-b").Body.String()
+	if !strings.Contains(body, "web-ready") {
+		t.Errorf("search should match on group; body=%s", body)
+	}
+	if strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ungrouped") {
+		t.Errorf("group search should drop other apps; body=%s", body)
+	}
+}
+
+func TestList_SearchMatchesURLHost(t *testing.T) {
+	srv := listFixtureServer(t)
+	// Case-insensitive host match: web-degraded's host is degraded.example.org.
+	body := getList(srv, "/?search=DEGRADED.EXAMPLE").Body.String()
+	if !strings.Contains(body, "web-degraded") {
+		t.Errorf("search should match on URL host (case-insensitive); body=%s", body)
+	}
+	if strings.Contains(body, "web-ready") || strings.Contains(body, "web-ungrouped") {
+		t.Errorf("URL-host search should drop other apps; body=%s", body)
+	}
+}
+
+func TestList_SearchComposesWithStatusFilter(t *testing.T) {
+	srv := listFixtureServer(t)
+	// "web" matches every name; status=ready narrows to web-ready (AND).
+	body := getList(srv, "/?search=web&status=ready").Body.String()
+	if !strings.Contains(body, "web-ready") {
+		t.Errorf("search+status should keep the ready app; body=%s", body)
+	}
+	if strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ungrouped") {
+		t.Errorf("search+status should drop non-ready apps; body=%s", body)
+	}
+}
+
+func TestList_ChipURLsPreserveSearch(t *testing.T) {
+	srv := listFixtureServer(t)
+	body := getList(srv, "/?search=web").Body.String()
+	// Status facet + group chip links must keep the active search term so
+	// clicking a chip does not drop the search.
+	if !strings.Contains(body, "search=web") {
+		t.Errorf("chip URLs should preserve the search term; body=%s", body)
+	}
+	if !strings.Contains(body, "search=web&amp;status=degraded") {
+		t.Errorf("status facet URLs should carry search; body=%s", body)
+	}
+	if !strings.Contains(body, "group=grp-a&amp;search=web") {
+		t.Errorf("group chip URLs should carry search; body=%s", body)
+	}
+}
+
+func TestList_FacetCountsUnchangedBySearch(t *testing.T) {
+	srv := listFixtureServer(t)
+	// A narrowing search must not change the facet counts or heading total —
+	// they come from the population unfiltered by search.
+	body := getList(srv, "/?search=ungrouped").Body.String()
+	if !strings.Contains(body, "web-ungrouped") || strings.Contains(body, "web-ready") {
+		t.Fatalf("search should have narrowed to web-ungrouped; body=%s", body)
+	}
+	for _, want := range []string{"all (3)", "ready (1)", "degraded (1)", "pending (1)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("facet counts should stay unfiltered by search: missing %q; body=%s", want, body)
+		}
+	}
+	if !strings.Contains(body, "· 3") {
+		t.Errorf("heading total should stay unfiltered by search; body=%s", body)
+	}
+	// The group chips must still all render (computed pre-search).
+	for _, want := range []string{">grp-a</a>", ">grp-b</a>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("group chips should stay present under search: missing %q; body=%s", want, body)
+		}
+	}
+}
+
+func TestList_SearchInputAndClearLink(t *testing.T) {
+	srv := listFixtureServer(t)
+
+	// No search active: input is empty, no clear link.
+	body := getList(srv, "/").Body.String()
+	if !strings.Contains(body, `name="search"`) {
+		t.Errorf("list should render a search input; body=%s", body)
+	}
+	if !strings.Contains(body, "search name, ns, group, url") {
+		t.Errorf("search input should carry the placeholder; body=%s", body)
+	}
+	if strings.Contains(body, "✕ clear") {
+		t.Errorf("clear link must be hidden when no search is active; body=%s", body)
+	}
+
+	// Search active: value persists, clear link appears keeping status/group.
+	body = getList(srv, "/?search=web&status=ready").Body.String()
+	if !strings.Contains(body, `value="web"`) {
+		t.Errorf("search input should echo the active term; body=%s", body)
+	}
+	if !strings.Contains(body, "✕ clear") {
+		t.Errorf("clear link should appear when a search is active; body=%s", body)
+	}
+	// The clear link drops search but keeps status.
+	if !strings.Contains(body, `href="/?status=ready"`) {
+		t.Errorf("clear link should keep status and drop search; body=%s", body)
+	}
+	// Status is carried as a hidden input so submitting a search preserves it.
+	if !strings.Contains(body, `type="hidden" name="status" value="ready"`) {
+		t.Errorf("form should carry status as a hidden input; body=%s", body)
+	}
+}
+
+func TestList_EmptyStateQuotesSearchTerm(t *testing.T) {
+	srv := listFixtureServer(t)
+
+	// A search matching nothing shows the quoted-term empty state.
+	body := getList(srv, "/?search=zzznope").Body.String()
+	if !strings.Contains(body, `No FrontendApps match "zzznope".`) {
+		t.Errorf("empty state should quote the search term; body=%s", body)
+	}
+
+	// A composed filter with no search keeps the plain empty message.
+	body = getList(srv, "/?group=grp-a&status=ready").Body.String()
+	if !strings.Contains(body, "No FrontendApps match.") {
+		t.Errorf("no-search empty state should stay plain; body=%s", body)
+	}
+}
+
 func TestList_GroupChipsHiddenWhenNoGroups(t *testing.T) {
 	srv, _ := newTestServer(t) // single seeded app without spec.group
 	body := getList(srv, "/").Body.String()

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/toggle-corp/toggle-web-baker/console/internal/k8s"
@@ -112,10 +113,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		status = ""
 	}
 	group := r.URL.Query().Get("group")
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
 
-	facets := statusFacets(apps, status, group)
-	chips := groupChips(apps, status, group)
-	filtered := filterApps(apps, status, group)
+	facets := statusFacets(apps, status, group, search)
+	chips := groupChips(apps, status, group, search)
+	filtered := searchApps(filterApps(apps, status, group), search)
 
 	// Most-broken-first: degraded, degraded-serving, building, pending, ready;
 	// stable namespace/name order within a rank.
@@ -130,11 +132,15 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	})
 
 	render(w, "list", listData{
-		Head:         head{Title: "Apps", User: sentryhttp.UserFrom(r)},
-		Apps:         filtered,
-		Total:        len(apps),
-		StatusFacets: facets,
-		GroupChips:   chips,
+		Head:           head{Title: "Apps", User: sentryhttp.UserFrom(r)},
+		Apps:           filtered,
+		Total:          len(apps),
+		StatusFacets:   facets,
+		GroupChips:     chips,
+		Search:         search,
+		ClearSearchURL: listURL(status, group, ""),
+		Status:         status,
+		Group:          group,
 	})
 }
 
@@ -165,15 +171,19 @@ func facetLabel(hc string) string {
 // the chip row simply filters the group-less apps.
 const ungroupedParam = "ungrouped"
 
-// listURL builds a list link composing the two filter params. Empty values are
-// omitted so the "all" chips link to a clean URL.
-func listURL(status, group string) string {
+// listURL builds a list link composing the filter params. Empty values are
+// omitted so the "all" chips link to a clean URL; search is carried through so
+// clicking a chip keeps the active search term.
+func listURL(status, group, search string) string {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
 	}
 	if group != "" {
 		q.Set("group", group)
+	}
+	if search != "" {
+		q.Set("search", search)
 	}
 	if len(q) == 0 {
 		return "/"
@@ -192,8 +202,9 @@ type statusFacet struct {
 }
 
 // statusFacets computes the fixed-order status chips with counts from the
-// UNFILTERED app set.
-func statusFacets(apps []view.App, activeStatus, group string) []statusFacet {
+// UNFILTERED app set. The emitted URLs carry the active group and search so the
+// params keep composing across chip navigation.
+func statusFacets(apps []view.App, activeStatus, group, search string) []statusFacet {
 	counts := map[string]int{}
 	for _, a := range apps {
 		counts[a.HealthClass()]++
@@ -202,7 +213,7 @@ func statusFacets(apps []view.App, activeStatus, group string) []statusFacet {
 		Label:  "all",
 		Count:  len(apps),
 		Active: activeStatus == "",
-		URL:    listURL("", group),
+		URL:    listURL("", group, search),
 	}}
 	for _, hc := range healthClasses {
 		facets = append(facets, statusFacet{
@@ -210,7 +221,7 @@ func statusFacets(apps []view.App, activeStatus, group string) []statusFacet {
 			Label:  facetLabel(hc),
 			Count:  counts[hc],
 			Active: activeStatus == hc,
-			URL:    listURL(hc, group),
+			URL:    listURL(hc, group, search),
 		})
 	}
 	return facets
@@ -229,7 +240,7 @@ type groupChip struct {
 // spec.group, and "ungrouped" when group-less apps exist. When NO app carries
 // a group the row is omitted entirely (nil) — a lone "all·ungrouped" pair
 // would be noise.
-func groupChips(apps []view.App, status, activeGroup string) []groupChip {
+func groupChips(apps []view.App, status, activeGroup, search string) []groupChip {
 	set := map[string]bool{}
 	hasUngrouped := false
 	for _, a := range apps {
@@ -248,16 +259,16 @@ func groupChips(apps []view.App, status, activeGroup string) []groupChip {
 	}
 	sort.Strings(groups)
 
-	chips := []groupChip{{Label: "all", Active: activeGroup == "", URL: listURL(status, "")}}
+	chips := []groupChip{{Label: "all", Active: activeGroup == "", URL: listURL(status, "", search)}}
 	for _, g := range groups {
-		chips = append(chips, groupChip{Value: g, Label: g, Active: activeGroup == g, URL: listURL(status, g)})
+		chips = append(chips, groupChip{Value: g, Label: g, Active: activeGroup == g, URL: listURL(status, g, search)})
 	}
 	if hasUngrouped {
 		chips = append(chips, groupChip{
 			Value:  ungroupedParam,
 			Label:  "ungrouped",
 			Active: activeGroup == ungroupedParam,
-			URL:    listURL(status, ungroupedParam),
+			URL:    listURL(status, ungroupedParam, search),
 		})
 	}
 	return chips
@@ -283,6 +294,23 @@ func filterApps(apps []view.App, status, group string) []view.App {
 			}
 		}
 		out = append(out, a)
+	}
+	return out
+}
+
+// searchApps keeps apps whose name, namespace, group, or URL host contains term
+// (case-insensitive substring, OR across the fields). An empty term is a no-op.
+func searchApps(apps []view.App, term string) []view.App {
+	if term == "" {
+		return apps
+	}
+	term = strings.ToLower(term)
+	out := make([]view.App, 0, len(apps))
+	for _, a := range apps {
+		hay := strings.ToLower(a.Name + " " + a.Namespace + " " + a.Group + " " + a.URLHost())
+		if strings.Contains(hay, term) {
+			out = append(out, a)
+		}
 	}
 	return out
 }

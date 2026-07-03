@@ -108,6 +108,14 @@ type listData struct {
 	// are computed from the unfiltered set (see handleList).
 	StatusFacets []statusFacet
 	GroupChips   []groupChip
+	// Search is the active search term (echoed into the input and empty-state
+	// copy); ClearSearchURL drops search while keeping status/group. Status /
+	// Group are the active filters, carried as hidden inputs so submitting a
+	// search preserves them.
+	Search         string
+	ClearSearchURL string
+	Status         string
+	Group          string
 }
 
 type detailData struct {
