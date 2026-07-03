@@ -129,16 +129,24 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	group := r.URL.Query().Get("group")
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	// sortOrder: "" = most-broken-first (default), "name" = plain namespace/name.
+	// Any other value falls back to the default rather than erroring.
+	sortOrder := r.URL.Query().Get("sort")
+	if sortOrder != sortByName {
+		sortOrder = ""
+	}
 
-	facets := statusFacets(apps, status, group, search)
-	chips := groupChips(apps, status, group, search)
+	facets := statusFacets(apps, status, group, search, sortOrder)
+	chips := groupChips(apps, status, group, search, sortOrder)
 	filtered := searchApps(filterApps(apps, status, group), search)
 
 	// Most-broken-first: degraded, degraded-serving, building, pending, ready;
-	// stable namespace/name order within a rank.
+	// stable namespace/name order within a rank. ?sort=name skips the rank.
 	sort.SliceStable(filtered, func(i, j int) bool {
-		if ri, rj := filtered[i].HealthRank(), filtered[j].HealthRank(); ri != rj {
-			return ri < rj
+		if sortOrder == "" {
+			if ri, rj := filtered[i].HealthRank(), filtered[j].HealthRank(); ri != rj {
+				return ri < rj
+			}
 		}
 		if filtered[i].Namespace != filtered[j].Namespace {
 			return filtered[i].Namespace < filtered[j].Namespace
@@ -173,17 +181,31 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		StatusFacets:   facets,
 		GroupChips:     chips,
 		Search:         search,
-		ClearSearchURL: listURL(status, group, ""),
+		ClearSearchURL: listURL(status, group, "", sortOrder),
 		Status:         status,
 		Group:          group,
+		Sort:           sortOrder,
+		SortToggleURL:  listURL(status, group, search, toggleSort(sortOrder)),
 		Page:           page,
 		TotalPages:     totalPages,
 		ShowPager:      totalPages > 1,
 		HasPrev:        page > 1,
 		HasNext:        page < totalPages,
-		PrevURL:        pageURL(status, group, search, page-1),
-		NextURL:        pageURL(status, group, search, page+1),
+		PrevURL:        pageURL(status, group, search, sortOrder, page-1),
+		NextURL:        pageURL(status, group, search, sortOrder, page+1),
 	})
+}
+
+// sortByName is the ?sort= value for plain namespace/name order; the empty
+// string is the most-broken-first default. toggleSort flips between the two
+// for the list heading's sort link.
+const sortByName = "name"
+
+func toggleSort(cur string) string {
+	if cur == sortByName {
+		return ""
+	}
+	return sortByName
 }
 
 // pageSize is the fixed in-memory page window for the app list.
@@ -209,8 +231,8 @@ func clampPage(raw string, match int) (page, totalPages int) {
 
 // pageURL builds a Prev/Next href: listURL's filter params plus ?page=N. Unlike
 // listURL (used for chips/search, which reset to page 1 by omitting page), this
-// sets page so paging preserves the active status/group/search.
-func pageURL(status, group, search string, page int) string {
+// sets page so paging preserves the active status/group/search/sort.
+func pageURL(status, group, search, sortOrder string, page int) string {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
@@ -220,6 +242,9 @@ func pageURL(status, group, search string, page int) string {
 	}
 	if search != "" {
 		q.Set("search", search)
+	}
+	if sortOrder != "" {
+		q.Set("sort", sortOrder)
 	}
 	q.Set("page", strconv.Itoa(page))
 	return "/?" + q.Encode()
@@ -253,9 +278,9 @@ func facetLabel(hc string) string {
 const ungroupedParam = "ungrouped"
 
 // listURL builds a list link composing the filter params. Empty values are
-// omitted so the "all" chips link to a clean URL; search is carried through so
-// clicking a chip keeps the active search term.
-func listURL(status, group, search string) string {
+// omitted so the "all" chips link to a clean URL; search and sort are carried
+// through so clicking a chip keeps the active search term and sort order.
+func listURL(status, group, search, sortOrder string) string {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
@@ -265,6 +290,9 @@ func listURL(status, group, search string) string {
 	}
 	if search != "" {
 		q.Set("search", search)
+	}
+	if sortOrder != "" {
+		q.Set("sort", sortOrder)
 	}
 	if len(q) == 0 {
 		return "/"
@@ -283,9 +311,9 @@ type statusFacet struct {
 }
 
 // statusFacets computes the fixed-order status chips with counts from the
-// UNFILTERED app set. The emitted URLs carry the active group and search so the
-// params keep composing across chip navigation.
-func statusFacets(apps []view.App, activeStatus, group, search string) []statusFacet {
+// UNFILTERED app set. The emitted URLs carry the active group, search, and sort
+// so the params keep composing across chip navigation.
+func statusFacets(apps []view.App, activeStatus, group, search, sortOrder string) []statusFacet {
 	counts := map[string]int{}
 	for _, a := range apps {
 		counts[a.HealthClass()]++
@@ -294,7 +322,7 @@ func statusFacets(apps []view.App, activeStatus, group, search string) []statusF
 		Label:  "all",
 		Count:  len(apps),
 		Active: activeStatus == "",
-		URL:    listURL("", group, search),
+		URL:    listURL("", group, search, sortOrder),
 	}}
 	for _, hc := range healthClasses {
 		facets = append(facets, statusFacet{
@@ -302,7 +330,7 @@ func statusFacets(apps []view.App, activeStatus, group, search string) []statusF
 			Label:  facetLabel(hc),
 			Count:  counts[hc],
 			Active: activeStatus == hc,
-			URL:    listURL(hc, group, search),
+			URL:    listURL(hc, group, search, sortOrder),
 		})
 	}
 	return facets
@@ -321,7 +349,7 @@ type groupChip struct {
 // spec.group, and "ungrouped" when group-less apps exist. When NO app carries
 // a group the row is omitted entirely (nil) — a lone "all·ungrouped" pair
 // would be noise.
-func groupChips(apps []view.App, status, activeGroup, search string) []groupChip {
+func groupChips(apps []view.App, status, activeGroup, search, sortOrder string) []groupChip {
 	set := map[string]bool{}
 	hasUngrouped := false
 	for _, a := range apps {
@@ -340,16 +368,16 @@ func groupChips(apps []view.App, status, activeGroup, search string) []groupChip
 	}
 	sort.Strings(groups)
 
-	chips := []groupChip{{Label: "all", Active: activeGroup == "", URL: listURL(status, "", search)}}
+	chips := []groupChip{{Label: "all", Active: activeGroup == "", URL: listURL(status, "", search, sortOrder)}}
 	for _, g := range groups {
-		chips = append(chips, groupChip{Value: g, Label: g, Active: activeGroup == g, URL: listURL(status, g, search)})
+		chips = append(chips, groupChip{Value: g, Label: g, Active: activeGroup == g, URL: listURL(status, g, search, sortOrder)})
 	}
 	if hasUngrouped {
 		chips = append(chips, groupChip{
 			Value:  ungroupedParam,
 			Label:  "ungrouped",
 			Active: activeGroup == ungroupedParam,
-			URL:    listURL(status, ungroupedParam, search),
+			URL:    listURL(status, ungroupedParam, search, sortOrder),
 		})
 	}
 	return chips
@@ -713,7 +741,12 @@ func (s *Server) resolveLogs(ctx context.Context, ns string, rec view.Build, isC
 		}
 		data.Lines, data.FetchErr = s.tailer.Tail(ctx, ns, rec.PodName, container, start, end, logTailLines)
 	default: // SourceUnavailable
-		data.Unavailable = "logs unavailable — job " + dashOr(rec.JobName) + " / pod " + dashOr(rec.PodName)
+		if rec.JobName == "" && rec.PodName == "" {
+			// Never-built app: say so instead of "job — / pod —".
+			data.Unavailable = "no builds yet — logs will appear when the first build starts"
+		} else {
+			data.Unavailable = "logs unavailable — job " + dashOr(rec.JobName) + " / pod " + dashOr(rec.PodName)
+		}
 	}
 	if data.FetchErr != nil {
 		data.Unavailable = "logs unavailable — " + data.FetchErr.Error()
@@ -799,5 +832,10 @@ func (s *Server) renderError(w http.ResponseWriter, r *http.Request, code int, m
 	log.Printf("console: %s: %v", msg, err)
 	sentryhttp.AttachError(r.Context(), msg, err)
 	w.WriteHeader(code)
-	render(w, "error", errorData{Message: msg, Detail: err.Error(), Code: code})
+	// The head carries the request's user: without it the header shows the red
+	// "no user header" badge — a false oauth2-proxy alarm — on every error page.
+	render(w, "error", errorData{
+		Head:    head{Title: "Error", User: sentryhttp.UserFrom(r)},
+		Message: msg, Detail: err.Error(), Code: code,
+	})
 }

@@ -24,6 +24,9 @@
     <h2>Build details</h2>
     <div class="body">
       {{template "flowstrip" .Build}}
+      {{/* One glyph legend per page (history flowstrips reuse it visually);
+           skipped when there are no steps to explain. */}}
+      {{if .Build.Steps}}<div class="small muted flow-legend">✓ done&ensp;● running&ensp;✕ failed&ensp;◼ aborted&ensp;· pending</div>{{end}}
 
       {{if .Build.FailedStep}}
         <div class="fail-callout" role="alert">Failed at <strong>{{.Build.FailedStep}}</strong>{{if .Build.Message}} — {{.Build.Message}}{{end}}</div>
@@ -43,7 +46,9 @@
       <div class="kv"><span class="k">Group</span><span class="v">{{if .Group}}<span class="mono">{{.Group}}</span>{{else}}—{{end}}</span></div>
       <div class="kv"><span class="k">Build phase</span><span class="v">{{dash .Build.Phase}}</span></div>
       <div class="kv"><span class="k">Result</span><span class="v"{{if eq .Build.Result "Failed"}} style="color:var(--degraded-ink)"{{end}}>{{dash .Build.Result}}</span></div>
-      <div class="kv"><span class="k">Trigger</span><span class="v">{{.Build.TriggerLabel}}{{if .Build.Commit}} {{template "commitlink" (linkctx (.CommitLink .Build.Commit) "↗")}}{{end}}</span></div>
+      {{/* TriggerLabel already prints the short SHA, so the link text is empty
+           — commitlink supplies the single ↗ (an empty URL renders nothing). */}}
+      <div class="kv"><span class="k">Trigger</span><span class="v">{{.Build.TriggerLabel}}{{if .Build.Commit}} {{template "commitlink" (linkctx (.CommitLink .Build.Commit) "")}}{{end}}</span></div>
       <div class="kv"><span class="k">Attempts</span><span class="v">{{.Build.Attempts}}</span></div>
       <div class="kv"><span class="k">Started</span><span class="v">{{timetag .Build.StartTime}}</span></div>
       {{if .Build.Duration}}<div class="kv"><span class="k">Duration</span><span class="v">{{.Build.Duration}}</span></div>{{end}}
@@ -184,7 +189,7 @@
 {{/* commitlink renders one external commit link (URL + visible text) with the
      external-link attributes maintained in exactly one place; an empty URL
      (repo not web-derivable) degrades to the plain text. Input via linkctx. */}}
-{{define "commitlink"}}{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" title="View commit">{{.Text}}&nbsp;↗</a>{{else}}{{.Text}}{{end}}{{end}}
+{{define "commitlink"}}{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" title="View commit">{{if .Text}}{{.Text}}&nbsp;{{end}}↗</a>{{else}}{{.Text}}{{end}}{{end}}
 
 {{/* partial.gohtml is the bare fragment the poller swaps into #live-region. */}}
 {{define "partial.gohtml"}}{{template "liveregion" .App}}{{end}}
@@ -195,12 +200,16 @@
 <div class="logpane" data-build="{{.Build.JobName}}">
   <div class="dock-head">
     <h2>Build logs</h2>
-    <span class="dock-job" title="job {{dash .Build.JobName}}">{{dash .Build.JobName}}</span>
+    {{/* No-builds-yet: skip the "—" job chip and the dead container button —
+         there is nothing to select or fetch. */}}
+    {{if .Build.JobName}}<span class="dock-job" title="job {{.Build.JobName}}">{{.Build.JobName}}</span>{{end}}
     {{if .Build.Result}}<span class="badge b-{{if eq .Build.Result "Succeeded"}}ready{{else if eq .Build.Result "Failed"}}degraded{{else}}pending{{end}}">{{.Build.Result}}</span>{{end}}
     {{if not .IsCurrent}}<span class="dock-pin show" data-viewing title="viewing {{dash .Build.JobName}} — pinned from Recent builds">pinned</span>{{end}}
+    {{if .Build.JobName}}
     <div class="dock-containers" role="group" aria-label="Log container">
       {{range .Steps}}<button type="button" value="{{.Name}}" data-log-container class="cbtn{{if eq .Name $.Container}} selected{{end}}" aria-pressed="{{if eq .Name $.Container}}true{{else}}false{{end}}">{{.Name}}</button>{{else}}<button type="button" value="{{$.Container}}" data-log-container class="cbtn selected" aria-pressed="true">{{$.Container}}</button>{{end}}
     </div>
+    {{end}}
     {{if .AppActive}}<label class="small muted"><input type="checkbox" data-follow-toggle {{if .Follow}}checked{{end}}> follow active step</label>{{end}}
     {{if .SourceNote}}<span class="small muted">source: {{.SourceNote}}</span>{{end}}
   </div>

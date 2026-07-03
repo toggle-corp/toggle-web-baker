@@ -11,7 +11,7 @@
     <a href="/">apps</a> / <span class="mono">{{.Namespace}}</span> / <strong class="mono">{{.Name}}</strong>
   </nav>
   {{template "statusbadge" .}}
-  {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE</span>{{end}}
+  {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">SPEC STALE</span>{{end}}
   {{/* URL / phase / group moved into the Build details card; the bar keeps only
        identity, health, and warning badges (storage threshold below). */}}
   {{if .StorageBadgeLabel}}<span class="badge {{.StorageBadgeClass}}" title="storage threshold state: {{.Storage.ThresholdState}}">{{.StorageBadgeLabel}}</span>{{end}}
@@ -30,8 +30,10 @@
               onsubmit="return confirm('Prune the build cache for {{.Name}}? Regenerable; safe.');">
           <button type="submit" class="btn btn-danger" {{if .CleanupBusy}}disabled title="busy: a build or cleanup is in progress"{{end}}>Prune cache</button>
         </form>
+        {{/* Irreversible (unlike the cache prune above): type-to-confirm, not a
+             bare confirm(). With JS off the form still posts — same as before. */}}
         <form method="POST" action="/ns/{{.Namespace}}/app/{{.Name}}/cleanup-releases"
-              onsubmit="return confirm('Delete OLD releases of {{.Name}}? Keeps the current and previous release. This cannot be undone.');">
+              onsubmit="return prompt('Delete OLD releases of {{.Name}}? Keeps the current and previous release. This cannot be undone.\n\nType the app name to confirm:')==={{.Name}};">
           <button type="submit" class="btn btn-danger" {{if .CleanupBusy}}disabled title="busy: a build or cleanup is in progress"{{end}}>Prune old releases</button>
         </form>
       </div>

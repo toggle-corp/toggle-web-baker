@@ -8,21 +8,30 @@
 {{else}}
 {{if .Stale}}<div class="banner banner-warn" role="alert">⚠ Lost contact with the cluster API — this list may be out of date.</div>{{end}}
 <div class="listhead">
-  <h2>Apps <span class="count">· {{if .Filtered}}{{.Matched}} of {{.Total}}{{else}}{{.Total}}{{end}}</span> <span class="count storage-total">· {{.Storage.GrandHuman}} (Cache: {{.Storage.CacheHuman}}, Data cache: {{.Storage.DataCacheHuman}}, Output: {{.Storage.OutputHuman}} (active {{.Storage.ActiveHuman}}))</span></h2>
-  {{/* Plain GET search form — status/group ride along as hidden inputs so a
-       search submit preserves the active chips; the clear link drops only search. */}}
+  <h2>Apps <span class="count">· {{if .Filtered}}{{.Matched}} of {{.Total}}{{else}}{{.Total}}{{end}}</span>{{if .Storage.Grand}} <span class="count storage-total">· {{.Storage.GrandHuman}}</span>{{end}}</h2>
+  {{/* Plain GET search form — status/group/sort ride along as hidden inputs so a
+       search submit preserves the active chips; the clear link drops only search.
+       The "/" key focuses it (script at the bottom of this template). */}}
   <form method="get" class="listsearch" role="search">
     {{if .Status}}<input type="hidden" name="status" value="{{.Status}}">{{end}}
     {{if .Group}}<input type="hidden" name="group" value="{{.Group}}">{{end}}
-    <input type="search" name="search" value="{{.Search}}" placeholder="search name, ns, group, url…" aria-label="Search apps">
+    {{if .Sort}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
+    <input type="search" name="search" value="{{.Search}}" placeholder="search name, ns, group, url… ( / )" aria-label="Search apps">
     {{if .Search}}<a class="small" href="{{.ClearSearchURL}}">✕ clear</a>{{end}}
   </form>
-  <span class="small muted" style="margin-left:auto">degraded first</span>
+  {{/* Current order, linking to the other one. */}}
+  <a class="small muted" style="margin-left:auto" href="{{.SortToggleURL}}" title="{{if .Sort}}switch to most-broken-first order{{else}}switch to name order{{end}}">sort: {{if .Sort}}name{{else}}degraded first{{end}} ⇅</a>
 </div>
+{{/* Storage roll-up over the same (filtered) set as the count above; a
+     sub-line rather than heading parentheses, hidden when nothing is measured. */}}
+{{if .Storage.Grand}}
+<div class="small muted storage-breakdown">Cache {{.Storage.CacheHuman}} · Data cache {{.Storage.DataCacheHuman}} · Output {{.Storage.OutputHuman}} (active {{.Storage.ActiveHuman}})</div>
+{{end}}
 
 {{/* Status facets: counts come from the UNFILTERED set; links compose with the
      active group filter. Pure query-param navigation — works with JS off. */}}
 <nav class="chips" aria-label="Filter by status">
+  <span class="chips-label" aria-hidden="true">status</span>
   {{range .StatusFacets}}<a class="chip{{if .Active}} chip-active{{end}}" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}} ({{.Count}})</a>{{end}}
 </nav>
 
@@ -30,6 +39,7 @@
      without a group exist. Hidden entirely when no app carries a group. */}}
 {{if .GroupChips}}
 <nav class="chips" aria-label="Filter by group">
+  <span class="chips-label" aria-hidden="true">group</span>
   {{range .GroupChips}}<a class="chip{{if .Active}} chip-active{{end}}" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
 </nav>
 {{end}}
@@ -45,13 +55,16 @@
       <td class="c-health"><span class="badge b-{{.HealthClass}}" title="{{.HealthLabel}}">{{.HealthShortLabel}}</span></td>
       <td class="c-name">
         <a href="/ns/{{.Namespace}}/app/{{.Name}}" class="app-name">{{.Name}}</a>
-        {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">STALE</span>{{end}}
+        {{if .SpecStale}}<span class="badge b-stale" title="current spec not yet deployed">SPEC STALE</span>{{end}}
         {{if .StorageBadgeLabel}}<span class="badge {{.StorageBadgeClass}}" title="storage threshold state: {{.Storage.ThresholdState}}">{{.StorageBadgeLabel}}</span>{{end}}
         <div class="app-ns">{{.Namespace}}{{if .Group}} · {{.Group}}{{end}}</div>
         {{if .ShowFlow}}{{template "flowstrip" .Build}}{{end}}
       </td>
       <td class="c-url">{{if .URL}}<a href="{{.URL}}" title="{{.URL}}" target="_blank" rel="noopener">{{.URLHost}} ↗</a>{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="c-storage" title="{{.StorageTooltip}}">{{.StorageTotalHuman}}</td>
+      {{/* Unmeasured storage renders an em-dash, not a lying "0 B"; the
+           breakdown is a visible sub-line (title= alone is unreachable on
+           touch and unannounced by screen readers). */}}
+      <td class="c-storage">{{if .StorageTotalBytes}}{{.StorageTotalHuman}}<div class="small muted storage-split">{{.StorageTooltip}}</div>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="c-last">
         {{if .BuildActive}}<span class="last-run">Running</span> · started {{timetag .Build.StartTime}}
         {{else if .Build.Result}}<span{{if eq .Build.Result "Failed"}} class="last-fail"{{end}}>{{.Build.Result}}</span> · {{timetag .LastBuildTime}}
@@ -78,5 +91,15 @@
 {{end}}
 {{end}}
 </main>
+<script>
+// "/" focuses the search box (unless already typing in a field).
+document.addEventListener('keydown',function(e){
+  if(e.key!=='/'||e.ctrlKey||e.metaKey||e.altKey){return;}
+  var t=document.activeElement;
+  if(t&&/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)){return;}
+  var s=document.querySelector('.listsearch input[type=search]');
+  if(s){e.preventDefault();s.focus();s.select();}
+});
+</script>
 {{template "foot"}}
 {{end}}

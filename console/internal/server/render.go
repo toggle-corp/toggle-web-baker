@@ -28,9 +28,6 @@ var funcMap = template.FuncMap{
 		}
 		return s
 	},
-	// mkhead builds a head value for templates (like the error page) that do
-	// not carry their own head struct.
-	"mkhead": func(title string) head { return head{Title: title} },
 	// timetag / timetagFull emit a <time datetime="UTC"> element carrying the
 	// raw RFC3339-UTC instant. The browser (bakerLocalizeTimes in layout.gohtml)
 	// rewrites the text to the viewer's local timezone; with JS off the UTC
@@ -133,6 +130,11 @@ type listData struct {
 	ClearSearchURL string
 	Status         string
 	Group          string
+	// Sort is the active order ("" = most-broken-first, "name" = namespace/name);
+	// SortToggleURL flips it while keeping the active filters/search. The heading
+	// renders the current order as a link to the other one.
+	Sort          string
+	SortToggleURL string
 	// Pagination controls (window applied after filter+search+sort). Page is the
 	// clamped 1-based current page; TotalPages is ceil(match/pageSize), min 1.
 	// ShowPager gates the whole controls block (TotalPages>1). HasPrev/HasNext
@@ -194,7 +196,11 @@ type manifestData struct {
 	HasHidden   bool
 }
 
+// errorData carries its own Head (with the request's user) so an error page
+// never renders the "no user header" misconfiguration badge to a signed-in
+// user who merely hit a 404/502.
 type errorData struct {
+	Head    head
 	Message string
 	Detail  string
 	Code    int

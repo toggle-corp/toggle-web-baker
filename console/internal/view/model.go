@@ -208,9 +208,11 @@ func (b Build) TriggerLabel() string {
 	return b.Trigger
 }
 
-// Duration renders the build's wall-clock duration ("34s", "6m12s") from its
-// start/completion timestamps. Empty when either timestamp is missing or
-// unparseable, or when completion precedes start (clock skew).
+// Duration renders the build's wall-clock duration ("34s", "6m12s", "3m") from
+// its start/completion timestamps, in the same compact format as Step.Duration
+// so the two never sit side by side as "3m0s" vs "3m". Empty when either
+// timestamp is missing or unparseable, or when completion precedes start
+// (clock skew).
 func (b Build) Duration() string {
 	start, err := time.Parse(time.RFC3339, b.StartTime)
 	if err != nil {
@@ -224,7 +226,7 @@ func (b Build) Duration() string {
 	if d < 0 {
 		return ""
 	}
-	return d.Round(time.Second).String()
+	return compactDuration(d)
 }
 
 // Release mirrors status.release.
@@ -502,7 +504,10 @@ func (a App) HealthLabel() string {
 	case a.Phase != "":
 		return a.Phase
 	default:
-		return "Unknown"
+		// No status/phase yet (operator has not reconciled). "Pending" matches
+		// the health class and the list's "pending" filter chip, so the badge
+		// and the chip that counts it speak one vocabulary.
+		return "Pending"
 	}
 }
 

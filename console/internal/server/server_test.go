@@ -786,8 +786,8 @@ func TestList_RowBadgesColumnsAndFlow(t *testing.T) {
 	if !strings.Contains(body, "STORAGE CRITICAL") || !strings.Contains(body, "STORAGE ALERT") {
 		t.Errorf("storage threshold badges should render; body=%s", body)
 	}
-	if !strings.Contains(body, ">STALE<") {
-		t.Errorf("STALE badge should render on the stale app; body=%s", body)
+	if !strings.Contains(body, ">SPEC STALE<") {
+		t.Errorf("SPEC STALE badge should render on the stale app; body=%s", body)
 	}
 	// URL cell: host only, full URL in the title attribute.
 	if !strings.Contains(body, "degraded.example.org ↗") {
@@ -2038,7 +2038,7 @@ func TestList_HeaderStorageGrandTotal(t *testing.T) {
 func TestList_HeaderStorageBreakdown(t *testing.T) {
 	srv := storageListFixtureServer(t, storageApp("a", "one", "g", gib4, gib2, gib64, gib3))
 	body := getList(srv, "/").Body.String()
-	for _, want := range []string{"Cache: 4.0 GiB", "Data cache: 2.0 GiB", "Output: 6.4 GiB", "active 3.0 GiB"} {
+	for _, want := range []string{"Cache 4.0 GiB", "Data cache 2.0 GiB", "Output 6.4 GiB", "active 3.0 GiB"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("header breakdown should contain %q; body=%s", want, body)
 		}
@@ -2060,7 +2060,7 @@ func TestList_HeaderStorageReflectsFilteredSet(t *testing.T) {
 	if strings.Contains(body, "14.4 GiB") {
 		t.Errorf("filtered header must not show the unfiltered total; body=%s", body)
 	}
-	if !strings.Contains(body, "· 2.0 GiB (Cache: 2.0 GiB") {
+	if !strings.Contains(body, `storage-total">· 2.0 GiB<`) {
 		t.Errorf("filtered header should show only grp-b's 2.0 GiB; body=%s", body)
 	}
 }
@@ -2103,12 +2103,14 @@ func TestList_PerAppStorageColumn(t *testing.T) {
 	}
 }
 
-func TestList_PerAppStorageTooltip(t *testing.T) {
+func TestList_PerAppStorageBreakdown(t *testing.T) {
 	srv := storageListFixtureServer(t, storageApp("a", "one", "grp-a", gib4, gib2, gib64, gib3))
 	body := getList(srv, "/").Body.String()
-	want := `title="Cache 4.0 GiB · Data cache 2.0 GiB · Output 6.4 GiB (active 3.0 GiB)"`
+	// The breakdown is a visible sub-line (not a title= tooltip, which touch
+	// and screen-reader users never see).
+	want := `storage-split">Cache 4.0 GiB · Data cache 2.0 GiB · Output 6.4 GiB (active 3.0 GiB)<`
 	if !strings.Contains(body, want) {
-		t.Errorf("row storage cell should carry the breakdown tooltip %q; body=%s", want, body)
+		t.Errorf("row storage cell should carry a visible breakdown %q; body=%s", want, body)
 	}
 }
 

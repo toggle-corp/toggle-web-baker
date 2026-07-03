@@ -434,8 +434,8 @@ func TestFromUnstructured_NoStatus(t *testing.T) {
 	if a.HasStatus {
 		t.Error("HasStatus should be false when .status is absent")
 	}
-	if a.HealthLabel() != "Unknown" {
-		t.Errorf("HealthLabel for no-status = %q, want Unknown", a.HealthLabel())
+	if a.HealthLabel() != "Pending" {
+		t.Errorf("HealthLabel for no-status = %q, want Pending", a.HealthLabel())
 	}
 }
 
@@ -657,7 +657,7 @@ func TestApp_HealthShortLabel(t *testing.T) {
 	if got := appWithHealth("ready").HealthShortLabel(); got != "Ready" {
 		t.Errorf("ready short label = %q", got)
 	}
-	if got := appWithHealth("pending").HealthShortLabel(); got != "Unknown" {
+	if got := appWithHealth("pending").HealthShortLabel(); got != "Pending" {
 		t.Errorf("pending (no phase) short label = %q", got)
 	}
 }
@@ -740,6 +740,7 @@ func TestBuild_Duration(t *testing.T) {
 	}{
 		{"seconds", Build{StartTime: "2026-06-25T09:00:00Z", CompletionTime: "2026-06-25T09:00:34Z"}, "34s"},
 		{"minutes+seconds", Build{StartTime: "2026-06-25T09:00:00Z", CompletionTime: "2026-06-25T09:06:12Z"}, "6m12s"},
+		{"whole minutes compact", Build{StartTime: "2026-06-25T09:00:00Z", CompletionTime: "2026-06-25T09:03:00Z"}, "3m"},
 		{"no completion", Build{StartTime: "2026-06-25T09:00:00Z"}, ""},
 		{"no start", Build{CompletionTime: "2026-06-25T09:00:00Z"}, ""},
 		{"completion before start", Build{StartTime: "2026-06-25T09:10:00Z", CompletionTime: "2026-06-25T09:00:00Z"}, ""},

@@ -244,6 +244,11 @@
   .listhead h2{margin:0;font-size:16px;font-weight:650}
   .listhead .count{color:var(--muted);font-weight:500}
   .chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 10px}
+  /* Row label so the twin chip rows (status vs group) are tellable apart. */
+  .chips-label{font-size:11px;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.05em;font-weight:600;min-width:44px}
+  .storage-breakdown{margin:-6px 0 10px}
+  .flow-legend{margin-top:6px}
   .chip{display:inline-block;padding:3px 11px;border-radius:999px;font-size:12px;
     border:1px solid var(--line);color:var(--muted);background:var(--panel)}
   .chip:hover{color:var(--ink);background:var(--panel2);text-decoration:none}
@@ -284,6 +289,29 @@
   }
   @media (max-width:760px){
     td.c-url{display:none} th.c-url{display:none}
+  }
+  /* ---------- stacked list rows under ~560px ----------
+     The 6-column table can't fit a phone; rather than forcing a sideways
+     scroll, each row becomes a small stack: badge + name line, then the
+     labelled meta lines. The header row disappears (labels move inline). */
+  @media (max-width:560px){
+    table,tbody{display:block}
+    thead{display:none}
+    tbody tr{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;
+      padding:10px 14px;border-bottom:1px solid var(--line)}
+    tbody tr:last-child{border-bottom:0}
+    tbody tr:hover td{background:transparent}
+    td{display:block;border:0;padding:0;min-width:0}
+    td[colspan]{grid-column:1 / -1}
+    td.c-health{grid-column:1;grid-row:1;width:auto}
+    td.c-name{grid-column:2;grid-row:1;min-width:0}
+    /* URL comes back in the stack (hidden as a column above 560 is moot here). */
+    td.c-url{display:block;grid-column:1 / -1;width:auto;white-space:normal}
+    td.c-storage,td.c-last,td.c-next{grid-column:1 / -1;width:auto;
+      white-space:normal;font-size:12px;color:var(--muted)}
+    td.c-storage::before{content:"storage · ";color:var(--muted)}
+    td.c-last::before{content:"last build · ";color:var(--muted)}
+    td.c-next::before{content:"next build · ";color:var(--muted)}
   }
 </style>
 </head>
