@@ -8,7 +8,7 @@
 {{else}}
 {{if .Stale}}<div class="banner banner-warn" role="alert">⚠ Lost contact with the cluster API — this list may be out of date.</div>{{end}}
 <div class="listhead">
-  <h2>FrontendApps <span class="count">· {{if .Filtered}}{{.Matched}} of {{.Total}}{{else}}{{.Total}}{{end}}</span> <span class="count storage-total">· {{.Storage.GrandHuman}} (Cache: {{.Storage.CacheHuman}}, Data cache: {{.Storage.DataCacheHuman}}, Output: {{.Storage.OutputHuman}} (active {{.Storage.ActiveHuman}}))</span></h2>
+  <h2>Apps <span class="count">· {{if .Filtered}}{{.Matched}} of {{.Total}}{{else}}{{.Total}}{{end}}</span> <span class="count storage-total">· {{.Storage.GrandHuman}} (Cache: {{.Storage.CacheHuman}}, Data cache: {{.Storage.DataCacheHuman}}, Output: {{.Storage.OutputHuman}} (active {{.Storage.ActiveHuman}}))</span></h2>
   {{/* Plain GET search form — status/group ride along as hidden inputs so a
        search submit preserves the active chips; the clear link drops only search. */}}
   <form method="get" class="listsearch" role="search">
@@ -61,7 +61,7 @@
       <td class="c-next">{{timetag .NextScheduledBuildTime}}</td>
     </tr>
   {{else}}
-    <tr><td colspan="6" class="muted">{{if .Search}}No FrontendApps match "{{.Search}}".{{else}}No FrontendApps match.{{end}}</td></tr>
+    <tr><td colspan="6" class="muted">{{if .Search}}No Apps match "{{.Search}}".{{else}}No Apps match.{{end}}</td></tr>
   {{end}}
   </tbody>
 </table>

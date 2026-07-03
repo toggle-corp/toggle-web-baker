@@ -58,7 +58,7 @@ rules:
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps
+  - apps
   verbs:
   - create
   - delete
@@ -70,13 +70,13 @@ rules:
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps/finalizers
+  - apps/finalizers
   verbs:
   - update
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps/status
+  - apps/status
   verbs:
   - get
   - patch

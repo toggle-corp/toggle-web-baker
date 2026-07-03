@@ -69,18 +69,18 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
     # helm.sh/resource-policy keeps the CRD on `helm uninstall` so existing
-    # FrontendApp CRs are not cascade-deleted.
+    # App CRs are not cascade-deleted.
     helm.sh/resource-policy: keep
-  name: frontendapps.baker.toggle-corp.com
+  name: apps.baker.toggle-corp.com
 spec:
   group: baker.toggle-corp.com
   names:
-    kind: FrontendApp
-    listKind: FrontendAppList
-    plural: frontendapps
+    kind: App
+    listKind: AppList
+    plural: apps
     shortNames:
-    - fapp
-    singular: frontendapp
+    - bakerapp
+    singular: app
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -110,7 +110,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: FrontendApp is the Schema for the frontendapps API.
+        description: App is the Schema for the apps API.
         properties:
           apiVersion:
             description: |-
@@ -130,8 +130,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: 'FrontendAppSpec is the desired state: operational tunables
-              for one app.'
+            description: 'AppSpec is the desired state: operational tunables for one
+              app.'
             properties:
               auth:
                 description: |-
@@ -652,7 +652,7 @@ spec:
             - repo
             type: object
           status:
-            description: FrontendAppStatus is the operator-owned observed state.
+            description: AppStatus is the operator-owned observed state.
             properties:
               build:
                 description: |-
@@ -1263,7 +1263,7 @@ rules:
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps
+  - apps
   verbs:
   - create
   - delete
@@ -1275,13 +1275,13 @@ rules:
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps/finalizers
+  - apps/finalizers
   verbs:
   - update
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps/status
+  - apps/status
   verbs:
   - get
   - patch
@@ -1526,13 +1526,13 @@ spec:
         - { name: config, configMap: { name: release-name-toggle-web-baker-operator-config } }
 
 ---
-# Source: toggle-web-baker-helm/templates/frontendapp-prometheusrule.yaml
-# Alert rules over the operator's frontendapp_* metrics. monitoring.labels
+# Source: toggle-web-baker-helm/templates/app-prometheusrule.yaml
+# Alert rules over the operator's baker_app_* metrics. monitoring.labels
 # must match your Prometheus ruleSelector (e.g. release: kube-prometheus-stack).
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: release-name-toggle-web-baker-frontendapp
+  name: release-name-toggle-web-baker-app
   namespace: default
   labels:
     helm.sh/chart: toggle-web-baker-helm-0.0.0
@@ -1543,60 +1543,60 @@ metadata:
     release: kube-prometheus-stack
 spec:
   groups:
-    - name: frontendapp.rules
+    - name: app.rules
       rules:
-        - alert: FrontendAppDegraded
-          expr: max without (reason) (frontendapp_degraded) == 1
+        - alert: AppDegraded
+          expr: max without (reason) (baker_app_degraded) == 1
           for: 5m
           labels:
             severity: critical
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is Degraded"
-            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details."
-        - alert: FrontendAppBuildFailed
-          expr: increase(frontendapp_builds_total{result="Failed"}[10m]) > 0
+            summary: "App {{ $labels.namespace }}/{{ $labels.name }} is Degraded"
+            description: "App {{ $labels.namespace }}/{{ $labels.name }} has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details."
+        - alert: AppBuildFailed
+          expr: increase(baker_app_builds_total{result="Failed"}[10m]) > 0
           labels:
             severity: warning
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build failed"
-            description: "A build for FrontendApp {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step."
-        - alert: FrontendAppBuildOOMKilled
-          expr: increase(frontendapp_build_oom_total[10m]) > 0
+            summary: "App {{ $labels.namespace }}/{{ $labels.name }} build failed"
+            description: "A build for App {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step."
+        - alert: AppBuildOOMKilled
+          expr: increase(baker_app_build_oom_total[10m]) > 0
           labels:
             severity: warning
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build OOMKilled in step {{ $labels.step }}"
-            description: "A build for FrontendApp {{ $labels.namespace }}/{{ $labels.name }} was OOMKilled in the {{ $labels.step }} step within the last 10 minutes. Raise spec.pipeline.phases.{{ $labels.step }}.memoryLimit (or the operator's per-phase default)."
-        - alert: FrontendAppStorageThreshold
-          expr: frontendapp_storage_used_bytes > frontendapp_storage_alert_bytes
+            summary: "App {{ $labels.namespace }}/{{ $labels.name }} build OOMKilled in step {{ $labels.step }}"
+            description: "A build for App {{ $labels.namespace }}/{{ $labels.name }} was OOMKilled in the {{ $labels.step }} step within the last 10 minutes. Raise spec.pipeline.phases.{{ $labels.step }}.memoryLimit (or the operator's per-phase default)."
+        - alert: AppStorageThreshold
+          expr: baker_app_storage_used_bytes > baker_app_storage_alert_bytes
           for: 15m
           labels:
             severity: warning
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold"
-            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents."
-        - alert: FrontendAppBuildStuck
-          expr: (time() - frontendapp_build_running_since_seconds > frontendapp_build_deadline_seconds) and frontendapp_build_running_since_seconds > 0
+            summary: "App {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold"
+            description: "App {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents."
+        - alert: AppBuildStuck
+          expr: (time() - baker_app_build_running_since_seconds > baker_app_build_deadline_seconds) and baker_app_build_running_since_seconds > 0
           for: 10m
           labels:
             severity: warning
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline"
-            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has had a build running past its deadline for over 10m — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
-        - alert: FrontendAppNeverReady
-          expr: frontendapp_phase{phase="AwaitingFirstBuild"} == 1
+            summary: "App {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline"
+            description: "App {{ $labels.namespace }}/{{ $labels.name }} has had a build running past its deadline for over 10m — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs."
+        - alert: AppNeverReady
+          expr: baker_app_phase{phase="AwaitingFirstBuild"} == 1
           for: 1h
           labels:
             severity: warning
             team: platform
           annotations:
-            summary: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has never become Ready"
-            description: "FrontendApp {{ $labels.namespace }}/{{ $labels.name }} has been AwaitingFirstBuild for over 1h without a successful first build. Check whether builds are starting (webhook/schedule) and why they are not succeeding."
+            summary: "App {{ $labels.namespace }}/{{ $labels.name }} has never become Ready"
+            description: "App {{ $labels.namespace }}/{{ $labels.name }} has been AwaitingFirstBuild for over 1h without a successful first build. Check whether builds are starting (webhook/schedule) and why they are not succeeding."
 
 ---
 # Source: toggle-web-baker-helm/templates/operator-servicemonitor.yaml
@@ -1625,6 +1625,6 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
-      # The frontendapp_* series carry their own namespace/name labels (the
+      # The baker_app_* series carry their own namespace/name labels (the
       # CR's identity); they must win over the scrape target's labels.
       honorLabels: true

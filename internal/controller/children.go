@@ -26,7 +26,7 @@ func shortToken(token string) string {
 
 // pvc builds a WaitForFirstConsumer PVC. local-path ignores requested capacity,
 // but the field is required, so we request a nominal 1Gi.
-func (r *FrontendAppReconciler) pvc(app *bakerv1alpha1.FrontendApp, name, storageClass string) *corev1.PersistentVolumeClaim {
+func (r *AppReconciler) pvc(app *bakerv1alpha1.App, name, storageClass string) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: app.Namespace, Labels: labelsFor(app)},
 		Spec: corev1.PersistentVolumeClaimSpec{
@@ -40,27 +40,27 @@ func (r *FrontendAppReconciler) pvc(app *bakerv1alpha1.FrontendApp, name, storag
 }
 
 // clockServiceAccount + Role + RoleBinding give the CronJob clock permission to
-// patch ONLY its own FrontendApp (the rebuild annotation). It does NOT create
+// patch ONLY its own App (the rebuild annotation). It does NOT create
 // build Jobs.
-func (r *FrontendAppReconciler) clockServiceAccount(app *bakerv1alpha1.FrontendApp) *corev1.ServiceAccount {
+func (r *AppReconciler) clockServiceAccount(app *bakerv1alpha1.App) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{Name: clockSAName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
 	}
 }
 
-func (r *FrontendAppReconciler) clockRole(app *bakerv1alpha1.FrontendApp) *rbacv1.Role {
+func (r *AppReconciler) clockRole(app *bakerv1alpha1.App) *rbacv1.Role {
 	return &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: clockRoleName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
 		Rules: []rbacv1.PolicyRule{{
 			APIGroups:     []string{bakerv1alpha1.GroupVersion.Group},
-			Resources:     []string{"frontendapps"},
+			Resources:     []string{"apps"},
 			Verbs:         []string{"get", "patch"},
 			ResourceNames: []string{app.Name}, // scoped to THIS app only
 		}},
 	}
 }
 
-func (r *FrontendAppReconciler) clockRoleBinding(app *bakerv1alpha1.FrontendApp) *rbacv1.RoleBinding {
+func (r *AppReconciler) clockRoleBinding(app *bakerv1alpha1.App) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: clockBindingName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: clockSAName(app), Namespace: app.Namespace}},
@@ -71,7 +71,7 @@ func (r *FrontendAppReconciler) clockRoleBinding(app *bakerv1alpha1.FrontendApp)
 // clockCronJob is the CLOCK: on each tick it patches the rebuild annotation with
 // the current timestamp via kubectl. It never creates build Jobs. Rendered only
 // when spec.scheduledBuilds is enabled.
-func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *batchv1.CronJob {
+func (r *AppReconciler) clockCronJob(app *bakerv1alpha1.App) *batchv1.CronJob {
 	schedule := app.Spec.ScheduledBuilds.Schedule
 	if schedule == "" {
 		schedule = r.Config.DefaultSchedule
@@ -90,7 +90,7 @@ func (r *FrontendAppReconciler) clockCronJob(app *bakerv1alpha1.FrontendApp) *ba
 // the commit annotation — only when the SHA changed since the last poll. It
 // shares the clock's image, ServiceAccount, and scoped RBAC. Rendered only when
 // spec.watchCommits is enabled.
-func (r *FrontendAppReconciler) watchCronJob(app *bakerv1alpha1.FrontendApp) (*batchv1.CronJob, error) {
+func (r *AppReconciler) watchCronJob(app *bakerv1alpha1.App) (*batchv1.CronJob, error) {
 	interval := app.Spec.WatchCommits.Interval
 	if interval == "" {
 		interval = r.Config.DefaultWatchInterval
@@ -114,7 +114,7 @@ func (r *FrontendAppReconciler) watchCronJob(app *bakerv1alpha1.FrontendApp) (*b
 // triggerCronJob renders one trigger CronJob (clock tick or commit watcher):
 // same image, shared clock ServiceAccount, same hardening; only name, schedule
 // and extra env differ.
-func (r *FrontendAppReconciler) triggerCronJob(app *bakerv1alpha1.FrontendApp, name, schedule string, extraEnv []corev1.EnvVar) *batchv1.CronJob {
+func (r *AppReconciler) triggerCronJob(app *bakerv1alpha1.App, name, schedule string, extraEnv []corev1.EnvVar) *batchv1.CronJob {
 	env := []corev1.EnvVar{
 		{Name: "APP", Value: app.Name},
 		{Name: "REQUESTED_AT_ANNOTATION", Value: bakerv1alpha1.RebuildAnnotation},
@@ -175,7 +175,7 @@ func (r *FrontendAppReconciler) triggerCronJob(app *bakerv1alpha1.FrontendApp, n
 // kubectl still reaches the apiserver: the service VIP is resolved to the
 // control-plane endpoint (a node IP outside the excluded pod/service CIDRs)
 // before policy evaluation.
-func (r *FrontendAppReconciler) triggerNetworkPolicy(app *bakerv1alpha1.FrontendApp) *networkingv1.NetworkPolicy {
+func (r *AppReconciler) triggerNetworkPolicy(app *bakerv1alpha1.App) *networkingv1.NetworkPolicy {
 	except := append([]string{}, r.Config.ClusterCIDRs...)
 	except = append(except, MetadataIP)
 	dnsPort := intstr.FromInt32(53)
@@ -219,7 +219,7 @@ const nginxConfTemplate = `server {
 }
 `
 
-func (r *FrontendAppReconciler) nginxConfigMap(app *bakerv1alpha1.FrontendApp) *corev1.ConfigMap {
+func (r *AppReconciler) nginxConfigMap(app *bakerv1alpha1.App) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: nginxConfigName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
 		Data:       map[string]string{"default.conf": nginxConfTemplate},
@@ -229,7 +229,7 @@ func (r *FrontendAppReconciler) nginxConfigMap(app *bakerv1alpha1.FrontendApp) *
 // nginxDeployment serves the bundle. Single replica, Recreate, mounts output PVC
 // READ-ONLY. It co-locates by mounting the already-bound output PVC (RWO), so no
 // explicit node affinity is needed.
-func (r *FrontendAppReconciler) nginxDeployment(app *bakerv1alpha1.FrontendApp) *appsv1.Deployment {
+func (r *AppReconciler) nginxDeployment(app *bakerv1alpha1.App) *appsv1.Deployment {
 	labels := nginxLabelsFor(app)
 	podSpec := corev1.PodSpec{
 		AutomountServiceAccountToken: ptr.To(false),
@@ -277,7 +277,7 @@ func (r *FrontendAppReconciler) nginxDeployment(app *bakerv1alpha1.FrontendApp) 
 	}
 }
 
-func (r *FrontendAppReconciler) service(app *bakerv1alpha1.FrontendApp) *corev1.Service {
+func (r *AppReconciler) service(app *bakerv1alpha1.App) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
 		Spec: corev1.ServiceSpec{
@@ -287,7 +287,7 @@ func (r *FrontendAppReconciler) service(app *bakerv1alpha1.FrontendApp) *corev1.
 	}
 }
 
-func (r *FrontendAppReconciler) ingress(app *bakerv1alpha1.FrontendApp) *networkingv1.Ingress {
+func (r *AppReconciler) ingress(app *bakerv1alpha1.App) *networkingv1.Ingress {
 	pathType := networkingv1.PathTypePrefix
 	ing := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: ingressName(app), Namespace: app.Namespace, Labels: labelsFor(app)},
@@ -331,7 +331,7 @@ func (r *FrontendAppReconciler) ingress(app *bakerv1alpha1.FrontendApp) *network
 
 // buildNetworkPolicy: build pod default-deny ingress; egress = DNS + 0.0.0.0/0
 // EXCEPT the cluster pod/service CIDRs and the metadata IP.
-func (r *FrontendAppReconciler) buildNetworkPolicy(app *bakerv1alpha1.FrontendApp) *networkingv1.NetworkPolicy {
+func (r *AppReconciler) buildNetworkPolicy(app *bakerv1alpha1.App) *networkingv1.NetworkPolicy {
 	except := append([]string{}, r.Config.ClusterCIDRs...)
 	except = append(except, MetadataIP)
 	dnsPort := intstr.FromInt32(53)
@@ -370,7 +370,7 @@ func (r *FrontendAppReconciler) buildNetworkPolicy(app *bakerv1alpha1.FrontendAp
 
 // nginxNetworkPolicy: ingress only from the Traefik controller namespace/pods,
 // egress DNS only.
-func (r *FrontendAppReconciler) nginxNetworkPolicy(app *bakerv1alpha1.FrontendApp, traefikNamespace string) *networkingv1.NetworkPolicy {
+func (r *AppReconciler) nginxNetworkPolicy(app *bakerv1alpha1.App, traefikNamespace string) *networkingv1.NetworkPolicy {
 	dnsPort := intstr.FromInt32(53)
 	httpPort := intstr.FromInt32(8080)
 	udp := corev1.ProtocolUDP

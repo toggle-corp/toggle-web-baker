@@ -8,13 +8,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// fullStatusObj is a FrontendApp whose .status exercises every documented
+// fullStatusObj is a App whose .status exercises every documented
 // field, including the "serving last-good while latest build failed" combo
 // (Ready=True + Degraded=True) and string/number coercion in the maps.
 func fullStatusObj() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
-		"kind":       "FrontendApp",
+		"kind":       "App",
 		"metadata": map[string]any{
 			"namespace": "mapswipe",
 			"name":      "mapswipe-uat",

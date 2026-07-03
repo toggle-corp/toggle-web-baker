@@ -85,7 +85,7 @@ func TestZapCore_ConflictErrorIsDropped(t *testing.T) {
 	logger := newTestLogger(t, transport)
 
 	conflict := apierrors.NewConflict(
-		schema.GroupResource{Group: "baker.toggle-corp.com", Resource: "frontendapps"},
+		schema.GroupResource{Group: "baker.toggle-corp.com", Resource: "apps"},
 		"web-a", errors.New("the object has been modified"))
 	logger.Error("failed to update status", zap.Error(conflict))
 
@@ -145,7 +145,7 @@ func TestZapCore_OrdinaryErrorIsCapturedWithException(t *testing.T) {
 // event, fingerprinted [loggerName, message, errMsg].
 func TestZapCore_IdenticalErrorLogsAreRateLimited(t *testing.T) {
 	transport := &sentrytest.RecordingTransport{}
-	logger := newTestLogger(t, transport).Named("frontendapp")
+	logger := newTestLogger(t, transport).Named("app")
 
 	logger.Error("upsert failed", zap.Error(errors.New("boom")))
 	logger.Error("upsert failed", zap.Error(errors.New("boom")))
@@ -155,8 +155,8 @@ func TestZapCore_IdenticalErrorLogsAreRateLimited(t *testing.T) {
 		t.Fatalf("got %d events for identical back-to-back errors, want 1", len(events))
 	}
 	fp := events[0].Fingerprint
-	if len(fp) != 3 || fp[0] != "frontendapp" || fp[1] != "upsert failed" || fp[2] != "boom" {
-		t.Errorf("Fingerprint = %v, want [frontendapp upsert failed boom]", fp)
+	if len(fp) != 3 || fp[0] != "app" || fp[1] != "upsert failed" || fp[2] != "boom" {
+		t.Errorf("Fingerprint = %v, want [app upsert failed boom]", fp)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestZapCore_FingerprintErrorComponentIsTruncated(t *testing.T) {
 // [loggerName, message] fingerprint.
 func TestZapCore_NoErrorFieldKeepsTwoComponentFingerprint(t *testing.T) {
 	transport := &sentrytest.RecordingTransport{}
-	logger := newTestLogger(t, transport).Named("frontendapp")
+	logger := newTestLogger(t, transport).Named("app")
 
 	logger.Error("upsert failed")
 
@@ -216,7 +216,7 @@ func TestZapCore_NoErrorFieldKeepsTwoComponentFingerprint(t *testing.T) {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
 	fp := events[0].Fingerprint
-	if len(fp) != 2 || fp[0] != "frontendapp" || fp[1] != "upsert failed" {
-		t.Errorf("Fingerprint = %v, want [frontendapp upsert failed]", fp)
+	if len(fp) != 2 || fp[0] != "app" || fp[1] != "upsert failed" {
+		t.Errorf("Fingerprint = %v, want [app upsert failed]", fp)
 	}
 }

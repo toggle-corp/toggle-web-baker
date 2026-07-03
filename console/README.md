@@ -1,17 +1,17 @@
-# Baker FrontendApp Console
+# Baker App Console
 
-A thin, **read-only** admin console for the Baker `FrontendApp` deploy platform.
+A thin, **read-only** admin console for the Baker `App` deploy platform.
 It is a separate Go module (`github.com/toggle-corp/toggle-web-baker/console`)
 and does not touch the repo-root module.
 
-It reads `FrontendApp` custom resources (`baker.toggle-corp.com/v1alpha1`) via
+It reads `App` custom resources (`baker.toggle-corp.com/v1alpha1`) via
 the client-go **dynamic** client (unstructured — it never imports the
 operator's Go types) and renders their `.status` as server-side HTML. There is
 **zero Prometheus dependency**; everything shown comes from `.status`.
 
 ## What it does
 
-- **List** every `FrontendApp` across all namespaces (`/`).
+- **List** every `App` across all namespaces (`/`).
 - **Detail** view per app (`/ns/{namespace}/app/{name}`) rendering phase,
   conditions (Ready / BuildSucceeded / IngressReady / Degraded), a STALE badge
   from `specStale`, url, nodeName, the `build` sub-status, schedule timestamps,
@@ -31,7 +31,7 @@ with `Degraded=True` renders as "serving last-good (latest build failed)".
 
 | Method | Path                                   | Purpose                          |
 |--------|----------------------------------------|----------------------------------|
-| GET    | `/`                                    | list all FrontendApps            |
+| GET    | `/`                                    | list all Apps            |
 | GET    | `/ns/{namespace}/app/{name}`           | detail view                      |
 | POST   | `/ns/{namespace}/app/{name}/rebuild`   | annotation patch (manual rebuild)|
 | GET    | `/healthz`                             | liveness/readiness              |
@@ -63,7 +63,7 @@ out (GitHub outage, OAuth app misconfig, team rename), the break-glass is
 annotate directly:
 
 ```sh
-kubectl -n <ns> annotate frontendapp <name> \
+kubectl -n <ns> annotate apps.baker.toggle-corp.com <name> \
   rebuild.baker.toggle-corp.com/requested-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   rebuild.baker.toggle-corp.com/by="<your-username>" --overwrite
 ```

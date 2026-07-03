@@ -1,6 +1,6 @@
 # Operator security invariants
 
-These are **operator-hardcoded** properties of the FrontendApp deploy platform.
+These are **operator-hardcoded** properties of the App deploy platform.
 They are **not** expressed as CRD spec fields, so a careless or malicious CR
 edit cannot weaken them. The test for "hardcoded vs. CR field": if a wrong value
 could weaken isolation or let untrusted code do something new → hardcode; if it

@@ -1,4 +1,4 @@
-// Command toggle-web-baker is the FrontendApp deploy-platform operator.
+// Command toggle-web-baker is the App deploy-platform operator.
 package main
 
 import (
@@ -82,14 +82,14 @@ func run(configPath string, reporter *observability.Reporter) error {
 		Metrics:                metricsserver.Options{BindAddress: mgrOpts.MetricsBindAddress},
 		HealthProbeBindAddress: mgrOpts.HealthProbeBindAddress,
 		LeaderElection:         mgrOpts.LeaderElect,
-		LeaderElectionID:       "frontendapp.baker.toggle-corp.com",
+		LeaderElectionID:       "app.baker.toggle-corp.com",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		return err
 	}
 
-	r := &controller.FrontendAppReconciler{
+	r := &controller.AppReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		Config:           cfg,
@@ -98,7 +98,7 @@ func run(configPath string, reporter *observability.Reporter) error {
 		Sentry:           reporter,
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FrontendApp")
+		setupLog.Error(err, "unable to create controller", "controller", "App")
 		return err
 	}
 

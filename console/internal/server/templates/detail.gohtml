@@ -41,7 +41,7 @@
 
 <main>
 {{if not .HasStatus}}
-  <div class="banner banner-warn">No status yet — the operator has not reconciled this FrontendApp.</div>
+  <div class="banner banner-warn">No status yet — the operator has not reconciled this App.</div>
 {{end}}
 {{if $.Requested}}<div class="banner banner-warn">Rebuild requested. The operator will pick it up on its next reconcile.</div>{{end}}
 {{if eq $.CleanupRequested "cache"}}<div class="banner banner-warn">Cache cleanup requested. The operator will pick it up on its next reconcile.</div>{{end}}

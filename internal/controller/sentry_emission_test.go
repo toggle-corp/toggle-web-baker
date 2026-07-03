@@ -76,7 +76,7 @@ func TestSentryEmission_ImageNotAllowedEmitsNothing(t *testing.T) {
 }
 
 // failedBuildJob registers a JobFailed build Job for app in the fake client.
-func failedBuildJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, name string) *batchv1.Job {
+func failedBuildJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, name string) *batchv1.Job {
 	t.Helper()
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

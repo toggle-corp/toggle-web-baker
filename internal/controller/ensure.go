@@ -50,7 +50,7 @@ const fieldOwner = "toggle-web-baker-operator"
 // the next PUT — a self-feeding hot loop. Applying an unchanged desired state
 // is a server-side no-op (no write, no bump, no watch event), so steady state
 // converges. It always stamps an owner reference for cascade GC.
-func (r *FrontendAppReconciler) upsert(ctx context.Context, app *bakerv1alpha1.FrontendApp, obj client.Object, mutate func()) error {
+func (r *AppReconciler) upsert(ctx context.Context, app *bakerv1alpha1.App, obj client.Object, mutate func()) error {
 	mutate()
 	if err := controllerutil.SetControllerReference(app, obj, r.Scheme); err != nil {
 		return err
@@ -74,7 +74,7 @@ func (r *FrontendAppReconciler) upsert(ctx context.Context, app *bakerv1alpha1.F
 // immutable fields (PVC VolumeName, Service ClusterIP). It still reconciles the
 // owner reference on an already-existing object so cascade GC always reclaims
 // it; ownerReferences are metadata, so stamping one never touches the spec.
-func (r *FrontendAppReconciler) ensureExists(ctx context.Context, app *bakerv1alpha1.FrontendApp, obj client.Object) error {
+func (r *AppReconciler) ensureExists(ctx context.Context, app *bakerv1alpha1.App, obj client.Object) error {
 	existing := obj.DeepCopyObject().(client.Object)
 	err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing)
 	if err != nil {
@@ -100,7 +100,7 @@ func (r *FrontendAppReconciler) ensureExists(ctx context.Context, app *bakerv1al
 
 // ensureInfra reconciles the always-present children: PVCs, the clock
 // SA/Role/RoleBinding/CronJob, and the build NetworkPolicy.
-func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+func (r *AppReconciler) ensureInfra(ctx context.Context, app *bakerv1alpha1.App) error {
 	// Three PVCs (cache, dataCache, output) — WaitForFirstConsumer SC; the build
 	// pod is the first consumer of all three (deterministic co-binding).
 	for _, name := range []string{cacheePVCName(app), dataCachePVCName(app), outputPVCName(app)} {
@@ -128,7 +128,7 @@ func (r *FrontendAppReconciler) ensureInfra(ctx context.Context, app *bakerv1alp
 // disabled path (the common case — triggers are opt-in) costs no apiserver
 // round-trip; a same-named object the operator did not create is left alone
 // (the operator only deletes what it owns).
-func (r *FrontendAppReconciler) deleteOwnedChild(ctx context.Context, app *bakerv1alpha1.FrontendApp, obj client.Object) error {
+func (r *AppReconciler) deleteOwnedChild(ctx context.Context, app *bakerv1alpha1.App, obj client.Object) error {
 	existing := obj.DeepCopyObject().(client.Object)
 	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
 		return client.IgnoreNotFound(err)
@@ -144,9 +144,9 @@ func (r *FrontendAppReconciler) deleteOwnedChild(ctx context.Context, app *baker
 // only when their spec struct is enabled, and DELETED when disabled — flipping
 // a trigger off must reclaim its CronJob, not orphan it (a still-scheduled
 // CronJob keeps DOING things, unlike an inert orphan). The shared RBAC trio
-// (SA/Role/RoleBinding, scoped to patch only this FrontendApp) and the trigger
+// (SA/Role/RoleBinding, scoped to patch only this App) and the trigger
 // NetworkPolicy exist while EITHER trigger is enabled and go with the last one.
-func (r *FrontendAppReconciler) ensureTriggers(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+func (r *AppReconciler) ensureTriggers(ctx context.Context, app *bakerv1alpha1.App) error {
 	scheduledOn := app.Spec.ScheduledBuilds != nil && app.Spec.ScheduledBuilds.Enabled
 	watchOn := app.Spec.WatchCommits != nil && app.Spec.WatchCommits.Enabled
 
@@ -202,7 +202,7 @@ func (r *FrontendAppReconciler) ensureTriggers(ctx context.Context, app *bakerv1
 // ensureServing reconciles the serving stack: nginx ConfigMap + Deployment +
 // Service + Ingress + nginx NetworkPolicy + optional Traefik basic-auth
 // Middleware. Created ONLY after the first successful deploy.
-func (r *FrontendAppReconciler) ensureServing(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+func (r *AppReconciler) ensureServing(ctx context.Context, app *bakerv1alpha1.App) error {
 	conf := r.nginxConfigMap(app)
 	if err := r.upsert(ctx, app, conf, func() {}); err != nil {
 		return err
@@ -244,7 +244,7 @@ func (r *FrontendAppReconciler) ensureServing(ctx context.Context, app *bakerv1a
 	return nil
 }
 
-func ingressURL(app *bakerv1alpha1.FrontendApp) string {
+func ingressURL(app *bakerv1alpha1.App) string {
 	scheme := "http"
 	if app.Spec.Ingress.TLS != nil {
 		scheme = "https"
@@ -254,7 +254,7 @@ func ingressURL(app *bakerv1alpha1.FrontendApp) string {
 
 // validateIngress checks the TLS secret exists and sets IngressReady. Plaintext
 // + no-auth produces a status warning (Degraded=false, but a note).
-func (r *FrontendAppReconciler) validateIngress(ctx context.Context, app *bakerv1alpha1.FrontendApp) {
+func (r *AppReconciler) validateIngress(ctx context.Context, app *bakerv1alpha1.App) {
 	if app.Spec.Ingress.TLS != nil {
 		secret := &corev1.Secret{}
 		err := r.Get(ctx, client.ObjectKey{Namespace: app.Namespace, Name: app.Spec.Ingress.TLS.SecretName}, secret)

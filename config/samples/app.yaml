@@ -1,4 +1,4 @@
-# e2e smoke FrontendApp used by `just e2e-local`.
+# e2e smoke App used by `just e2e-local`.
 #
 # A minimal, fast, hermetic-ish sample that exercises the full build pipeline
 # (clone -> setup no-op -> fetch no-op -> build -> copier) without touching the
@@ -16,7 +16,7 @@
 #
 # Passes the CRD CEL validation: build.command present, image via nodeVersion.
 apiVersion: baker.toggle-corp.com/v1alpha1
-kind: FrontendApp
+kind: App
 metadata:
   name: smoke
   namespace: default

@@ -1,4 +1,4 @@
-// Command console serves the read-only Baker FrontendApp admin console.
+// Command console serves the read-only Baker App admin console.
 //
 // Auth is terminated entirely by oauth2-proxy in front of this process (see
 // deploy/ and README); the console trusts the X-Auth-Request-User header it

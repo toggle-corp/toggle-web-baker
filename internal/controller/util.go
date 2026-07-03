@@ -14,7 +14,7 @@ func mustQuantity(s string) resource.Quantity {
 
 // traefikMiddlewareGVK returns the configured Traefik Middleware GVK (group is
 // operator-configurable, version v1alpha1, kind Middleware).
-func (r *FrontendAppReconciler) traefikMiddlewareGVK() schema.GroupVersionKind {
+func (r *AppReconciler) traefikMiddlewareGVK() schema.GroupVersionKind {
 	group := r.Config.TraefikGroup
 	if group == "" {
 		group = "traefik.io"
@@ -26,7 +26,7 @@ func (r *FrontendAppReconciler) traefikMiddlewareGVK() schema.GroupVersionKind {
 // object (the CRD's group is configurable, so we avoid a compile-time import).
 // It references a Secret holding an htpasswd users list. The operator
 // materializes that Secret from spec.auth before creating the middleware.
-func (r *FrontendAppReconciler) authMiddleware(app *bakerv1alpha1.FrontendApp, secretName string) *unstructured.Unstructured {
+func (r *AppReconciler) authMiddleware(app *bakerv1alpha1.App, secretName string) *unstructured.Unstructured {
 	gvk := r.traefikMiddlewareGVK()
 	m := &unstructured.Unstructured{}
 	m.SetGroupVersionKind(gvk)

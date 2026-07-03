@@ -1,0 +1,75 @@
+{{- if .Values.monitoring.enabled }}
+{{- /* severity + alerts.extraLabels for each rule; merge keeps severity when
+     extraLabels tries to override it. */}}
+{{- $critical := merge (dict "severity" "critical") .Values.monitoring.alerts.extraLabels }}
+{{- $warning := merge (dict "severity" "warning") .Values.monitoring.alerts.extraLabels }}
+# Alert rules over the operator's baker_app_* metrics. monitoring.labels
+# must match your Prometheus ruleSelector (e.g. release: kube-prometheus-stack).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "toggle-web-baker.fullname" . }}-app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "toggle-web-baker.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: app.rules
+      rules:
+        {{- /* max without (reason): the reason label is excluded from the
+             alert identity so a mid-incident reason flip (BuildFailed →
+             OOMKilled) does not reset the `for:` timer. */}}
+        - alert: AppDegraded
+          expr: max without (reason) (baker_app_degraded) == 1
+          for: {{ .Values.monitoring.alerts.degradedFor }}
+          labels:
+            {{- toYaml $critical | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} is Degraded` | quote }}
+            description: {{ `App {{ $labels.namespace }}/{{ $labels.name }} has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details.` | quote }}
+        - alert: AppBuildFailed
+          expr: increase(baker_app_builds_total{result="Failed"}[10m]) > 0
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} build failed` | quote }}
+            description: {{ `A build for App {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step.` | quote }}
+        - alert: AppBuildOOMKilled
+          expr: increase(baker_app_build_oom_total[10m]) > 0
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} build OOMKilled in step {{ $labels.step }}` | quote }}
+            description: {{ `A build for App {{ $labels.namespace }}/{{ $labels.name }} was OOMKilled in the {{ $labels.step }} step within the last 10 minutes. Raise spec.pipeline.phases.{{ $labels.step }}.memoryLimit (or the operator's per-phase default).` | quote }}
+        - alert: AppStorageThreshold
+          expr: baker_app_storage_used_bytes > baker_app_storage_alert_bytes
+          for: 15m
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} volume {{ $labels.volume }} over its alert threshold` | quote }}
+            description: {{ `App {{ $labels.namespace }}/{{ $labels.name }} is using {{ $value | humanize1024 }}B on volume {{ $labels.volume }}, above its configured alertBytes threshold. Grow the volume or prune its contents.` | quote }}
+        {{- /* The LHS grows monotonically while a build runs, so once the
+             deadline is crossed the condition holds and the `for:` grace is
+             equivalent to adding the grace to the threshold — uniform with
+             degradedFor/neverReadyFor (full Prometheus duration syntax). */}}
+        - alert: AppBuildStuck
+          expr: (time() - baker_app_build_running_since_seconds > baker_app_build_deadline_seconds) and baker_app_build_running_since_seconds > 0
+          for: {{ .Values.monitoring.alerts.stuckBuildGrace }}
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} build stuck past its deadline` | quote }}
+            description: {{ printf "App %s has had a build running past its deadline for over %s — the operator should have aborted it by now. Inspect the build Job/pod and the operator logs." `{{ $labels.namespace }}/{{ $labels.name }}` .Values.monitoring.alerts.stuckBuildGrace | quote }}
+        - alert: AppNeverReady
+          expr: baker_app_phase{phase="AwaitingFirstBuild"} == 1
+          for: {{ .Values.monitoring.alerts.neverReadyFor }}
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} has never become Ready` | quote }}
+            description: {{ printf "App %s has been AwaitingFirstBuild for over %s without a successful first build. Check whether builds are starting (webhook/schedule) and why they are not succeeding." `{{ $labels.namespace }}/{{ $labels.name }}` .Values.monitoring.alerts.neverReadyFor | quote }}
+{{- end }}

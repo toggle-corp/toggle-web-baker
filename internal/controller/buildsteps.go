@@ -23,7 +23,7 @@ func phaseConfigured(p bakerv1alpha1.PhaseSpec) bool {
 // the app: clone/build/copier/release are always present; setup and fetch appear
 // only when the app configures that phase (Image or Command). release is the
 // SYNTHETIC step (the operator's release-pointer flip after copier succeeds).
-func applicableSteps(app *bakerv1alpha1.FrontendApp) []string {
+func applicableSteps(app *bakerv1alpha1.App) []string {
 	steps := []string{bakerv1alpha1.StepClone}
 	if phaseConfigured(app.Spec.Pipeline.Phases.Setup) {
 		steps = append(steps, bakerv1alpha1.StepSetup)
@@ -87,7 +87,7 @@ var shaRefPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // shape check — "90m" passes it but has no cron equivalent) or a ref pinned to
 // a commit SHA (immutable, so watching it is meaningless and every poll would
 // fail). Nil/disabled configs are always valid.
-func validateWatchCommits(app *bakerv1alpha1.FrontendApp) error {
+func validateWatchCommits(app *bakerv1alpha1.App) error {
 	wc := app.Spec.WatchCommits
 	if wc == nil || !wc.Enabled {
 		return nil
@@ -111,7 +111,7 @@ func validateWatchCommits(app *bakerv1alpha1.FrontendApp) error {
 // still wins on a conflicting patch because a human's request is the stronger
 // claim. SpecChange is reserved and never emitted (spec edits are detect-only
 // and never trigger a build).
-func classifyTrigger(app *bakerv1alpha1.FrontendApp) bakerv1alpha1.BuildTrigger {
+func classifyTrigger(app *bakerv1alpha1.App) bakerv1alpha1.BuildTrigger {
 	if app.Annotations[bakerv1alpha1.RebuildByAnnotation] != "" {
 		return bakerv1alpha1.BuildTriggerManual
 	}

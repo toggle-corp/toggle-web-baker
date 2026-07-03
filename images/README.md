@@ -1,6 +1,6 @@
 # Platform images
 
-Trusted, platform-owned container images the **FrontendApp** operator runs to
+Trusted, platform-owned container images the **App** operator runs to
 build and publish a frontend release. The operator never runs arbitrary user
 images for these phases; it runs *these*, pinned by digest, so the behavior is
 auditable.

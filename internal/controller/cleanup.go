@@ -51,7 +51,7 @@ const platformUID int64 = 65532
 //
 // Either way all other caps are dropped, privilege escalation is off, the pod
 // carries no service-account token, and it mounts only the one PVC it prunes.
-func cleanupSecurityContext(app *bakerv1alpha1.FrontendApp, mode string) *corev1.SecurityContext {
+func cleanupSecurityContext(app *bakerv1alpha1.App, mode string) *corev1.SecurityContext {
 	if mode == cleanupModeReleases {
 		return unprivilegedCleanupSC(platformUID)
 	}
@@ -85,7 +85,7 @@ func rootCleanupSC() *corev1.SecurityContext {
 // cannot be determined. The cache is written RW by the setup and build phases;
 // only when BOTH pin the same non-zero RunAsUser is ownership known and uniform
 // (uid 0 is impossible — the build pod enforces runAsNonRoot).
-func cacheWriterUID(app *bakerv1alpha1.FrontendApp) (int64, bool) {
+func cacheWriterUID(app *bakerv1alpha1.App) (int64, bool) {
 	su := app.Spec.Pipeline.Phases.Setup.RunAsUser
 	bu := app.Spec.Pipeline.Phases.Build.RunAsUser
 	if su == nil || bu == nil || *su != *bu || *su == 0 {
@@ -94,12 +94,12 @@ func cacheWriterUID(app *bakerv1alpha1.FrontendApp) (int64, bool) {
 	return *su, true
 }
 
-func cleanupJobName(app *bakerv1alpha1.FrontendApp, mode string) string {
+func cleanupJobName(app *bakerv1alpha1.App, mode string) string {
 	return app.Name + "-cleanup-" + mode
 }
 
 // cleanupLabelsFor selects all of an app's cleanup Jobs/pods (role=cleanup).
-func cleanupLabelsFor(app *bakerv1alpha1.FrontendApp) map[string]string {
+func cleanupLabelsFor(app *bakerv1alpha1.App) map[string]string {
 	l := labelsFor(app)
 	l[cleanupRoleLabel] = cleanupRole
 	return l
@@ -127,7 +127,7 @@ type CleanupResult struct {
 // CLEANUP_THRESHOLD_BYTES=0. MODE=releases mounts the output PVC at the output
 // root and prunes <OUTPUT_ROOT>/releases, keeping spec.keepReleases plus the
 // currently/previously served release dirs (PROTECTED_RELEASES).
-func (r *FrontendAppReconciler) CleanupJob(app *bakerv1alpha1.FrontendApp, mode string) *batchv1.Job {
+func (r *AppReconciler) CleanupJob(app *bakerv1alpha1.App, mode string) *batchv1.Job {
 	labels := cleanupLabelsFor(app)
 	labels[cleanupModeLabel] = mode
 
@@ -202,7 +202,7 @@ func (r *FrontendAppReconciler) CleanupJob(app *bakerv1alpha1.FrontendApp, mode 
 // protectedReleases is the comma-separated set of release dir names that must
 // never be pruned (the currently + previously served releases). Empties are
 // omitted so the cleanup image doesn't see a bogus "" entry / trailing comma.
-func protectedReleases(app *bakerv1alpha1.FrontendApp) string {
+func protectedReleases(app *bakerv1alpha1.App) string {
 	var p []string
 	if c := app.Status.Release.Current; c != "" {
 		p = append(p, c)
@@ -221,7 +221,7 @@ type cleanupAction struct {
 	requestedBy string // by annotation value
 }
 
-func cleanupActionsFor(app *bakerv1alpha1.FrontendApp) []cleanupAction {
+func cleanupActionsFor(app *bakerv1alpha1.App) []cleanupAction {
 	return []cleanupAction{
 		{
 			mode:        cleanupModeCache,
@@ -238,7 +238,7 @@ func cleanupActionsFor(app *bakerv1alpha1.FrontendApp) []cleanupAction {
 
 // actionStatus returns a pointer to the per-mode CleanupActionStatus, creating
 // the Cleanup container + the per-mode record on first use.
-func actionStatus(app *bakerv1alpha1.FrontendApp, mode string) *bakerv1alpha1.CleanupActionStatus {
+func actionStatus(app *bakerv1alpha1.App, mode string) *bakerv1alpha1.CleanupActionStatus {
 	if app.Status.Cleanup == nil {
 		app.Status.Cleanup = &bakerv1alpha1.CleanupStatus{}
 	}
@@ -270,7 +270,7 @@ func sizeKeyForCleanupMode(mode string) string {
 }
 
 // cleanupActive reports whether ANY cleanup Job for this app is still running.
-func (r *FrontendAppReconciler) cleanupActive(ctx context.Context, app *bakerv1alpha1.FrontendApp) (bool, error) {
+func (r *AppReconciler) cleanupActive(ctx context.Context, app *bakerv1alpha1.App) (bool, error) {
 	jobs := &batchv1.JobList{}
 	if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(cleanupLabelsFor(app))); err != nil {
 		return false, err
@@ -289,7 +289,7 @@ func (r *FrontendAppReconciler) cleanupActive(ctx context.Context, app *bakerv1a
 // other) goes through domain.DecideCleanup; build requests take precedence. It
 // returns the harvested finished Jobs for the caller to GC after the status
 // write persists their results.
-func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp, buildActive bool) ([]*batchv1.Job, error) {
+func (r *AppReconciler) reconcileCleanup(ctx context.Context, app *bakerv1alpha1.App, buildActive bool) ([]*batchv1.Job, error) {
 	// Observe finished cleanup Jobs first, so a just-completed action frees the
 	// serialization slot for the OTHER action in this same reconcile.
 	harvested, err := r.observeCleanup(ctx, app)
@@ -337,7 +337,7 @@ func (r *FrontendAppReconciler) reconcileCleanup(ctx context.Context, app *baker
 
 // startCleanup creates the cleanup Job and marks the action Running, recording
 // the processed requested-at token (so DecideCleanup won't re-fire it).
-func (r *FrontendAppReconciler) startCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp, a cleanupAction) error {
+func (r *AppReconciler) startCleanup(ctx context.Context, app *bakerv1alpha1.App, a cleanupAction) error {
 	job := r.CleanupJob(app, a.mode)
 	if err := controllerutil.SetControllerReference(app, job, r.Scheme); err != nil {
 		return err
@@ -363,7 +363,7 @@ func (r *FrontendAppReconciler) startCleanup(ctx context.Context, app *bakerv1al
 // (mirroring the du Job lifecycle): the caller GCs them only after the status
 // write persists the result — deleting first would lose it on a status-write
 // conflict, and a deleted Job can never be re-observed, stranding the action.
-func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1alpha1.FrontendApp) ([]*batchv1.Job, error) {
+func (r *AppReconciler) observeCleanup(ctx context.Context, app *bakerv1alpha1.App) ([]*batchv1.Job, error) {
 	jobs := &batchv1.JobList{}
 	if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(cleanupLabelsFor(app))); err != nil {
 		return nil, err
@@ -439,7 +439,7 @@ func (r *FrontendAppReconciler) observeCleanup(ctx context.Context, app *bakerv1
 // readCleanupResult parses the cleanup container's termination-message JSON
 // (selecting the pod owned by THIS Job, mirroring readMeasurement) and returns
 // the parsed result plus a short human summary for status.cleanup.<action>.Message.
-func (r *FrontendAppReconciler) readCleanupResult(ctx context.Context, app *bakerv1alpha1.FrontendApp, job *batchv1.Job) (CleanupResult, string) {
+func (r *AppReconciler) readCleanupResult(ctx context.Context, app *bakerv1alpha1.App, job *batchv1.Job) (CleanupResult, string) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(cleanupLabelsFor(app))); err != nil {
 		return CleanupResult{}, ""

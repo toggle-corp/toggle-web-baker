@@ -61,10 +61,10 @@ func immediateSC() *storagev1.StorageClass {
 	}
 }
 
-func baseApp() *bakerv1alpha1.FrontendApp {
-	return &bakerv1alpha1.FrontendApp{
+func baseApp() *bakerv1alpha1.App {
+	return &bakerv1alpha1.App{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "apps", Generation: 1},
-		Spec: bakerv1alpha1.FrontendAppSpec{
+		Spec: bakerv1alpha1.AppSpec{
 			Repo:    "https://example.com/repo.git",
 			Ingress: bakerv1alpha1.IngressConfig{Host: "demo.example.com"},
 			Pipeline: bakerv1alpha1.PipelineSpec{
@@ -134,7 +134,7 @@ func newObjectLike(obj client.Object) client.Object {
 	return out
 }
 
-func newReconciler(t *testing.T, objs ...client.Object) (*FrontendAppReconciler, client.Client) {
+func newReconciler(t *testing.T, objs ...client.Object) (*AppReconciler, client.Client) {
 	t.Helper()
 	return newReconcilerWithFuncs(t, interceptor.Funcs{}, objs...)
 }
@@ -142,7 +142,7 @@ func newReconciler(t *testing.T, objs ...client.Object) (*FrontendAppReconciler,
 // newReconcilerWithFuncs is newReconciler with extra fake-client interceptors
 // (e.g. injected status-write conflicts). The Apply-patch emulation is always
 // installed unless the caller overrides Patch itself.
-func newReconcilerWithFuncs(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) (*FrontendAppReconciler, client.Client) {
+func newReconcilerWithFuncs(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) (*AppReconciler, client.Client) {
 	t.Helper()
 	s := testScheme(t)
 	if funcs.Patch == nil {
@@ -151,10 +151,10 @@ func newReconcilerWithFuncs(t *testing.T, funcs interceptor.Funcs, objs ...clien
 	cl := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(objs...).
-		WithStatusSubresource(&bakerv1alpha1.FrontendApp{}).
+		WithStatusSubresource(&bakerv1alpha1.App{}).
 		WithInterceptorFuncs(funcs).
 		Build()
-	r := &FrontendAppReconciler{
+	r := &AppReconciler{
 		Client:           cl,
 		Scheme:           s,
 		StorageClassName: "local-path",
@@ -178,7 +178,7 @@ func newReconcilerWithFuncs(t *testing.T, funcs interceptor.Funcs, objs ...clien
 	return r, cl
 }
 
-func reconcile(t *testing.T, r *FrontendAppReconciler, app *bakerv1alpha1.FrontendApp) {
+func reconcile(t *testing.T, r *AppReconciler, app *bakerv1alpha1.App) {
 	t.Helper()
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace}})
 	if err != nil {
@@ -186,9 +186,9 @@ func reconcile(t *testing.T, r *FrontendAppReconciler, app *bakerv1alpha1.Fronte
 	}
 }
 
-func getApp(t *testing.T, cl client.Client, name, ns string) *bakerv1alpha1.FrontendApp {
+func getApp(t *testing.T, cl client.Client, name, ns string) *bakerv1alpha1.App {
 	t.Helper()
-	out := &bakerv1alpha1.FrontendApp{}
+	out := &bakerv1alpha1.App{}
 	if err := cl.Get(context.Background(), types.NamespacedName{Name: name, Namespace: ns}, out); err != nil {
 		t.Fatalf("get app: %v", err)
 	}
@@ -472,7 +472,7 @@ func TestReconcile_MissingClusterCIDRsRejected(t *testing.T) {
 	}
 }
 
-// Behavior 9: mapBuildPodToApp maps a build pod to its owning FrontendApp via
+// Behavior 9: mapBuildPodToApp maps a build pod to its owning App via
 // the build labels; non-build pods map to no requests.
 func TestMapBuildPodToApp(t *testing.T) {
 	app := baseApp()
@@ -662,7 +662,7 @@ func TestStartBuild_ScheduledPreservesLastManualTrigger(t *testing.T) {
 }
 
 // runningJob registers an unfinished build Job (no terminal condition).
-func runningJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, name string) *batchv1.Job {
+func runningJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, name string) *batchv1.Job {
 	t.Helper()
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -681,7 +681,7 @@ func runningJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, 
 
 // buildPodForJob registers a build pod owned by job with the given init/main
 // container statuses.
-func buildPodForJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, job *batchv1.Job, name string, init, main []corev1.ContainerStatus) {
+func buildPodForJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, job *batchv1.Job, name string, init, main []corev1.ContainerStatus) {
 	t.Helper()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -911,7 +911,7 @@ func TestObserveBuild_OOMKilledSetsTerminationAndCondition(t *testing.T) {
 
 // completeJob builds a finished (Complete) build Job with the given spec-hash
 // annotation, registered in the fake client.
-func completeJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, name, specHash string) *batchv1.Job {
+func completeJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, name, specHash string) *batchv1.Job {
 	t.Helper()
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

@@ -32,7 +32,7 @@ sync-crd:
     #!/usr/bin/env python3
     import sys
 
-    SRC = "config/crd/baker.toggle-corp.com_frontendapps.yaml"
+    SRC = "config/crd/baker.toggle-corp.com_apps.yaml"
     DST = "deploy/helm/toggle-web-baker/templates/crd.yaml"
 
     with open(SRC) as f:
@@ -48,7 +48,7 @@ sync-crd:
         if not inserted and ANCHOR in line:
             indent = line[: len(line) - len(line.lstrip())]
             out.append(f"{indent}# helm.sh/resource-policy keeps the CRD on `helm uninstall` so existing\n")
-            out.append(f"{indent}# FrontendApp CRs are not cascade-deleted.\n")
+            out.append(f"{indent}# App CRs are not cascade-deleted.\n")
             out.append(f"{indent}helm.sh/resource-policy: keep\n")
             inserted = True
 
@@ -80,7 +80,7 @@ test-envtest:
 
 # Full kind pipeline smoke test (MANUAL — needs Docker + network + several
 # minutes). Builds the operator + helper images, loads them into a throwaway
-# kind cluster, installs the chart, applies config/samples/frontendapp.yaml and
+# kind cluster, installs the chart, applies config/samples/app.yaml and
 # waits for the build Job to complete. Do NOT run this in CI or a sandbox.
 e2e-local:
     #!/usr/bin/env bash
@@ -89,7 +89,7 @@ e2e-local:
     # ---- tunables (override via env) ----------------------------------------
     CLUSTER="${CLUSTER:-twb-e2e}"
     TAG="${TAG:-dev}"
-    SAMPLE="${SAMPLE:-config/samples/frontendapp.yaml}"
+    SAMPLE="${SAMPLE:-config/samples/app.yaml}"
     BUILD_TIMEOUT="${BUILD_TIMEOUT:-600s}"
     OPERATOR_TIMEOUT="${OPERATOR_TIMEOUT:-180s}"
     RELEASE="${RELEASE:-twb}"
@@ -189,7 +189,7 @@ e2e-local:
 
     dump_diagnostics() {
         log "Build did not complete — dumping diagnostics"
-        kubectl get frontendapp -n "${APP_NS}" -o wide || true
+        kubectl get apps.baker.toggle-corp.com -n "${APP_NS}" -o wide || true
         kubectl get jobs,pods -n "${APP_NS}" -l "${SELECTOR}" -o wide || true
         kubectl describe pods -n "${APP_NS}" -l "${SELECTOR}" || true
         for pod in $(kubectl get pods -n "${APP_NS}" -l "${SELECTOR}" -o name 2>/dev/null); do
@@ -233,7 +233,7 @@ e2e-local:
     # ---- operator /metrics assertion -----------------------------------------
     # Port-forward the operator Deployment directly (NOT a Service — the
     # metrics Service only exists with monitoring.enabled=true) and assert the
-    # frontendapp_* series a completed build must produce. Exposition format
+    # baker_app_* series a completed build must produce. Exposition format
     # sorts labels alphabetically (name, namespace, phase/result).
     APP_NAME="$(kubectl get -f "${SAMPLE}" -o jsonpath='{.metadata.name}')"
     METRICS_PORT="${METRICS_PORT:-18080}"
@@ -244,8 +244,8 @@ e2e-local:
     kubectl port-forward "${OPERATOR_DEPLOY}" "${METRICS_PORT}:8080" >/dev/null 2>&1 &
     PF_PID=$!
 
-    want_builds="frontendapp_builds_total{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",result=\"Succeeded\"} 1"
-    want_phase="frontendapp_phase{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",phase=\"Ready\"} 1"
+    want_builds="baker_app_builds_total{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",result=\"Succeeded\"} 1"
+    want_phase="baker_app_phase{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",phase=\"Ready\"} 1"
     metrics=""
     metrics_ok=""
     # Retry: covers port-forward startup and the operator's post-Job reconcile lag.
@@ -259,8 +259,8 @@ e2e-local:
     # (no manual kill: the cleanup EXIT trap owns the port-forward teardown)
 
     if [ -z "${metrics_ok}" ]; then
-        echo "----- /metrics (frontendapp_* series) -----"
-        grep '^frontendapp_' <<<"${metrics}" || true
+        echo "----- /metrics (baker_app_* series) -----"
+        grep '^baker_app_' <<<"${metrics}" || true
         echo "FAIL: expected metrics lines not found:"
         echo "  ${want_builds}"
         echo "  ${want_phase}"
@@ -286,10 +286,10 @@ alert-rules-test:
     trap 'rm -rf "${TMP}"' EXIT
     # promtool wants a plain rules file: top-level `groups:` = PrometheusRule .spec.groups.
     helm template "${CHART}" --set monitoring.enabled=true \
-        -s templates/frontendapp-prometheusrule.yaml \
+        -s templates/app-prometheusrule.yaml \
         | yq '{"groups": .spec.groups}' > "${TMP}/rules.yaml"
-    cp "${CHART}/rules-test/frontendapp-rules-test.yaml" "${TMP}/"
-    promtool test rules "${TMP}/frontendapp-rules-test.yaml"
+    cp "${CHART}/rules-test/app-rules-test.yaml" "${TMP}/"
+    promtool test rules "${TMP}/app-rules-test.yaml"
 
 # Lint the Helm chart.
 helm-lint:

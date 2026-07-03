@@ -273,7 +273,7 @@
 <body>
 {{if not .Bare}}
 <header>
-  <h1><a href="/">BAKER · FrontendApp Console</a></h1>
+  <h1><a href="/">BAKER · App Console</a></h1>
   <div class="user">{{if .User}}<span>signed in as <span class="mono">{{.User}}</span></span> <a href="/oauth2/sign_out?rd=/signed-out">Log out</a>{{else if not .Anon}}<span class="b-false">no user header</span>{{end}}<select id="theme-select" class="theme-select" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
 </header>
 {{end}}

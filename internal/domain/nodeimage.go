@@ -4,7 +4,7 @@ import "strconv"
 
 // NodeImage is one operator-managed node toolchain entry, keyed by node MAJOR
 // version in the operator's map. It is OPERATOR config (chart values), not part
-// of the FrontendApp spec: whoever sets it is a cluster admin, so these images
+// of the App spec: whoever sets it is a cluster admin, so these images
 // are allowlist-exempt exactly like the other platform images.
 type NodeImage struct {
 	// Image is the managed node image for this major (a full ref; digest-pinned

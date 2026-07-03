@@ -44,7 +44,7 @@ Console (`console/internal/sentryhttp`):
 
 ## What is deliberately NOT reported
 
-User-caused failures stay in the console and FrontendApp conditions only:
+User-caused failures stay in the console and App conditions only:
 
 - `BuildFailed` in the user-owned steps (`clone`, `setup`, `fetch`, `build`)
 - `OOMKilled` in user-owned steps (the user's own memory limit)

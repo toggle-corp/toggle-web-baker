@@ -49,27 +49,27 @@ func TestIsBuildPod(t *testing.T) {
 func TestApplicableSteps(t *testing.T) {
 	cases := []struct {
 		name string
-		mut  func(*bakerv1alpha1.FrontendApp)
+		mut  func(*bakerv1alpha1.App)
 		want []string
 	}{
 		{
 			name: "minimal: no setup/fetch",
-			mut:  func(*bakerv1alpha1.FrontendApp) {},
+			mut:  func(*bakerv1alpha1.App) {},
 			want: []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepBuild, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease},
 		},
 		{
 			name: "setup via image only",
-			mut:  func(a *bakerv1alpha1.FrontendApp) { a.Spec.Pipeline.Phases.Setup.Image = "ghcr.io/toggle-corp/x" },
+			mut:  func(a *bakerv1alpha1.App) { a.Spec.Pipeline.Phases.Setup.Image = "ghcr.io/toggle-corp/x" },
 			want: []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepSetup, bakerv1alpha1.StepBuild, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease},
 		},
 		{
 			name: "fetch via command only",
-			mut:  func(a *bakerv1alpha1.FrontendApp) { a.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "x"} },
+			mut:  func(a *bakerv1alpha1.App) { a.Spec.Pipeline.Phases.Fetch.Command = []string{"sh", "-c", "x"} },
 			want: []string{bakerv1alpha1.StepClone, bakerv1alpha1.StepFetch, bakerv1alpha1.StepBuild, bakerv1alpha1.StepCopier, bakerv1alpha1.StepRelease},
 		},
 		{
 			name: "both setup and fetch",
-			mut: func(a *bakerv1alpha1.FrontendApp) {
+			mut: func(a *bakerv1alpha1.App) {
 				a.Spec.Pipeline.Phases.Setup.Command = []string{"true"}
 				a.Spec.Pipeline.Phases.Fetch.Image = "ghcr.io/toggle-corp/y"
 			},

@@ -20,17 +20,17 @@ import (
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
 
-// statusConflictOnce builds interceptor funcs that fail the FIRST FrontendApp
+// statusConflictOnce builds interceptor funcs that fail the FIRST App
 // status Update with a Conflict (simulating a concurrent status writer) and
 // pass everything else through.
 func statusConflictOnce() interceptor.Funcs {
 	conflicts := 1
 	return interceptor.Funcs{
 		SubResourceUpdate: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-			if _, isApp := obj.(*bakerv1alpha1.FrontendApp); isApp && subResourceName == "status" && conflicts > 0 {
+			if _, isApp := obj.(*bakerv1alpha1.App); isApp && subResourceName == "status" && conflicts > 0 {
 				conflicts--
 				return apierrors.NewConflict(
-					schema.GroupResource{Group: bakerv1alpha1.GroupVersion.Group, Resource: "frontendapps"},
+					schema.GroupResource{Group: bakerv1alpha1.GroupVersion.Group, Resource: "apps"},
 					obj.GetName(), errors.New("simulated concurrent status writer"))
 			}
 			return cl.SubResource(subResourceName).Update(ctx, obj, opts...)
@@ -230,7 +230,7 @@ func TestReconcile_ComputesThresholdState(t *testing.T) {
 
 // completeMeasureJob registers a finished du Job for one volume + its pod whose
 // du container terminated with the given termination message.
-func completeMeasureJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, key, msg string, exit int32) *batchv1.Job {
+func completeMeasureJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, key, msg string, exit int32) *batchv1.Job {
 	t.Helper()
 	labels := measureLabelsFor(app)
 	labels[measureVolumeLabel] = key

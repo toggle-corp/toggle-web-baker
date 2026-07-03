@@ -1,6 +1,6 @@
 // Package k8s wraps the dynamic client with exactly the two operations the
-// console needs: list FrontendApps across namespaces, and get/patch one. It
-// never imports the operator's Go types — the FrontendApp is addressed purely
+// console needs: list Apps across namespaces, and get/patch one. It
+// never imports the operator's Go types — the App is addressed purely
 // by its GroupVersionResource and read as unstructured data.
 package k8s
 
@@ -45,12 +45,12 @@ const testCacheSyncTimeout = 5 * time.Second
 // staleWindow means the watch recovered (or the errors stopped), so we clear it.
 const staleWindow = 60 * time.Second
 
-// GVR addresses the FrontendApp custom resource. The resource (plural) name is
+// GVR addresses the App custom resource. The resource (plural) name is
 // the lowercase-plural of the kind, matching the CRD's spec.names.plural.
 var GVR = schema.GroupVersionResource{
 	Group:    "baker.toggle-corp.com",
 	Version:  "v1alpha1",
-	Resource: "frontendapps",
+	Resource: "apps",
 }
 
 // Client is the dynamic-client-backed reader/patcher used by the HTTP server.
@@ -82,9 +82,9 @@ type Client struct {
 	lastWatchErr time.Time
 }
 
-// FrontendAppPatcher is the narrow capability the server depends on; tests
+// AppPatcher is the narrow capability the server depends on; tests
 // substitute a fake dynamic client behind it.
-type FrontendAppPatcher interface {
+type AppPatcher interface {
 	List(ctx context.Context) ([]view.App, error)
 	Get(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error)
 	RequestRebuild(ctx context.Context, namespace, name, user string) error
@@ -98,7 +98,7 @@ type FrontendAppPatcher interface {
 	Stale() bool
 }
 
-var _ FrontendAppPatcher = (*Client)(nil)
+var _ AppPatcher = (*Client)(nil)
 
 // New builds a Client. It prefers in-cluster config (the production path,
 // running as the console ServiceAccount) and falls back to a kubeconfig for
@@ -173,7 +173,7 @@ func newWithInformer(dyn dynamic.Interface) *Client {
 	// visibility (replacing, not chaining, the default handler).
 	_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
 		c.recordWatchErr()
-		log.Printf("k8s: frontendapp informer watch error: %v", err)
+		log.Printf("k8s: app informer watch error: %v", err)
 	})
 	factory.Start(c.stop)
 	return c
@@ -262,7 +262,7 @@ func restConfig() (*rest.Config, error) {
 	return cfg, nil
 }
 
-// List returns every FrontendApp in every namespace as view models, mapped
+// List returns every App in every namespace as view models, mapped
 // defensively. It reads from the informer's local cache (warmed at construction,
 // kept current by the background watch) rather than the API server, so the
 // console's frequent list polling costs nothing on the apiserver. Order is
@@ -271,7 +271,7 @@ func restConfig() (*rest.Config, error) {
 func (c *Client) List(_ context.Context) ([]view.App, error) {
 	objs, err := c.lister.List(labels.Everything())
 	if err != nil {
-		return nil, fmt.Errorf("list frontendapps from cache: %w", err)
+		return nil, fmt.Errorf("list apps from cache: %w", err)
 	}
 	apps := make([]view.App, 0, len(objs))
 	for _, o := range objs {
@@ -286,11 +286,11 @@ func (c *Client) List(_ context.Context) ([]view.App, error) {
 	return apps, nil
 }
 
-// Get fetches a single FrontendApp unstructured object.
+// Get fetches a single App unstructured object.
 func (c *Client) Get(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
 	obj, err := c.dyn.Resource(GVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("get frontendapp %s/%s: %w", namespace, name, err)
+		return nil, fmt.Errorf("get app %s/%s: %w", namespace, name, err)
 	}
 	return obj, nil
 }

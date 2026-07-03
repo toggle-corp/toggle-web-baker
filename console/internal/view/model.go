@@ -1,4 +1,4 @@
-// Package view maps an unstructured FrontendApp custom resource into a flat,
+// Package view maps an unstructured App custom resource into a flat,
 // template-friendly view model. It reads .status defensively against the
 // documented schema: every field may be absent, the wrong type, or stale, and
 // the console must render whatever it can without panicking. Nothing here
@@ -692,7 +692,7 @@ func AggregateStorage(apps []App) StorageTotals {
 	return t
 }
 
-// FromUnstructured projects a FrontendApp object into the view model. It never
+// FromUnstructured projects a App object into the view model. It never
 // errors: missing or mistyped fields are simply left at their zero value so a
 // half-populated status (mid-reconcile, or an older operator) still renders.
 func FromUnstructured(obj *unstructured.Unstructured) App {
@@ -701,7 +701,7 @@ func FromUnstructured(obj *unstructured.Unstructured) App {
 		Name:      obj.GetName(),
 	}
 
-	// Trigger config is derived from the spec (the FrontendApp status carries no
+	// Trigger config is derived from the spec (the App status carries no
 	// next-build field). Compute it BEFORE the status guard so a freshly-created
 	// app (valid spec, not yet reconciled) already shows its trigger setup.
 	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")

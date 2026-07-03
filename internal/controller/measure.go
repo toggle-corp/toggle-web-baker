@@ -40,19 +40,19 @@ type measureTarget struct {
 // measureTargets are the two PVCs the copier never measures (it mounts only
 // output + work). cache/dataCache change ONLY during a build, so they are
 // measured right after one.
-func measureTargets(app *bakerv1alpha1.FrontendApp) []measureTarget {
+func measureTargets(app *bakerv1alpha1.App) []measureTarget {
 	return []measureTarget{
 		{key: "cache", suffix: "cache", pvcName: cacheePVCName(app), volName: volCache},
 		{key: "dataCache", suffix: "data", pvcName: dataCachePVCName(app), volName: volData},
 	}
 }
 
-func measureJobName(app *bakerv1alpha1.FrontendApp, suffix string) string {
+func measureJobName(app *bakerv1alpha1.App, suffix string) string {
 	return app.Name + "-measure-" + suffix
 }
 
 // measureLabelsFor selects all of an app's measurement Jobs/pods (role=measure).
-func measureLabelsFor(app *bakerv1alpha1.FrontendApp) map[string]string {
+func measureLabelsFor(app *bakerv1alpha1.App) map[string]string {
 	l := labelsFor(app)
 	l[measureRoleLabel] = measureRole
 	return l
@@ -61,7 +61,7 @@ func measureLabelsFor(app *bakerv1alpha1.FrontendApp) map[string]string {
 // MeasureJob builds the du Job for ONE PVC: mount the target read-only at
 // /target and let the du image write the integer byte count to its termination
 // message. Single-target matches the du image's contract (one bare int out).
-func (r *FrontendAppReconciler) MeasureJob(app *bakerv1alpha1.FrontendApp, m measureTarget) *batchv1.Job {
+func (r *AppReconciler) MeasureJob(app *bakerv1alpha1.App, m measureTarget) *batchv1.Job {
 	labels := measureLabelsFor(app)
 	labels[measureVolumeLabel] = m.key
 
@@ -111,7 +111,7 @@ func (r *FrontendAppReconciler) MeasureJob(app *bakerv1alpha1.FrontendApp, m mea
 }
 
 // measureInterval is the debounce floor between storage measurements.
-func (r *FrontendAppReconciler) measureInterval() time.Duration {
+func (r *AppReconciler) measureInterval() time.Duration {
 	if r.Config.MeasureInterval > 0 {
 		return r.Config.MeasureInterval
 	}
@@ -123,7 +123,7 @@ func (r *FrontendAppReconciler) measureInterval() time.Duration {
 // build, so the decision uses prevMeasuredAt captured BEFORE the copier
 // termination was applied — otherwise the debounce would always trip. A build
 // must NOT be active (RWO contention: the build mounts cache RW).
-func (r *FrontendAppReconciler) maybeStartMeasurement(ctx context.Context, app *bakerv1alpha1.FrontendApp, prevMeasuredAt *metav1.Time) error {
+func (r *AppReconciler) maybeStartMeasurement(ctx context.Context, app *bakerv1alpha1.App, prevMeasuredAt *metav1.Time) error {
 	if prevMeasuredAt != nil && r.now().Sub(prevMeasuredAt.Time) < r.measureInterval() {
 		return nil
 	}
@@ -150,7 +150,7 @@ func (r *FrontendAppReconciler) maybeStartMeasurement(ctx context.Context, app *
 // debounce blocks a retry for a whole interval). recordSize keeps the recording
 // idempotent should a harvested Job be re-read before its GC lands. Failed Jobs
 // are skipped (left for their TTL).
-func (r *FrontendAppReconciler) observeMeasurement(ctx context.Context, app *bakerv1alpha1.FrontendApp) ([]*batchv1.Job, error) {
+func (r *AppReconciler) observeMeasurement(ctx context.Context, app *bakerv1alpha1.App) ([]*batchv1.Job, error) {
 	jobs := &batchv1.JobList{}
 	if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(measureLabelsFor(app))); err != nil {
 		return nil, err
@@ -178,7 +178,7 @@ func (r *FrontendAppReconciler) observeMeasurement(ctx context.Context, app *bak
 // readMeasurement parses the bare integer byte count from the du pod's
 // termination message. It selects only the pod owned by THIS Job (mirroring
 // applyCopierTermination) and the most recently terminated du container.
-func (r *FrontendAppReconciler) readMeasurement(ctx context.Context, app *bakerv1alpha1.FrontendApp, job *batchv1.Job) (int64, bool) {
+func (r *AppReconciler) readMeasurement(ctx context.Context, app *bakerv1alpha1.App, job *batchv1.Job) (int64, bool) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(measureLabelsFor(app))); err != nil {
 		return 0, false
@@ -219,7 +219,7 @@ func (r *FrontendAppReconciler) readMeasurement(ctx context.Context, app *bakerv
 // REAL provisioned size when no spec.storage cap applies; outputTotal in
 // particular has no spec cap but is physically bounded by the output PVC.
 // Best-effort: an unbound or unreadable PVC simply leaves its key absent.
-func (r *FrontendAppReconciler) recordPVCCapacities(ctx context.Context, app *bakerv1alpha1.FrontendApp) {
+func (r *AppReconciler) recordPVCCapacities(ctx context.Context, app *bakerv1alpha1.App) {
 	targets := map[string]string{
 		"cache":     cacheePVCName(app),
 		"dataCache": dataCachePVCName(app),
@@ -246,7 +246,7 @@ func (r *FrontendAppReconciler) recordPVCCapacities(ctx context.Context, app *ba
 // no-op: a harvested Job outlives the status write until the deferred GC lands,
 // so the same result can be observed twice — that must not zero the recorded
 // delta or re-stamp MeasuredAt (the copier keeps MeasuredAt fresh per build).
-func (r *FrontendAppReconciler) recordSize(app *bakerv1alpha1.FrontendApp, key string, bytes int64) {
+func (r *AppReconciler) recordSize(app *bakerv1alpha1.App, key string, bytes int64) {
 	if app.Status.Storage.Sizes == nil {
 		app.Status.Storage.Sizes = map[string]int64{}
 	}

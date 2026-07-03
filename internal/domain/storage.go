@@ -1,6 +1,6 @@
 // Package domain holds the operator's pure decision logic, free of Kubernetes
 // imports so it can be unit-tested in isolation. The reconciler translates
-// FrontendApp CRD types into these calls.
+// App CRD types into these calls.
 package domain
 
 import (

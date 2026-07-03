@@ -88,7 +88,7 @@ func (f *fakeLokiTailer) Tail(_ context.Context, _, _, _ string, _, _ time.Time,
 	return f.lines, f.err
 }
 
-// fakeLister implements k8s.FrontendAppPatcher with configurable Synced/Stale so
+// fakeLister implements k8s.AppPatcher with configurable Synced/Stale so
 // the warming and staleness rendering paths can be driven deterministically
 // (the real Client always syncs and is never stale in tests). Only List/Synced/
 // Stale are exercised by the list handler; the write/get methods are stubs.
@@ -124,7 +124,7 @@ func newClient(t *testing.T, dyn dynamic.Interface) *k8s.Client {
 }
 
 // newTestServer wires the real Client over a fake dynamic client seeded with
-// one FrontendApp, so the handlers exercise the actual list/get/patch paths.
+// one App, so the handlers exercise the actual list/get/patch paths.
 // The pod reader and loki tailer default to harmless fakes; tests that need
 // specific log behaviour build a server directly with New.
 func newTestServer(t *testing.T) (*Server, *dynamicfake.FakeDynamicClient) {
@@ -133,20 +133,20 @@ func newTestServer(t *testing.T) (*Server, *dynamicfake.FakeDynamicClient) {
 	return New(newClient(t, dyn), &fakePodReader{}, &fakeLokiTailer{}, nil), dyn
 }
 
-// seededDyn builds a fake dynamic client seeded with one FrontendApp. statusExtra
+// seededDyn builds a fake dynamic client seeded with one App. statusExtra
 // is merged into the default status when non-nil (lets log tests inject a build).
 func seededDyn(t *testing.T, status map[string]any) *dynamicfake.FakeDynamicClient {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	listKinds := map[schema.GroupVersionResource]string{
-		k8s.GVR: "FrontendAppList",
+		k8s.GVR: "AppList",
 	}
 	if status == nil {
 		status = map[string]any{"phase": "Ready"}
 	}
 	app := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
-		"kind":       "FrontendApp",
+		"kind":       "App",
 		"metadata": map[string]any{
 			"namespace": "mapswipe",
 			"name":      "mapswipe-uat",
@@ -392,11 +392,11 @@ func TestStorageCard_RendersPruneStatusRowsWithoutForms(t *testing.T) {
 	}
 }
 
-// fappObj builds one FrontendApp unstructured object for multi-app list tests.
-func fappObj(ns, name string, spec, status map[string]any) *unstructured.Unstructured {
+// appObj builds one App unstructured object for multi-app list tests.
+func appObj(ns, name string, spec, status map[string]any) *unstructured.Unstructured {
 	obj := map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
-		"kind":       "FrontendApp",
+		"kind":       "App",
 		"metadata":   map[string]any{"namespace": ns, "name": name},
 	}
 	if spec != nil {
@@ -415,8 +415,8 @@ func fappObj(ns, name string, spec, status map[string]any) *unstructured.Unstruc
 func listFixtureServer(t *testing.T) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
-	degraded := fappObj("alpha", "web-degraded",
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "AppList"}
+	degraded := appObj("alpha", "web-degraded",
 		map[string]any{"group": "grp-a"},
 		map[string]any{
 			"phase":     "Degraded",
@@ -437,7 +437,7 @@ func listFixtureServer(t *testing.T) *Server {
 			"lastSuccessfulBuildTime": "2026-06-30T09:00:00Z",
 			"storage":                 map[string]any{"thresholdState": "Critical"},
 		})
-	ready := fappObj("beta", "web-ready",
+	ready := appObj("beta", "web-ready",
 		map[string]any{"group": "grp-b"},
 		map[string]any{
 			"phase": "Ready",
@@ -452,7 +452,7 @@ func listFixtureServer(t *testing.T) *Server {
 			"lastBuildTime": "2026-07-02T03:00:00Z",
 			"storage":       map[string]any{"thresholdState": "Alert"},
 		})
-	ungrouped := fappObj("gamma", "web-ungrouped", nil, nil)
+	ungrouped := appObj("gamma", "web-ungrouped", nil, nil)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, degraded, ready, ungrouped)
 	return New(newClient(t, dyn), &fakePodReader{}, &fakeLokiTailer{}, nil)
 }
@@ -558,7 +558,7 @@ func TestList_GroupChipsAndFilter(t *testing.T) {
 	if strings.Contains(body, "web-degraded") || strings.Contains(body, "web-ready") {
 		t.Errorf("composed filters should exclude everything here; body=%s", body)
 	}
-	if !strings.Contains(body, "No FrontendApps match") {
+	if !strings.Contains(body, "No Apps match") {
 		t.Errorf("empty composed filter should render the empty row; body=%s", body)
 	}
 	// Facet links carry the active group so the params keep composing.
@@ -738,13 +738,13 @@ func TestList_EmptyStateQuotesSearchTerm(t *testing.T) {
 
 	// A search matching nothing shows the quoted-term empty state.
 	body := getList(srv, "/?search=zzznope").Body.String()
-	if !strings.Contains(body, `No FrontendApps match "zzznope".`) {
+	if !strings.Contains(body, `No Apps match "zzznope".`) {
 		t.Errorf("empty state should quote the search term; body=%s", body)
 	}
 
 	// A composed filter with no search keeps the plain empty message.
 	body = getList(srv, "/?group=grp-a&status=ready").Body.String()
-	if !strings.Contains(body, "No FrontendApps match.") {
+	if !strings.Contains(body, "No Apps match.") {
 		t.Errorf("no-search empty state should stay plain; body=%s", body)
 	}
 }
@@ -837,7 +837,7 @@ func TestList_RendersSeededApp(t *testing.T) {
 }
 
 // When the cache is not synced yet, the list page must show the warming notice
-// and NOT the table nor the empty-cluster "No FrontendApps match." row (which
+// and NOT the table nor the empty-cluster "No Apps match." row (which
 // would look like a healthy empty cluster).
 func TestList_WarmingWhenNotSynced(t *testing.T) {
 	srv := New(&fakeLister{synced: false}, &fakePodReader{}, &fakeLokiTailer{}, nil)
@@ -849,7 +849,7 @@ func TestList_WarmingWhenNotSynced(t *testing.T) {
 	if !strings.Contains(body, "Cache warming up") {
 		t.Errorf("warming page should show the warming notice; body=%s", body)
 	}
-	if strings.Contains(body, "No FrontendApps match") {
+	if strings.Contains(body, "No Apps match") {
 		t.Errorf("warming page must not show the empty-cluster row; body=%s", body)
 	}
 	if strings.Contains(body, "<table>") {
@@ -1783,10 +1783,10 @@ func TestHealthz(t *testing.T) {
 // Commit-triggered build renders its short SHA as an external link.
 func TestDetail_RendersCommitTriggerAndWatchConfig(t *testing.T) {
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "AppList"}
 	app := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
-		"kind":       "FrontendApp",
+		"kind":       "App",
 		"metadata": map[string]any{
 			"namespace": "mapswipe",
 			"name":      "mapswipe-uat",
@@ -1838,10 +1838,10 @@ func TestDetail_RendersCommitTriggerAndWatchConfig(t *testing.T) {
 func paginationFixtureServer(t *testing.T, n int) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "AppList"}
 	objs := make([]runtime.Object, 0, n)
 	for i := 0; i < n; i++ {
-		objs = append(objs, fappObj("pag", fmt.Sprintf("app-%03d", i),
+		objs = append(objs, appObj("pag", fmt.Sprintf("app-%03d", i),
 			map[string]any{"group": "grp-p"},
 			map[string]any{
 				"phase":      "Ready",
@@ -1992,7 +1992,7 @@ func TestDetail_RendersDisabledTriggers(t *testing.T) {
 func storageListFixtureServer(t *testing.T, objs ...*unstructured.Unstructured) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "FrontendAppList"}
+	listKinds := map[schema.GroupVersionResource]string{k8s.GVR: "AppList"}
 	rt := make([]runtime.Object, len(objs))
 	for i, o := range objs {
 		rt[i] = o
@@ -2003,7 +2003,7 @@ func storageListFixtureServer(t *testing.T, objs ...*unstructured.Unstructured) 
 
 // storageApp builds a Ready app in group carrying the given per-volume byte sizes.
 func storageApp(ns, name, group string, cache, dataCache, outputTotal, output int64) *unstructured.Unstructured {
-	return fappObj(ns, name,
+	return appObj(ns, name,
 		map[string]any{"group": group},
 		map[string]any{
 			"phase":      "Ready",

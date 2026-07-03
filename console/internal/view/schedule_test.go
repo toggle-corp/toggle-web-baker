@@ -7,7 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// specWithTriggers builds a minimal FrontendApp carrying the trigger structs
+// specWithTriggers builds a minimal App carrying the trigger structs
 // and an (otherwise empty) status, so we exercise the trigger-derived fields.
 func specWithTriggers(scheduled, watch map[string]any) *unstructured.Unstructured {
 	spec := map[string]any{"repo": "https://github.com/acme/site.git"}
@@ -19,7 +19,7 @@ func specWithTriggers(scheduled, watch map[string]any) *unstructured.Unstructure
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
-		"kind":       "FrontendApp",
+		"kind":       "App",
 		"metadata":   map[string]any{"namespace": "mapswipe", "name": "mapswipe-uat"},
 		"spec":       spec,
 		"status":     map[string]any{"phase": "Ready"},

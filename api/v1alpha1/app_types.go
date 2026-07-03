@@ -77,7 +77,7 @@ const (
 )
 
 // AllPhases is the closed set of Phase values. The operator's metrics exporter
-// iterates it to write the KSM-style frontendapp_phase series (every phase
+// iterates it to write the KSM-style baker_app_phase series (every phase
 // always exported, exactly one == 1); keep it in lockstep with the constants
 // above or that invariant silently breaks.
 var AllPhases = []Phase{PhaseAwaitingFirstBuild, PhaseBuilding, PhaseReady, PhaseDegraded}
@@ -207,7 +207,7 @@ type PhaseSpec struct {
 // copier publishes. build carries more than setup/fetch, so it has its own type
 // (setup/fetch stay plain PhaseSpec).
 // +kubebuilder:validation:XValidation:rule="has(self.command) && size(self.command) > 0",message="pipeline.phases.build.command is required"
-// +kubebuilder:validation:XValidation:rule="!has(self.outputDir) || self.outputDir.split('/').all(s, s != '' && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
+// +kubebuilder:validation:XValidation:rule="!has(self.outputDir) || self.outputDir.split('/').all(s, s != ” && s != '.' && s != '..')",message="build.outputDir must be a relative path with no empty, '.' or '..' segments"
 type BuildPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// OutputDir is the subdir of the workspace holding the built bundle (the
@@ -409,8 +409,8 @@ type WatchCommitsSpec struct {
 	Interval string `json:"interval,omitempty"`
 }
 
-// FrontendAppSpec is the desired state: operational tunables for one app.
-type FrontendAppSpec struct {
+// AppSpec is the desired state: operational tunables for one app.
+type AppSpec struct {
 	// Repo is the clone URL, handed verbatim to `git clone`. The pattern is a
 	// loose shape check (https / ssh / scp-style) that catches garbage at
 	// admission instead of minutes later at clone time — it must stay wide
@@ -731,8 +731,8 @@ type ManualTrigger struct {
 	Time *metav1.Time `json:"time,omitempty"`
 }
 
-// FrontendAppStatus is the operator-owned observed state.
-type FrontendAppStatus struct {
+// AppStatus is the operator-owned observed state.
+type AppStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional
@@ -785,7 +785,7 @@ type FrontendAppStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fapp
+// +kubebuilder:resource:shortName=bakerapp
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Result",type=string,JSONPath=`.status.build.result`
 // +kubebuilder:printcolumn:name="URL",type=string,JSONPath=`.status.url`
@@ -794,24 +794,24 @@ type FrontendAppStatus struct {
 // +kubebuilder:printcolumn:name="Storage",type=string,JSONPath=`.status.storage.thresholdState`,priority=1
 // +kubebuilder:printcolumn:name="Last-Success",type=date,JSONPath=`.status.lastSuccessfulBuildTime`,priority=1
 
-// FrontendApp is the Schema for the frontendapps API.
-type FrontendApp struct {
+// App is the Schema for the apps API.
+type App struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   FrontendAppSpec   `json:"spec,omitempty"`
-	Status FrontendAppStatus `json:"status,omitempty"`
+	Spec   AppSpec   `json:"spec,omitempty"`
+	Status AppStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// FrontendAppList contains a list of FrontendApp.
-type FrontendAppList struct {
+// AppList contains a list of App.
+type AppList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []FrontendApp `json:"items"`
+	Items           []App `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&FrontendApp{}, &FrontendAppList{})
+	SchemeBuilder.Register(&App{}, &AppList{})
 }

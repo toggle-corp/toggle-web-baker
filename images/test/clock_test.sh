@@ -117,7 +117,7 @@ export APP=demo REQUESTED_AT_ANNOTATION="$RA" BY_ANNOTATION="$BY" COMMIT_ANNOTAT
 run_clock
 assert_rc 0 "valid env: exits 0"
 line="$(cat "$KUBECTL_LOG")"
-assert_contains "$line" "annotate frontendapp demo" "targets the named FrontendApp"
+assert_contains "$line" "annotate apps.baker.toggle-corp.com demo" "targets the named App"
 assert_contains "$line" "${RA}=" "sets requested-at"
 assert_contains "$line" "${BY}-" "CLEARS the by annotation (${BY}-)"
 assert_contains "$line" "${CM}-" "CLEARS the commit annotation (${CM}-)"

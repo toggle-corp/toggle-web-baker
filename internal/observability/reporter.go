@@ -17,7 +17,7 @@ type Reporter struct {
 	limiter *fingerprintLimiter
 }
 
-// TerminalFailure describes a FrontendApp that reached a terminal failure
+// TerminalFailure describes a App that reached a terminal failure
 // state attributable to the platform (not user code).
 type TerminalFailure struct {
 	App       string

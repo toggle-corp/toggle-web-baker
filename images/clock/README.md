@@ -9,15 +9,15 @@ commit watch (`MODE=watch`).
 |---|---|
 | **Runs as** | CronJob pod (`<app>-clock` / `<app>-watch`), `USER 65532` |
 | **Base** | `alpine` pinned by digest + `bash` + `git` + `kubectl` |
-| **Mounts** | its ServiceAccount token (RBAC: patch its own `FrontendApp`); writable `/tmp` emptyDir for kubectl's cache |
+| **Mounts** | its ServiceAccount token (RBAC: patch its own `App`); writable `/tmp` emptyDir for kubectl's cache |
 | **Writes** | nothing on the root filesystem (readOnlyRootFilesystem) |
-| **k8s API** | at most one `kubectl get` + one `kubectl annotate` on the app's `FrontendApp` |
+| **k8s API** | at most one `kubectl get` + one `kubectl annotate` on the app's `App` |
 
 ## Env
 
 | Var | Mode | Meaning |
 |---|---|---|
-| `APP` | both | FrontendApp name to annotate (required). |
+| `APP` | both | App name to annotate (required). |
 | `REQUESTED_AT_ANNOTATION` | both | rebuild "requested-at" annotation key (required). |
 | `BY_ANNOTATION` | both | rebuild "by" annotation key, cleared on every trigger (required). |
 | `COMMIT_ANNOTATION` | both | rebuild "commit" annotation key (required): cleared by tick, set by watch. |

@@ -21,7 +21,7 @@ type PhaseSpec struct {
 	Env map[string]string `json:"env,omitempty"`
 }
 
-// BuildSpec is the build-relevant subset of a FrontendApp spec. Changing any
+// BuildSpec is the build-relevant subset of a App spec. Changing any
 // field here changes the artifact, so a difference from the last deployed hash
 // marks the app stale. Fields NOT included here (storage thresholds, ingress
 // host, keepReleases) deliberately cannot affect staleness.

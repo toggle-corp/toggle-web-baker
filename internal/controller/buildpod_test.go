@@ -15,8 +15,8 @@ import (
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
-func reconcilerForPod() *FrontendAppReconciler {
-	r := &FrontendAppReconciler{}
+func reconcilerForPod() *AppReconciler {
+	r := &AppReconciler{}
 	r.Config.Defaults()
 	// Operator resource defaults are normally validated+parsed by LoadConfig;
 	// tests populate sensible defaults directly (cpu 0.1/4, memory setup/fetch

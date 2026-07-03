@@ -163,7 +163,7 @@ func toSecretEnvVars(in []bakerv1alpha1.EnvVarWithSecret) []corev1.EnvVar {
 
 // resolvePhase computes the effective image/UID/HOME for one phase, applying the
 // spec.pipeline.nodeVersion mapping and per-phase BYO overrides (see domain.ResolvePhase).
-func (r *FrontendAppReconciler) resolvePhase(app *bakerv1alpha1.FrontendApp, phase bakerv1alpha1.PhaseSpec) domain.ResolvedPhase {
+func (r *AppReconciler) resolvePhase(app *bakerv1alpha1.App, phase bakerv1alpha1.PhaseSpec) domain.ResolvedPhase {
 	return domain.ResolvePhase(phase.Image, phase.RunAsUser, app.Spec.Pipeline.NodeVersion, r.Config.NodeImages, r.Config.Images.Clone)
 }
 
@@ -172,7 +172,7 @@ func (r *FrontendAppReconciler) resolvePhase(app *bakerv1alpha1.FrontendApp, pha
 // (work), cache PVC holds only the yarn cache. pnpm: the pnpm store AND
 // node_modules both live on the cache PVC (mounted RW), so the build phase
 // mounts cache RW in both cases.
-func buildVolumesAndMounts(app *bakerv1alpha1.FrontendApp) (volumes []corev1.Volume, cacheMount corev1.VolumeMount) {
+func buildVolumesAndMounts(app *bakerv1alpha1.App) (volumes []corev1.Volume, cacheMount corev1.VolumeMount) {
 	volumes = []corev1.Volume{
 		// Per-run scratch: checkout + (yarn) node_modules + build output.
 		{Name: volWork, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -210,7 +210,7 @@ func commonMounts() []corev1.VolumeMount {
 //
 // yarn: node_modules live on the per-run emptyDir (work volume, set by
 // WorkingDir); the cache PVC holds only the yarn download cache.
-func pkgManagerEnv(app *bakerv1alpha1.FrontendApp) []corev1.EnvVar {
+func pkgManagerEnv(app *bakerv1alpha1.App) []corev1.EnvVar {
 	switch app.Spec.Pipeline.PackageManager {
 	case bakerv1alpha1.PackageManagerPnpm:
 		return []corev1.EnvVar{
@@ -230,7 +230,7 @@ func pkgManagerEnv(app *bakerv1alpha1.FrontendApp) []corev1.EnvVar {
 // The build container NEVER mounts the output PVC; secrets go ONLY to fetch.
 // User phases (setup/fetch/build) are wrapped by the peak-memory shim; clone
 // and copier are platform entrypoints and stay unwrapped.
-func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token string) *batchv1.Job {
+func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string) *batchv1.Job {
 	volumes, cacheMount := buildVolumesAndMounts(app)
 	base := commonMounts()
 	pmEnv := pkgManagerEnv(app)
@@ -410,7 +410,7 @@ func (r *FrontendAppReconciler) BuildJob(app *bakerv1alpha1.FrontendApp, token s
 // producing an invalid (<0) or absent deadline the apiserver would reject.
 // CEL rejects non-positive values at admission; this guards objects admitted
 // before that rule existed.
-func (r *FrontendAppReconciler) buildDeadlineSeconds(app *bakerv1alpha1.FrontendApp) int64 {
+func (r *AppReconciler) buildDeadlineSeconds(app *bakerv1alpha1.App) int64 {
 	deadline := int64(0)
 	if t := app.Spec.Pipeline.Timeout; t != nil {
 		deadline = int64(t.Seconds())
@@ -451,6 +451,6 @@ func phaseResourceRequirements(cfg OperatorConfig, phaseName, userMemLimit strin
 
 // buildJobName derives a deterministic, token-suffixed Job name so each rebuild
 // token maps to a distinct Job (failed jobs of prior tokens are retained).
-func buildJobName(app *bakerv1alpha1.FrontendApp, token string) string {
+func buildJobName(app *bakerv1alpha1.App, token string) string {
 	return app.Name + "-build-" + shortToken(token)
 }

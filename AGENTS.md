@@ -9,7 +9,7 @@ absent in fresh clones. Read it if present.
 
 ## Layout (where things live)
 
-- `api/v1alpha1/` — the `FrontendApp` CRD types + CEL validation markers.
+- `api/v1alpha1/` — the `App` CRD types + CEL validation markers.
 - `internal/controller/` — the operator reconciler and the build-pod spec
   (`buildpod.go` is the single source of truth for the build Job).
 - `internal/domain/` — pure decision logic (build scheduling, registry
@@ -20,7 +20,7 @@ absent in fresh clones. Read it if present.
   must NOT reach Sentry.
 - `images/` — the platform helper images (clone / copier / du / cleanup).
 - `deploy/helm/toggle-web-baker/` — the install chart.
-- `config/samples/frontendapp.yaml` — the e2e smoke sample.
+- `config/samples/app.yaml` — the e2e smoke sample.
 
 ## Test layers (run the one that matches your change)
 

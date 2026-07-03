@@ -59,15 +59,15 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// validApp returns a fully-valid FrontendApp that satisfies every required
+// validApp returns a fully-valid App that satisfies every required
 // field and CEL rule. Tests mutate it to isolate the one rule under test.
-func validApp(name string) *bakerv1alpha1.FrontendApp {
-	return &bakerv1alpha1.FrontendApp{
+func validApp(name string) *bakerv1alpha1.App {
+	return &bakerv1alpha1.App{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "default",
 		},
-		Spec: bakerv1alpha1.FrontendAppSpec{
+		Spec: bakerv1alpha1.AppSpec{
 			Repo: "https://example.com/repo.git",
 			Ref:  "main",
 			Pipeline: bakerv1alpha1.PipelineSpec{
@@ -391,7 +391,7 @@ func TestValidation_RejectsMissingIngressHost(t *testing.T) {
 	}
 	unstructured.RemoveNestedField(obj, "spec", "ingress", "host")
 	u := &unstructured.Unstructured{Object: obj}
-	u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+	u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("App"))
 
 	err = testClient.Create(testCtx, u)
 	if err == nil {
@@ -608,7 +608,7 @@ func TestValidation_DefaultsOutputDirToDist(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 
-	got := &bakerv1alpha1.FrontendApp{}
+	got := &bakerv1alpha1.App{}
 	key := client.ObjectKey{Namespace: "default", Name: "defaults-outputdir-dist"}
 	if err := testClient.Get(testCtx, key, got); err != nil {
 		t.Fatalf("failed to Get created object: %v", err)
@@ -627,7 +627,7 @@ func TestValidation_DefaultsRefToHEAD(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 
-	got := &bakerv1alpha1.FrontendApp{}
+	got := &bakerv1alpha1.App{}
 	key := client.ObjectKey{Namespace: "default", Name: "defaults-ref-to-head"}
 	if err := testClient.Get(testCtx, key, got); err != nil {
 		t.Fatalf("failed to Get created object: %v", err)
@@ -683,7 +683,7 @@ func TestValidation_RejectsTriggerStructWithoutEnabled(t *testing.T) {
 		}
 		unstructured.RemoveNestedField(obj, "spec", field, "enabled")
 		u := &unstructured.Unstructured{Object: obj}
-		u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+		u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("App"))
 
 		if err := testClient.Create(testCtx, u); err == nil {
 			t.Errorf("expected rejection for %s without enabled", field)
@@ -705,7 +705,7 @@ func TestValidation_OldFlatScheduleIsPruned(t *testing.T) {
 		t.Fatalf("set spec.schedule: %v", err)
 	}
 	u := &unstructured.Unstructured{Object: obj}
-	u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+	u.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("App"))
 
 	if err := testClient.Create(testCtx, u); err != nil {
 		t.Fatalf("expected Create with legacy spec.schedule to succeed (pruned), got: %v", err)
@@ -713,7 +713,7 @@ func TestValidation_OldFlatScheduleIsPruned(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, u) })
 
 	stored := &unstructured.Unstructured{}
-	stored.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("FrontendApp"))
+	stored.SetGroupVersionKind(bakerv1alpha1.GroupVersion.WithKind("App"))
 	if err := testClient.Get(testCtx, client.ObjectKeyFromObject(u), stored); err != nil {
 		t.Fatalf("get stored app: %v", err)
 	}

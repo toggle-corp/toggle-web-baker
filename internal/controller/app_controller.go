@@ -32,9 +32,9 @@ import (
 	"github.com/toggle-corp/toggle-web-baker/internal/observability"
 )
 
-// +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=frontendapps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=frontendapps/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=frontendapps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=apps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=apps/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=baker.toggle-corp.com,resources=apps/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=cronjobs;jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
@@ -48,8 +48,8 @@ import (
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=traefik.io,resources=middlewares,verbs=get;list;watch;create;update;patch;delete
 
-// FrontendAppReconciler reconciles a FrontendApp object.
-type FrontendAppReconciler struct {
+// AppReconciler reconciles a App object.
+type AppReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	Config OperatorConfig
@@ -67,12 +67,12 @@ type FrontendAppReconciler struct {
 	// fully disabled reporter (all methods are nil-receiver-safe).
 	Sentry *observability.Reporter
 
-	// Metrics records the FrontendApp metric set. The Recorder's zero value is
+	// Metrics records the App metric set. The Recorder's zero value is
 	// fully usable (it lazily initializes its state under its own mutex).
 	Metrics Recorder
 }
 
-func (r *FrontendAppReconciler) now() time.Time {
+func (r *AppReconciler) now() time.Time {
 	if r.Clock != nil {
 		return r.Clock()
 	}
@@ -80,10 +80,10 @@ func (r *FrontendAppReconciler) now() time.Time {
 }
 
 // Reconcile is the controller entrypoint.
-func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	app := &bakerv1alpha1.FrontendApp{}
+	app := &bakerv1alpha1.App{}
 	if err := r.Get(ctx, req.NamespacedName, app); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Metrics.ForgetApp(req.Namespace, req.Name)
@@ -251,7 +251,7 @@ func (r *FrontendAppReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 // harvested Job lingers, maybeStartMeasurement's Create is a silent
 // AlreadyExists no-op and the cleanup same-mode hold stays engaged, so a
 // persistently failing delete quietly stalls both without any other signal.
-func (r *FrontendAppReconciler) deleteJobs(ctx context.Context, jobs []*batchv1.Job) {
+func (r *AppReconciler) deleteJobs(ctx context.Context, jobs []*batchv1.Job) {
 	policy := metav1.DeletePropagationBackground
 	for _, j := range jobs {
 		if err := r.Delete(ctx, j, &client.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
@@ -263,7 +263,7 @@ func (r *FrontendAppReconciler) deleteJobs(ctx context.Context, jobs []*batchv1.
 // ---- decision helpers (factored for fake-client unit tests) ----
 
 // phaseImages collects the user-supplied phase images for the allowlist check.
-func phaseImages(app *bakerv1alpha1.FrontendApp) []domain.PhaseImage {
+func phaseImages(app *bakerv1alpha1.App) []domain.PhaseImage {
 	var out []domain.PhaseImage
 	if app.Spec.Pipeline.Phases.Setup.Image != "" {
 		out = append(out, domain.PhaseImage{Phase: "setup", Image: app.Spec.Pipeline.Phases.Setup.Image})
@@ -279,7 +279,7 @@ func phaseImages(app *bakerv1alpha1.FrontendApp) []domain.PhaseImage {
 
 // validateNodeVersion checks that a set spec.pipeline.nodeVersion resolves in the
 // operator's node-image map. nodeVersion 0 (unset, BYO image) always passes.
-func (r *FrontendAppReconciler) validateNodeVersion(app *bakerv1alpha1.FrontendApp) error {
+func (r *AppReconciler) validateNodeVersion(app *bakerv1alpha1.App) error {
 	if app.Spec.Pipeline.NodeVersion == 0 {
 		return nil
 	}
@@ -294,7 +294,7 @@ func (r *FrontendAppReconciler) validateNodeVersion(app *bakerv1alpha1.FrontendA
 	return fmt.Errorf("nodeVersion %d is not available; known versions: %v. Ask a cluster admin to add it to the operator's node-image map (Helm values operator.nodeImages)", app.Spec.Pipeline.NodeVersion, known)
 }
 
-func storageConfigFrom(app *bakerv1alpha1.FrontendApp) domain.StorageConfig {
+func storageConfigFrom(app *bakerv1alpha1.App) domain.StorageConfig {
 	s := app.Spec.Storage
 	return domain.StorageConfig{
 		Cache:     domain.VolumeThresholds{CleanupBytes: s.Cache.CleanupBytes, AlertBytes: s.Cache.AlertBytes},
@@ -307,7 +307,7 @@ func storageConfigFrom(app *bakerv1alpha1.FrontendApp) domain.StorageConfig {
 // Recorder exports, flattened through storageConfigFrom + the domain's single
 // volume enumeration so the metric set cannot drift from validation when a
 // volume is added.
-func alertThresholdsFrom(app *bakerv1alpha1.FrontendApp) map[string]int64 {
+func alertThresholdsFrom(app *bakerv1alpha1.App) map[string]int64 {
 	vols := storageConfigFrom(app).Volumes()
 	out := make(map[string]int64, len(vols))
 	for _, v := range vols {
@@ -330,7 +330,7 @@ func envMap(in []bakerv1alpha1.EnvVar) map[string]string {
 	return out
 }
 
-func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
+func buildSpecFrom(app *bakerv1alpha1.App) domain.BuildSpec {
 	var secretRefs []string
 	for _, s := range app.Spec.Pipeline.Phases.Fetch.Secrets {
 		secretRefs = append(secretRefs, s.ValueFrom.SecretKeyRef.Name+"/"+s.ValueFrom.SecretKeyRef.Key)
@@ -350,7 +350,7 @@ func buildSpecFrom(app *bakerv1alpha1.FrontendApp) domain.BuildSpec {
 
 // phaseOf derives the current top-level phase from conditions/status WITHOUT
 // mutating the object (used for the bootstrap gate).
-func (r *FrontendAppReconciler) phaseOf(app *bakerv1alpha1.FrontendApp) bakerv1alpha1.Phase {
+func (r *AppReconciler) phaseOf(app *bakerv1alpha1.App) bakerv1alpha1.Phase {
 	if !r.hasSucceededOnce(app) && app.Status.Build.Phase != bakerv1alpha1.BuildPhaseComplete {
 		if app.Status.Build.Phase == bakerv1alpha1.BuildPhaseRunning || app.Status.Build.Phase == bakerv1alpha1.BuildPhasePending {
 			return bakerv1alpha1.PhaseBuilding
@@ -366,11 +366,11 @@ func (r *FrontendAppReconciler) phaseOf(app *bakerv1alpha1.FrontendApp) bakerv1a
 	return bakerv1alpha1.PhaseReady
 }
 
-func (r *FrontendAppReconciler) hasSucceededOnce(app *bakerv1alpha1.FrontendApp) bool {
+func (r *AppReconciler) hasSucceededOnce(app *bakerv1alpha1.App) bool {
 	return app.Status.LastSuccessfulBuildTime != nil || app.Status.LastBuiltSpecHash != ""
 }
 
-func findCondition(app *bakerv1alpha1.FrontendApp, t string) *metav1.Condition {
+func findCondition(app *bakerv1alpha1.App, t string) *metav1.Condition {
 	for i := range app.Status.Conditions {
 		if app.Status.Conditions[i].Type == t {
 			return &app.Status.Conditions[i]
@@ -379,7 +379,7 @@ func findCondition(app *bakerv1alpha1.FrontendApp, t string) *metav1.Condition {
 	return nil
 }
 
-func (r *FrontendAppReconciler) setCondition(app *bakerv1alpha1.FrontendApp, t string, status metav1.ConditionStatus, reason, msg string) {
+func (r *AppReconciler) setCondition(app *bakerv1alpha1.App, t string, status metav1.ConditionStatus, reason, msg string) {
 	cond := metav1.Condition{
 		Type:               t,
 		Status:             status,
@@ -399,7 +399,7 @@ func (r *FrontendAppReconciler) setCondition(app *bakerv1alpha1.FrontendApp, t s
 }
 
 // refreshPhase recomputes the derived phase and the Ready condition.
-func (r *FrontendAppReconciler) refreshPhase(app *bakerv1alpha1.FrontendApp) {
+func (r *AppReconciler) refreshPhase(app *bakerv1alpha1.App) {
 	phase := r.phaseOf(app)
 	app.Status.Phase = phase
 	switch phase {
@@ -416,7 +416,7 @@ func (r *FrontendAppReconciler) refreshPhase(app *bakerv1alpha1.FrontendApp) {
 
 // fail sets Ready=False with the given reason and persists status. Used for the
 // reconcile-time rejections (config, image, storage, storageclass).
-func (r *FrontendAppReconciler) fail(ctx context.Context, app *bakerv1alpha1.FrontendApp, reason, msg string) (ctrl.Result, error) {
+func (r *AppReconciler) fail(ctx context.Context, app *bakerv1alpha1.App, reason, msg string) (ctrl.Result, error) {
 	r.setCondition(app, bakerv1alpha1.ConditionReady, metav1.ConditionFalse, reason, msg)
 	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	app.Status.Phase = bakerv1alpha1.PhaseDegraded
@@ -437,7 +437,7 @@ func (r *FrontendAppReconciler) fail(ctx context.Context, app *bakerv1alpha1.Fro
 
 // ---- storage class validation ----
 
-func (r *FrontendAppReconciler) validateStorageClass(ctx context.Context) error {
+func (r *AppReconciler) validateStorageClass(ctx context.Context) error {
 	if r.StorageClassName == "" {
 		return fmt.Errorf("operator StorageClassName is not configured")
 	}
@@ -453,7 +453,7 @@ func (r *FrontendAppReconciler) validateStorageClass(ctx context.Context) error 
 
 // ---- build lifecycle ----
 
-func (r *FrontendAppReconciler) seedRebuild(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+func (r *AppReconciler) seedRebuild(ctx context.Context, app *bakerv1alpha1.App) error {
 	token := strconv.FormatInt(r.now().Unix(), 10)
 	patch := client.MergeFrom(app.DeepCopy())
 	if app.Annotations == nil {
@@ -471,7 +471,7 @@ func (r *FrontendAppReconciler) seedRebuild(ctx context.Context, app *bakerv1alp
 
 // buildActive reports whether a build Job for this app is still running. A Job
 // is active if it is neither Complete nor Failed.
-func (r *FrontendAppReconciler) buildActive(ctx context.Context, app *bakerv1alpha1.FrontendApp) (bool, string, error) {
+func (r *AppReconciler) buildActive(ctx context.Context, app *bakerv1alpha1.App) (bool, string, error) {
 	jobs := &batchv1.JobList{}
 	if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err != nil {
 		return false, "", err
@@ -487,7 +487,7 @@ func (r *FrontendAppReconciler) buildActive(ctx context.Context, app *bakerv1alp
 
 // startBuild records the token into status.lastProcessedRebuild and creates ONE
 // build Job (single source of truth pod). It also GCs a prior failed build pod.
-func (r *FrontendAppReconciler) startBuild(ctx context.Context, app *bakerv1alpha1.FrontendApp, token string) error {
+func (r *AppReconciler) startBuild(ctx context.Context, app *bakerv1alpha1.App, token string) error {
 	job := r.BuildJob(app, token)
 	if err := controllerutil.SetControllerReference(app, job, r.Scheme); err != nil {
 		return err
@@ -549,7 +549,7 @@ func containerImages(pod *corev1.PodSpec) map[string]string {
 // observeBuild reads the current build Job + copier termination message and
 // updates status. On copier success it records lastBuiltSpecHash. Implements the
 // asymmetric retention: success -> short TTL, failure -> retained.
-func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1alpha1.FrontendApp) error {
+func (r *AppReconciler) observeBuild(ctx context.Context, app *bakerv1alpha1.App) error {
 	if app.Status.Build.JobName == "" {
 		return nil
 	}
@@ -684,7 +684,7 @@ func (r *FrontendAppReconciler) observeBuild(ctx context.Context, app *bakerv1al
 
 // applyCopierTermination reads the copier container's termination message (a
 // JSON blob with release/sizes) and writes it to status.
-func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app *bakerv1alpha1.FrontendApp, job *batchv1.Job) {
+func (r *AppReconciler) applyCopierTermination(ctx context.Context, app *bakerv1alpha1.App, job *batchv1.Job) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err != nil {
 		return
@@ -752,7 +752,7 @@ func (r *FrontendAppReconciler) applyCopierTermination(ctx context.Context, app 
 // build), or nil if none is found yet. It lists by the app-wide build label
 // (the same pattern as applyCopierTermination) and filters by owner UID so a
 // prior retained Job's leftover pods are never picked up.
-func (r *FrontendAppReconciler) findBuildPod(ctx context.Context, app *bakerv1alpha1.FrontendApp, job *batchv1.Job) *corev1.Pod {
+func (r *AppReconciler) findBuildPod(ctx context.Context, app *bakerv1alpha1.App, job *batchv1.Job) *corev1.Pod {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err != nil {
 		return nil
@@ -781,7 +781,7 @@ func ownedByJob(p *corev1.Pod, job *batchv1.Job) bool {
 // reconcileDelete runs the bounded best-effort abort of an in-flight build Job
 // (delete it + its pods). It does NOT spawn a node-pinned cleanup Job (that
 // would wedge on a dead node); on-disk data is reclaimed by local-path Delete.
-func (r *FrontendAppReconciler) reconcileDelete(ctx context.Context, app *bakerv1alpha1.FrontendApp) (ctrl.Result, error) {
+func (r *AppReconciler) reconcileDelete(ctx context.Context, app *bakerv1alpha1.App) (ctrl.Result, error) {
 	if controllerutil.ContainsFinalizer(app, bakerv1alpha1.FinalizerName) {
 		jobs := &batchv1.JobList{}
 		if err := r.List(ctx, jobs, client.InNamespace(app.Namespace), client.MatchingLabels(buildLabelsFor(app))); err == nil {
@@ -814,7 +814,7 @@ func jobFinished(j *batchv1.Job) *batchv1.JobCondition {
 }
 
 // mapBuildPodToApp maps a build pod to a reconcile request for its owning
-// FrontendApp, so the operator re-reconciles (and re-derives status.build.steps)
+// App, so the operator re-reconciles (and re-derives status.build.steps)
 // the instant a build pod's container states change — realtime step updates
 // without polling. Build pods are Job-owned (not app-owned), so this can't use
 // Owns(&Pod{}); it keys off the build-role + instance labels on the pod. Any
@@ -841,13 +841,13 @@ func mapBuildPodToApp(_ context.Context, obj client.Object) []ctrlreconcile.Requ
 }
 
 // SetupWithManager wires the controller and its owned children.
-func (r *FrontendAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Clock == nil {
 		r.Clock = time.Now
 	}
 	r.Config.Defaults()
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&bakerv1alpha1.FrontendApp{}).
+		For(&bakerv1alpha1.App{}).
 		Owns(&batchv1.Job{}).
 		Owns(&batchv1.CronJob{}).
 		Owns(&corev1.PersistentVolumeClaim{}).

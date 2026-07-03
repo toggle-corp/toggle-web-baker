@@ -19,7 +19,7 @@ import (
 	bakerv1alpha1 "github.com/toggle-corp/toggle-web-baker/api/v1alpha1"
 )
 
-// resetMetrics clears every FrontendApp metric vec. The vecs are process-global
+// resetMetrics clears every App metric vec. The vecs are process-global
 // (registered once in init()); each test resets them and uses a fresh reconciler
 // (fresh Recorder state), so tests never see each other's series.
 func resetMetrics() {
@@ -148,9 +148,9 @@ func TestMetrics_DegradedReasonChurnDeletesOldSeries(t *testing.T) {
 	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app))
 
 	expected := `
-# HELP frontendapp_degraded 1 when the app's Degraded condition is True (reason = condition reason); 0 with reason="" when healthy.
-# TYPE frontendapp_degraded gauge
-frontendapp_degraded{name="demo",namespace="apps",reason=""} 0
+# HELP baker_app_degraded 1 when the app's Degraded condition is True (reason = condition reason); 0 with reason="" when healthy.
+# TYPE baker_app_degraded gauge
+baker_app_degraded{name="demo",namespace="apps",reason=""} 0
 `
 	if err := testutil.CollectAndCompare(metricDegraded, strings.NewReader(expected)); err != nil {
 		t.Fatalf("degraded family must contain ONLY the healthy series: %v", err)
@@ -176,9 +176,9 @@ func TestMetrics_StorageSeries(t *testing.T) {
 		t.Fatalf("used_bytes{outputTotal} = %v, want 900", got)
 	}
 	expected := `
-# HELP frontendapp_storage_alert_bytes spec.storage alertBytes threshold; exported only for volumes with a threshold > 0.
-# TYPE frontendapp_storage_alert_bytes gauge
-frontendapp_storage_alert_bytes{name="demo",namespace="apps",volume="cache"} 500
+# HELP baker_app_storage_alert_bytes spec.storage alertBytes threshold; exported only for volumes with a threshold > 0.
+# TYPE baker_app_storage_alert_bytes gauge
+baker_app_storage_alert_bytes{name="demo",namespace="apps",volume="cache"} 500
 `
 	if err := testutil.CollectAndCompare(metricStorageAlert, strings.NewReader(expected)); err != nil {
 		t.Fatalf("alert_bytes must have ONLY the cache series: %v", err)
@@ -197,7 +197,7 @@ frontendapp_storage_alert_bytes{name="demo",namespace="apps",volume="cache"} 500
 	}
 }
 
-// totalAppSeries sums the series count across every FrontendApp metric vec.
+// totalAppSeries sums the series count across every App metric vec.
 func totalAppSeries(t *testing.T) int {
 	t.Helper()
 	n := 0
@@ -248,10 +248,10 @@ func TestMetrics_CountersPreseededOnFirstRecord(t *testing.T) {
 	rec.RecordApp(app, 1800, alertThresholdsFrom(app))
 
 	expected := `
-# HELP frontendapp_builds_total Terminal builds by result (Succeeded|Failed).
-# TYPE frontendapp_builds_total counter
-frontendapp_builds_total{name="demo",namespace="apps",result="Failed"} 0
-frontendapp_builds_total{name="demo",namespace="apps",result="Succeeded"} 0
+# HELP baker_app_builds_total Terminal builds by result (Succeeded|Failed).
+# TYPE baker_app_builds_total counter
+baker_app_builds_total{name="demo",namespace="apps",result="Failed"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Succeeded"} 0
 `
 	if err := testutil.CollectAndCompare(metricBuildsTotal, strings.NewReader(expected)); err != nil {
 		t.Fatalf("builds_total must be pre-seeded at 0 for both results: %v", err)

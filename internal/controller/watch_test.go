@@ -192,14 +192,14 @@ func TestTriggers_DisableAfterEnable_ChildrenDeleted(t *testing.T) {
 // must surface as a Degraded condition the app owner can see — not a bare
 // reconcile error that silently wedges the app.
 func TestTriggers_UnexpressibleInterval_DegradesApp(t *testing.T) {
-	for name, mutate := range map[string]func(*bakerv1alpha1.FrontendApp){
-		"90m interval": func(app *bakerv1alpha1.FrontendApp) {
+	for name, mutate := range map[string]func(*bakerv1alpha1.App){
+		"90m interval": func(app *bakerv1alpha1.App) {
 			app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "90m"}
 		},
-		"48h interval": func(app *bakerv1alpha1.FrontendApp) {
+		"48h interval": func(app *bakerv1alpha1.App) {
 			app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true, Interval: "48h"}
 		},
-		"pinned SHA ref": func(app *bakerv1alpha1.FrontendApp) {
+		"pinned SHA ref": func(app *bakerv1alpha1.App) {
 			app.Spec.Ref = "cafebabecafebabecafebabecafebabecafebabe"
 			app.Spec.WatchCommits = &bakerv1alpha1.WatchCommitsSpec{Enabled: true}
 		},

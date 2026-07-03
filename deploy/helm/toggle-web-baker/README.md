@@ -1,6 +1,6 @@
 # toggle-web-baker Helm chart
 
-Deploys the **FrontendApp** deploy-platform operator (`baker.toggle-corp.com`)
+Deploys the **App** deploy-platform operator (`baker.toggle-corp.com`)
 and, optionally, the read-only admin console.
 
 Published per release as an OCI artifact:
@@ -15,7 +15,7 @@ git release tag.
 ## What it installs
 
 Always:
-- `FrontendApp` CRD (guarded by `crds.install`, default `true`)
+- `App` CRD (guarded by `crds.install`, default `true`)
 - operator `ServiceAccount` + `ClusterRole` + `ClusterRoleBinding`
 - operator `Deployment`
 
@@ -70,10 +70,10 @@ tag→digest in CI before packaging the chart.
 
 The CRD ships in `templates/` (not Helm's `crds/`), so `helm upgrade` applies
 schema changes each release. It carries `helm.sh/resource-policy: keep`, so
-`helm uninstall` leaves the CRD (and existing `FrontendApp` CRs) in place.
+`helm uninstall` leaves the CRD (and existing `App` CRs) in place.
 
 The CRD body in `templates/crd.yaml` is a wrapped copy of
-`config/crd/baker.toggle-corp.com_frontendapps.yaml`. Keeping the two in sync is
+`config/crd/baker.toggle-corp.com_apps.yaml`. Keeping the two in sync is
 automated: `just manifests` regenerates the source CRD and then runs
 `just sync-crd`, which re-derives `templates/crd.yaml` from it (re-adding the
 chart install guard and the `helm.sh/resource-policy: keep` annotation). Never
@@ -94,7 +94,7 @@ just helm-snapshots --check-diff-only # CI mode: fail on drift
 ## Alert rule tests
 
 `promtool` unit tests for the `PrometheusRule` alerts live in
-`rules-test/frontendapp-rules-test.yaml`. The recipe renders the chart with
+`rules-test/app-rules-test.yaml`. The recipe renders the chart with
 `monitoring.enabled=true`, extracts `.spec.groups` into a plain rules file, and
 runs `promtool test rules` against it:
 

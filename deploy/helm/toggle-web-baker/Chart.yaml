@@ -5,7 +5,7 @@ apiVersion: v2
 # they stay <release>-toggle-web-baker-* regardless of the -helm suffix.
 name: toggle-web-baker-helm
 description: |
-  The FrontendApp deploy-platform operator (baker.toggle-corp.com) plus an
+  The App deploy-platform operator (baker.toggle-corp.com) plus an
   optional read-only admin console. Installs the CRD, operator RBAC, and the
   operator Deployment; the console stack is opt-in via console.enabled.
 type: application

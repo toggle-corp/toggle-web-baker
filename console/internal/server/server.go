@@ -36,20 +36,20 @@ type LokiTailer interface {
 	Tail(ctx context.Context, namespace, pod, container string, start, end time.Time, limit int) ([]string, error)
 }
 
-// Server holds the FrontendApp client plus the log-source and live-metrics
+// Server holds the App client plus the log-source and live-metrics
 // capabilities. All are interfaces so tests can drive the handlers with fakes.
 type Server struct {
-	apps    k8s.FrontendAppPatcher
+	apps    k8s.AppPatcher
 	pods    PodReader
 	tailer  LokiTailer
 	metrics k8s.PodMetricser
 }
 
-// New constructs the server around a FrontendApp client, a pod reader, a Loki
+// New constructs the server around a App client, a pod reader, a Loki
 // tailer, and a pod-metrics reader. metrics is best-effort: a nil value (or a
 // failing fetch) degrades gracefully and never blocks the status fragment.
 // Live metrics also need pods (the pod read resolves which kubelet to ask).
-func New(apps k8s.FrontendAppPatcher, pods PodReader, tailer LokiTailer, metrics k8s.PodMetricser) *Server {
+func New(apps k8s.AppPatcher, pods PodReader, tailer LokiTailer, metrics k8s.PodMetricser) *Server {
 	return &Server{apps: apps, pods: pods, tailer: tailer, metrics: metrics}
 }
 
@@ -113,7 +113,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 
 	apps, err := s.apps.List(r.Context())
 	if err != nil {
-		s.renderError(w, r, http.StatusBadGateway, "Could not list FrontendApps", err)
+		s.renderError(w, r, http.StatusBadGateway, "Could not list Apps", err)
 		return
 	}
 
@@ -403,7 +403,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
-		s.renderError(w, r, http.StatusNotFound, "FrontendApp not found", err)
+		s.renderError(w, r, http.StatusNotFound, "App not found", err)
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -425,7 +425,7 @@ func (s *Server) handlePartial(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
-		s.renderError(w, r, http.StatusNotFound, "FrontendApp not found", err)
+		s.renderError(w, r, http.StatusNotFound, "App not found", err)
 		return
 	}
 	app := view.FromUnstructured(obj)
@@ -518,7 +518,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	obj, err := s.apps.Get(r.Context(), ns, name)
 	if err != nil {
-		s.renderError(w, r, http.StatusNotFound, "FrontendApp not found", err)
+		s.renderError(w, r, http.StatusNotFound, "App not found", err)
 		return
 	}
 	app := view.FromUnstructured(obj)

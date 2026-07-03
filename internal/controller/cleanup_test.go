@@ -163,7 +163,7 @@ func TestCleanupSC_CacheUnknownUIDFallsBackToRoot(t *testing.T) {
 	mismatch := baseApp()
 	mismatch.Spec.Pipeline.Phases.Setup.RunAsUser = ptr.To(int64(3434))
 	mismatch.Spec.Pipeline.Phases.Build.RunAsUser = ptr.To(int64(1000))
-	for name, app := range map[string]*bakerv1alpha1.FrontendApp{"image-default": base, "phase-mismatch": mismatch} {
+	for name, app := range map[string]*bakerv1alpha1.App{"image-default": base, "phase-mismatch": mismatch} {
 		r, _ := newReconciler(t, app, wffc())
 		sc := r.CleanupJob(app, cleanupModeCache).Spec.Template.Spec.Containers[0].SecurityContext
 		if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != 0 {
@@ -611,17 +611,17 @@ func mountVolume(job *batchv1.Job, name string) *corev1.VolumeSource {
 	return nil
 }
 
-func completeCleanupJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, mode, msg string) *batchv1.Job {
+func completeCleanupJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, mode, msg string) *batchv1.Job {
 	t.Helper()
 	return cleanupJobWith(t, cl, app, mode, msg, batchv1.JobComplete, 0)
 }
 
-func failCleanupJob(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, mode, msg string) *batchv1.Job {
+func failCleanupJob(t *testing.T, cl client.Client, app *bakerv1alpha1.App, mode, msg string) *batchv1.Job {
 	t.Helper()
 	return cleanupJobWith(t, cl, app, mode, msg, batchv1.JobFailed, 1)
 }
 
-func cleanupJobWith(t *testing.T, cl client.Client, app *bakerv1alpha1.FrontendApp, mode, msg string, condType batchv1.JobConditionType, exit int32) *batchv1.Job {
+func cleanupJobWith(t *testing.T, cl client.Client, app *bakerv1alpha1.App, mode, msg string, condType batchv1.JobConditionType, exit int32) *batchv1.Job {
 	t.Helper()
 	labels := cleanupLabelsFor(app)
 	labels[cleanupModeLabel] = mode

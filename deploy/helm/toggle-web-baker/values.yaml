@@ -6,9 +6,9 @@
 nameOverride: ""
 fullnameOverride: ""
 
-# Install the FrontendApp CRD as part of the chart (templates/crd.yaml). The CRD
+# Install the App CRD as part of the chart (templates/crd.yaml). The CRD
 # carries helm.sh/resource-policy: keep, so `helm uninstall` will NOT delete it
-# (existing FrontendApp CRs survive). Set false to let a cluster-admin / GitOps
+# (existing App CRs survive). Set false to let a cluster-admin / GitOps
 # flow own the CRD out-of-band.
 crds:
   install: true
@@ -181,7 +181,7 @@ console:
       limits: { cpu: 100m, memory: 64Mi }
 
 # Prometheus Operator integration (ServiceMonitor + PrometheusRule for the
-# operator's frontendapp_* metrics on :8080). Opt-in; requires the
+# operator's baker_app_* metrics on :8080). Opt-in; requires the
 # monitoring.coreos.com CRDs (e.g. kube-prometheus-stack) on the cluster.
 monitoring:
   enabled: false
@@ -195,11 +195,11 @@ monitoring:
     # Static labels merged into every alert rule's labels (next to severity),
     # e.g. { team: platform } for Alertmanager routing.
     extraLabels: {}
-    # How long an app must stay Degraded before FrontendAppDegraded fires.
+    # How long an app must stay Degraded before AppDegraded fires.
     degradedFor: 5m
-    # How long an app may sit in AwaitingFirstBuild before FrontendAppNeverReady fires.
+    # How long an app may sit in AwaitingFirstBuild before AppNeverReady fires.
     neverReadyFor: 1h
-    # Slack past the build deadline before FrontendAppBuildStuck fires (the
+    # Slack past the build deadline before AppBuildStuck fires (the
     # operator normally aborts at the deadline; firing means it did not).
     # Prometheus duration (e.g. 90s/10m/1h), used as the rule's `for:` —
     # same syntax as degradedFor/neverReadyFor.

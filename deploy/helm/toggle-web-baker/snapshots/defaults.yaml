@@ -69,18 +69,18 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
     # helm.sh/resource-policy keeps the CRD on `helm uninstall` so existing
-    # FrontendApp CRs are not cascade-deleted.
+    # App CRs are not cascade-deleted.
     helm.sh/resource-policy: keep
-  name: frontendapps.baker.toggle-corp.com
+  name: apps.baker.toggle-corp.com
 spec:
   group: baker.toggle-corp.com
   names:
-    kind: FrontendApp
-    listKind: FrontendAppList
-    plural: frontendapps
+    kind: App
+    listKind: AppList
+    plural: apps
     shortNames:
-    - fapp
-    singular: frontendapp
+    - bakerapp
+    singular: app
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -110,7 +110,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: FrontendApp is the Schema for the frontendapps API.
+        description: App is the Schema for the apps API.
         properties:
           apiVersion:
             description: |-
@@ -130,8 +130,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: 'FrontendAppSpec is the desired state: operational tunables
-              for one app.'
+            description: 'AppSpec is the desired state: operational tunables for one
+              app.'
             properties:
               auth:
                 description: |-
@@ -652,7 +652,7 @@ spec:
             - repo
             type: object
           status:
-            description: FrontendAppStatus is the operator-owned observed state.
+            description: AppStatus is the operator-owned observed state.
             properties:
               build:
                 description: |-
@@ -1263,7 +1263,7 @@ rules:
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps
+  - apps
   verbs:
   - create
   - delete
@@ -1275,13 +1275,13 @@ rules:
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps/finalizers
+  - apps/finalizers
   verbs:
   - update
 - apiGroups:
   - baker.toggle-corp.com
   resources:
-  - frontendapps/status
+  - apps/status
   verbs:
   - get
   - patch

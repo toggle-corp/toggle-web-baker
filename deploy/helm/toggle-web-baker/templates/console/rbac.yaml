@@ -19,7 +19,7 @@ metadata:
     app.kubernetes.io/component: console
 rules:
   - apiGroups: ["baker.toggle-corp.com"]
-    resources: ["frontendapps"]
+    resources: ["apps"]
     verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["pods", "pods/log"]

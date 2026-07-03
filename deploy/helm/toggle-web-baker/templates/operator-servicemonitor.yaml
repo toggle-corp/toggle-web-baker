@@ -21,7 +21,7 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
-      # The frontendapp_* series carry their own namespace/name labels (the
+      # The baker_app_* series carry their own namespace/name labels (the
       # CR's identity); they must win over the scrape target's labels.
       honorLabels: true
 {{- end }}

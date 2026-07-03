@@ -16,11 +16,11 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
-// fappObj builds a minimal unstructured FrontendApp for seeding the fake client.
-func fappObj(namespace, name string) *unstructured.Unstructured {
+// appObj builds a minimal unstructured App for seeding the fake client.
+func appObj(namespace, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "baker.toggle-corp.com/v1alpha1",
-		"kind":       "FrontendApp",
+		"kind":       "App",
 		"metadata": map[string]any{
 			"namespace": namespace,
 			"name":      name,
@@ -37,11 +37,11 @@ func fappObj(namespace, name string) *unstructured.Unstructured {
 // it.)
 func TestList_ServesSeededAppsFromCache(t *testing.T) {
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
+	listKinds := map[schema.GroupVersionResource]string{GVR: "AppList"}
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		scheme, listKinds,
-		fappObj("mapswipe", "mapswipe-uat"),
-		fappObj("hot", "hot-prod"),
+		appObj("mapswipe", "mapswipe-uat"),
+		appObj("hot", "hot-prod"),
 	)
 
 	c := NewWithDynamic(dyn)
@@ -74,9 +74,9 @@ func TestList_ServesSeededAppsFromCache(t *testing.T) {
 // renders a "warming" state instead of an empty list.
 func TestSynced_TrueAfterWarmup(t *testing.T) {
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
+	listKinds := map[schema.GroupVersionResource]string{GVR: "AppList"}
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme, listKinds, fappObj("mapswipe", "mapswipe-uat"))
+		scheme, listKinds, appObj("mapswipe", "mapswipe-uat"))
 
 	c := NewWithDynamic(dyn)
 	t.Cleanup(c.Close)
@@ -99,8 +99,8 @@ func TestSynced_TrueAfterWarmup(t *testing.T) {
 // same seam the WatchErrorHandler uses), with view.Now frozen for determinism.
 func TestStale_WindowFromRecordedError(t *testing.T) {
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
-	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, fappObj("ns", "a"))
+	listKinds := map[schema.GroupVersionResource]string{GVR: "AppList"}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, appObj("ns", "a"))
 	c := NewWithDynamic(dyn)
 	t.Cleanup(c.Close)
 
@@ -145,8 +145,8 @@ func TestRecentWatchErr_ZeroNeverRecent(t *testing.T) {
 // select-default pattern) also panicked; this asserts neither path fires.
 func TestClose_IdempotentUnderConcurrency(t *testing.T) {
 	scheme := runtime.NewScheme()
-	listKinds := map[schema.GroupVersionResource]string{GVR: "FrontendAppList"}
-	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, fappObj("ns", "a"))
+	listKinds := map[schema.GroupVersionResource]string{GVR: "AppList"}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, appObj("ns", "a"))
 	c := NewWithDynamic(dyn)
 
 	var wg sync.WaitGroup
