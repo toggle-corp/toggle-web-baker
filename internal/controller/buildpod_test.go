@@ -552,6 +552,46 @@ func TestBuildJob_BuildEnvReachesBuildContainer(t *testing.T) {
 	assertEnvVar(t, build, "NEXT_PUBLIC_API", "https://api")
 }
 
+// envMap is the literal-only companion to env: its entries must reach the phase
+// container AFTER the array env and SORTED BY KEY, so the container's env
+// ordering is deterministic. Verified here on the build phase.
+func TestBuildJob_BuildEnvMapReachesBuildContainerSortedAfterEnv(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.Phases.Build.Env = []bakerv1alpha1.EnvVar{{Name: "NEXT_PUBLIC_API", Value: "https://api"}}
+	app.Spec.Pipeline.Phases.Build.EnvMap = map[string]string{"ZED": "z", "ALPHA": "a", "MID": "m"}
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	build := containerByName(job.Spec.Template.Spec.InitContainers, "build")
+	if build == nil {
+		t.Fatal("no build container")
+	}
+	assertEnvVar(t, build, "NEXT_PUBLIC_API", "https://api")
+	assertEnvVar(t, build, "ALPHA", "a")
+	assertEnvVar(t, build, "MID", "m")
+	assertEnvVar(t, build, "ZED", "z")
+
+	// The array env entry must precede all envMap entries, and the envMap entries
+	// must appear in sorted-key order (ALPHA < MID < ZED).
+	iEnv := envIndex(build, "NEXT_PUBLIC_API")
+	iAlpha := envIndex(build, "ALPHA")
+	iMid := envIndex(build, "MID")
+	iZed := envIndex(build, "ZED")
+	if !(iEnv < iAlpha && iAlpha < iMid && iMid < iZed) {
+		t.Fatalf("envMap must follow array env sorted by key; got positions env=%d ALPHA=%d MID=%d ZED=%d", iEnv, iAlpha, iMid, iZed)
+	}
+}
+
+// envIndex returns the position of the named env var in the container's Env
+// slice, or -1 when absent.
+func envIndex(c *corev1.Container, name string) int {
+	for i, e := range c.Env {
+		if e.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
 // pipeline.phases.build.outputDir flows to the copier's OUTPUT_DIR.
 func TestBuildJob_BuildOutputDirFlowsToCopier(t *testing.T) {
 	app := baseApp()

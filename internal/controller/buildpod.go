@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"sort"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -139,6 +140,26 @@ func toEnvVars(in []bakerv1alpha1.EnvVar) []corev1.EnvVar {
 			}
 		}
 		out = append(out, ev)
+	}
+	return out
+}
+
+// envMapVars converts a phase's literal-only envMap to corev1.EnvVar entries,
+// SORTED BY KEY so the container's env ordering is deterministic. Callers append
+// these AFTER the phase's array env (toEnvVars) — a key can never appear in both
+// (rejected at admission), so no dedupe is needed here.
+func envMapVars(in map[string]string) []corev1.EnvVar {
+	if len(in) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]corev1.EnvVar, 0, len(in))
+	for _, k := range keys {
+		out = append(out, corev1.EnvVar{Name: k, Value: in[k]})
 	}
 	return out
 }
@@ -304,7 +325,7 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 		Image:           setupR.Image,
 		Command:         shimWrap(commandOrNoop(setupSpec.Command)),
 		WorkingDir:      workMountPath,
-		Env:             withHome(setupR, append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(setupSpec.Env)...)),
+		Env:             withHome(setupR, append(append(append([]corev1.EnvVar{}, pmEnv...), toEnvVars(setupSpec.Env)...), envMapVars(setupSpec.EnvMap)...)),
 		VolumeMounts:    setupMounts,
 		Resources:       phaseResourceRequirements(r.Config, "setup", setupSpec.MemoryLimit),
 		SecurityContext: resolvedSecurityContext(setupR),
@@ -312,6 +333,7 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 
 	// fetch: the ONLY container that receives secrets. Writes to /data.
 	fetchEnv := append([]corev1.EnvVar{}, toEnvVars(app.Spec.Pipeline.Phases.Fetch.Env)...)
+	fetchEnv = append(fetchEnv, envMapVars(app.Spec.Pipeline.Phases.Fetch.EnvMap)...)
 	fetchEnv = append(fetchEnv, toSecretEnvVars(app.Spec.Pipeline.Phases.Fetch.Secrets)...)
 	fetchMounts := append(append([]corev1.VolumeMount{}, base...),
 		corev1.VolumeMount{Name: volData, MountPath: dataMountPath}, shimMount)
@@ -330,6 +352,7 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 	// data RO. NEVER mounts the output PVC.
 	buildEnv := append([]corev1.EnvVar{}, pmEnv...)
 	buildEnv = append(buildEnv, toEnvVars(app.Spec.Pipeline.Phases.Build.Env)...)
+	buildEnv = append(buildEnv, envMapVars(app.Spec.Pipeline.Phases.Build.EnvMap)...)
 	buildMounts := append(append([]corev1.VolumeMount{}, base...),
 		cacheMount,
 		corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true},

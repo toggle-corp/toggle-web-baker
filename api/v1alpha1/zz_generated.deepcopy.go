@@ -552,6 +552,13 @@ func (in *PhaseSpec) DeepCopyInto(out *PhaseSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.EnvMap != nil {
+		in, out := &in.EnvMap, &out.EnvMap
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.RunAsUser != nil {
 		in, out := &in.RunAsUser, &out.RunAsUser
 		*out = new(int64)

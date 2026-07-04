@@ -180,6 +180,12 @@ type EnvVarWithSecret struct {
 // PhaseSpec describes one pipeline phase container (setup / fetch / build). The
 // public-env / no-secretKeyRef boundary holds STRUCTURALLY: EnvVarSource has no
 // secretKeyRef field, so a CEL rule would be tautological — none is declared.
+// env and envMap are two channels for the same per-phase env, so a name may
+// appear in AT MOST ONE: the overlap is an ambiguous "which value wins?" and is
+// rejected at admission by the rule below. The rule uses has() guards (both
+// fields are optional) and the CEL string literal "in" operator over envMap's
+// keys — no comparison against an empty '' literal (which gofmt would corrupt).
+// +kubebuilder:validation:XValidation:rule="!has(self.env) || !has(self.envMap) || self.env.all(e, !(e.name in self.envMap))",message="a key cannot appear in both env and envMap"
 type PhaseSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
@@ -188,6 +194,18 @@ type PhaseSpec struct {
 	// +optional
 	// +listType=atomic
 	Env []EnvVar `json:"env,omitempty"`
+	// EnvMap is a literal-only companion to env: a plain map of Name→Value pairs
+	// for the common "just set some build-time constants" case, without the
+	// per-entry {name,value} boilerplate of env. It carries LITERAL VALUES ONLY —
+	// there is no valueFrom here; when you need a configMapKeyRef (or any other
+	// source) use env instead. A key MUST NOT appear in both env and envMap: the
+	// overlap is ambiguous ("which value wins?") and is rejected at admission (see
+	// the CEL rule on PhaseSpec). At runtime the operator injects env first, then
+	// the envMap entries sorted by key, so the phase container's env ordering is
+	// deterministic.
+	// +optional
+	// +mapType=atomic
+	EnvMap map[string]string `json:"envMap,omitempty"`
 	// RunAsUser pins this phase container's numeric UID. The build pod sets
 	// runAsNonRoot WITHOUT a UID, so an image whose USER is a non-numeric name
 	// (e.g. cimg/node's `circleci`) is rejected at admission — the kubelet
@@ -265,7 +283,7 @@ type FetchPhaseSpec struct {
 // be an ambiguous "skip but also do this". The rule uses has() guards, never a
 // comparison against an empty CEL string literal — gofmt curls '' into a Unicode
 // quote and silently corrupts the marker.
-// +kubebuilder:validation:XValidation:rule="!has(self.skip) || !self.skip || (!has(self.command) && !has(self.image) && !has(self.env) && !has(self.runAsUser) && !has(self.memoryLimit))",message="setup.skip cannot be combined with other setup fields"
+// +kubebuilder:validation:XValidation:rule="!has(self.skip) || !self.skip || (!has(self.command) && !has(self.image) && !has(self.env) && !has(self.envMap) && !has(self.runAsUser) && !has(self.memoryLimit))",message="setup.skip cannot be combined with other setup fields"
 type SetupPhaseSpec struct {
 	PhaseSpec `json:",inline"`
 	// Skip opts out of the setup phase entirely: no user command AND no

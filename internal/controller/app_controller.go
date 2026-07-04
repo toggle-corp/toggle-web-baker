@@ -366,16 +366,23 @@ func alertThresholdsFrom(app *bakerv1alpha1.App) map[string]int64 {
 	return out
 }
 
-// envMap collapses a phase's public []EnvVar into a Name→Value map for hashing.
-// ValueFrom entries collapse to "" (only literal values are captured), matching
-// the prior buildArgs hashing behavior.
-func envMap(in []bakerv1alpha1.EnvVar) map[string]string {
-	if len(in) == 0 {
+// mergeEnv collapses a phase's public env into a single Name→Value map for
+// hashing: the array []EnvVar first, then the literal-only envMap. ValueFrom
+// entries collapse to "" (only literal values are captured), matching the prior
+// buildArgs hashing behavior. A key can never appear in both env and envMap
+// (rejected at admission), so the maps are merged blindly with no collision
+// handling. nil is returned when both are empty so an app carrying neither hashes
+// identically before and after this field existed.
+func mergeEnv(env []bakerv1alpha1.EnvVar, envMap map[string]string) map[string]string {
+	if len(env) == 0 && len(envMap) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(in))
-	for _, e := range in {
+	out := make(map[string]string, len(env)+len(envMap))
+	for _, e := range env {
 		out[e.Name] = e.Value
+	}
+	for k, v := range envMap {
+		out[k] = v
 	}
 	return out
 }
@@ -390,9 +397,9 @@ func buildSpecFrom(app *bakerv1alpha1.App) domain.BuildSpec {
 		Ref:            app.Spec.Ref,
 		PackageManager: string(app.Spec.Pipeline.PackageManager),
 		NodeVersion:    app.Spec.Pipeline.NodeVersion,
-		Setup:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Setup.Image, Command: app.Spec.Pipeline.Phases.Setup.Command, RunAsUser: app.Spec.Pipeline.Phases.Setup.RunAsUser, Env: envMap(app.Spec.Pipeline.Phases.Setup.Env), Skip: app.Spec.Pipeline.Phases.Setup.Skip},
-		Fetch:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Fetch.Image, Command: app.Spec.Pipeline.Phases.Fetch.Command, RunAsUser: app.Spec.Pipeline.Phases.Fetch.RunAsUser, Env: envMap(app.Spec.Pipeline.Phases.Fetch.Env)},
-		Build:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Build.Image, Command: app.Spec.Pipeline.Phases.Build.Command, RunAsUser: app.Spec.Pipeline.Phases.Build.RunAsUser, Env: envMap(app.Spec.Pipeline.Phases.Build.Env)},
+		Setup:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Setup.Image, Command: app.Spec.Pipeline.Phases.Setup.Command, RunAsUser: app.Spec.Pipeline.Phases.Setup.RunAsUser, Env: mergeEnv(app.Spec.Pipeline.Phases.Setup.Env, app.Spec.Pipeline.Phases.Setup.EnvMap), Skip: app.Spec.Pipeline.Phases.Setup.Skip},
+		Fetch:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Fetch.Image, Command: app.Spec.Pipeline.Phases.Fetch.Command, RunAsUser: app.Spec.Pipeline.Phases.Fetch.RunAsUser, Env: mergeEnv(app.Spec.Pipeline.Phases.Fetch.Env, app.Spec.Pipeline.Phases.Fetch.EnvMap)},
+		Build:          domain.PhaseSpec{Image: app.Spec.Pipeline.Phases.Build.Image, Command: app.Spec.Pipeline.Phases.Build.Command, RunAsUser: app.Spec.Pipeline.Phases.Build.RunAsUser, Env: mergeEnv(app.Spec.Pipeline.Phases.Build.Env, app.Spec.Pipeline.Phases.Build.EnvMap)},
 		OutputDir:      app.Spec.Pipeline.Phases.Build.OutputDir,
 		SecretRefs:     secretRefs,
 	}

@@ -42,3 +42,9 @@ spec:
       build:
         command: ["sh", "-c", "mkdir -p out && printf '<h1>smoke ok</h1>' > out/index.html"]
         outputDir: out
+        # envMap is the literal-only shorthand for env: a plain key/value map for
+        # build-time constants (no per-entry {name,value} boilerplate, no
+        # valueFrom). A key here must NOT also appear in env. Injected after env,
+        # sorted by key.
+        envMap:
+          NODE_ENV: production

@@ -720,6 +720,56 @@ func TestValidation_RejectsSkipWithOtherSetupFields(t *testing.T) {
 	}
 }
 
+// ---- envMap (literal-only companion to env; no key overlap with env) --------
+
+func TestValidation_AcceptsEnvMapOnly(t *testing.T) {
+	// envMap alone (no array env) is the common "just set some constants" case and
+	// must be admitted.
+	app := validApp("accept-envmap-only")
+	app.Spec.Pipeline.Phases.Build.EnvMap = map[string]string{"FEATURE_FLAG": "on", "REGION": "eu"}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected envMap-only build phase to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
+func TestValidation_RejectsKeyInBothEnvAndEnvMap(t *testing.T) {
+	// A name may appear in AT MOST ONE of env/envMap: the overlap is an ambiguous
+	// "which value wins?" and must be rejected at admission.
+	app := validApp("reject-env-envmap-collision")
+	app.Spec.Pipeline.Phases.Build.Env = []bakerv1alpha1.EnvVar{{Name: "REGION", Value: "us"}}
+	app.Spec.Pipeline.Phases.Build.EnvMap = map[string]string{"REGION": "eu"}
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+		t.Fatalf("expected rejection when a key appears in both env and envMap")
+	}
+	if !strings.Contains(err.Error(), "a key cannot appear in both env and envMap") {
+		t.Fatalf("expected env/envMap collision error, got: %v", err)
+	}
+}
+
+func TestValidation_RejectsSkipWithEnvMap(t *testing.T) {
+	// envMap is a setup field like any other, so it is mutually exclusive with
+	// setup.skip (which means "no setup at all").
+	app := validApp("reject-setup-skip-envmap")
+	app.Spec.Pipeline.Phases.Setup = bakerv1alpha1.SetupPhaseSpec{
+		PhaseSpec: bakerv1alpha1.PhaseSpec{EnvMap: map[string]string{"CI": "1"}},
+		Skip:      true,
+	}
+
+	err := testClient.Create(testCtx, app)
+	if err == nil {
+		t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+		t.Fatalf("expected rejection for setup.skip combined with envMap")
+	}
+	if !strings.Contains(err.Error(), "setup.skip cannot be combined") {
+		t.Fatalf("expected setup.skip-cannot-be-combined error, got: %v", err)
+	}
+}
+
 // ---- trigger opt-in structs (scheduledBuilds / watchCommits) ----------------
 
 func TestValidation_AcceptsEnabledTriggersWithTuning(t *testing.T) {

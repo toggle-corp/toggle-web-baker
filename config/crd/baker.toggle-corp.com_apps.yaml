@@ -205,6 +205,21 @@ spec:
                               type: object
                             type: array
                             x-kubernetes-list-type: atomic
+                          envMap:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              EnvMap is a literal-only companion to env: a plain map of Name→Value pairs
+                              for the common "just set some build-time constants" case, without the
+                              per-entry {name,value} boilerplate of env. It carries LITERAL VALUES ONLY —
+                              there is no valueFrom here; when you need a configMapKeyRef (or any other
+                              source) use env instead. A key MUST NOT appear in both env and envMap: the
+                              overlap is ambiguous ("which value wins?") and is rejected at admission (see
+                              the CEL rule on PhaseSpec). At runtime the operator injects env first, then
+                              the envMap entries sorted by key, so the phase container's env ordering is
+                              deterministic.
+                            type: object
+                            x-kubernetes-map-type: atomic
                           image:
                             type: string
                           memoryLimit:
@@ -256,6 +271,9 @@ spec:
                             empty, '.' or '..' segments
                           rule: '!has(self.outputDir) || self.outputDir.split(''/'').all(s,
                             size(s) > 0 && s != ''.'' && s != ''..'')'
+                        - message: a key cannot appear in both env and envMap
+                          rule: '!has(self.env) || !has(self.envMap) || self.env.all(e,
+                            !(e.name in self.envMap))'
                       fetch:
                         description: |-
                           FetchPhaseSpec is the fetch phase: a PhaseSpec plus the Secret-sourced env it
@@ -300,6 +318,21 @@ spec:
                               type: object
                             type: array
                             x-kubernetes-list-type: atomic
+                          envMap:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              EnvMap is a literal-only companion to env: a plain map of Name→Value pairs
+                              for the common "just set some build-time constants" case, without the
+                              per-entry {name,value} boilerplate of env. It carries LITERAL VALUES ONLY —
+                              there is no valueFrom here; when you need a configMapKeyRef (or any other
+                              source) use env instead. A key MUST NOT appear in both env and envMap: the
+                              overlap is ambiguous ("which value wins?") and is rejected at admission (see
+                              the CEL rule on PhaseSpec). At runtime the operator injects env first, then
+                              the envMap entries sorted by key, so the phase container's env ordering is
+                              deterministic.
+                            type: object
+                            x-kubernetes-map-type: atomic
                           image:
                             type: string
                           memoryLimit:
@@ -367,6 +400,9 @@ spec:
                         - message: secrets require a fetch.command to consume them
                           rule: '!has(self.secrets) || size(self.secrets) == 0 ||
                             (has(self.command) && size(self.command) > 0)'
+                        - message: a key cannot appear in both env and envMap
+                          rule: '!has(self.env) || !has(self.envMap) || self.env.all(e,
+                            !(e.name in self.envMap))'
                       setup:
                         description: |-
                           Setup is the dependency-install phase. Omitted (with pipeline.nodeVersion
@@ -412,6 +448,21 @@ spec:
                               type: object
                             type: array
                             x-kubernetes-list-type: atomic
+                          envMap:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              EnvMap is a literal-only companion to env: a plain map of Name→Value pairs
+                              for the common "just set some build-time constants" case, without the
+                              per-entry {name,value} boilerplate of env. It carries LITERAL VALUES ONLY —
+                              there is no valueFrom here; when you need a configMapKeyRef (or any other
+                              source) use env instead. A key MUST NOT appear in both env and envMap: the
+                              overlap is ambiguous ("which value wins?") and is rejected at admission (see
+                              the CEL rule on PhaseSpec). At runtime the operator injects env first, then
+                              the envMap entries sorted by key, so the phase container's env ordering is
+                              deterministic.
+                            type: object
+                            x-kubernetes-map-type: atomic
                           image:
                             type: string
                           memoryLimit:
@@ -450,8 +501,11 @@ spec:
                         - message: setup.skip cannot be combined with other setup
                             fields
                           rule: '!has(self.skip) || !self.skip || (!has(self.command)
-                            && !has(self.image) && !has(self.env) && !has(self.runAsUser)
-                            && !has(self.memoryLimit))'
+                            && !has(self.image) && !has(self.env) && !has(self.envMap)
+                            && !has(self.runAsUser) && !has(self.memoryLimit))'
+                        - message: a key cannot appear in both env and envMap
+                          rule: '!has(self.env) || !has(self.envMap) || self.env.all(e,
+                            !(e.name in self.envMap))'
                     required:
                     - build
                     type: object
