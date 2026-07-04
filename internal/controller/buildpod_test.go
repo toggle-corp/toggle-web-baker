@@ -576,7 +576,7 @@ func TestBuildJob_BuildEnvMapReachesBuildContainerSortedAfterEnv(t *testing.T) {
 	iAlpha := envIndex(build, "ALPHA")
 	iMid := envIndex(build, "MID")
 	iZed := envIndex(build, "ZED")
-	if !(iEnv < iAlpha && iAlpha < iMid && iMid < iZed) {
+	if iEnv >= iAlpha || iAlpha >= iMid || iMid >= iZed {
 		t.Fatalf("envMap must follow array env sorted by key; got positions env=%d ALPHA=%d MID=%d ZED=%d", iEnv, iAlpha, iMid, iZed)
 	}
 }
@@ -598,7 +598,7 @@ func TestBuildJob_SetupEnvMapReachesSetupContainer(t *testing.T) {
 	assertEnvVar(t, setup, "ALPHA", "a")
 	assertEnvVar(t, setup, "BETA", "b")
 	iArr, iAlpha, iBeta := envIndex(setup, "SETUP_ARR"), envIndex(setup, "ALPHA"), envIndex(setup, "BETA")
-	if !(iArr < iAlpha && iAlpha < iBeta) {
+	if iArr >= iAlpha || iAlpha >= iBeta {
 		t.Fatalf("setup envMap must follow array env sorted by key; got SETUP_ARR=%d ALPHA=%d BETA=%d", iArr, iAlpha, iBeta)
 	}
 }
@@ -622,7 +622,7 @@ func TestBuildJob_FetchEnvMapReachesFetchBeforeSecrets(t *testing.T) {
 	}
 	assertEnvVar(t, fetch, "MAPPED", "m")
 	iArr, iMapped, iSecret := envIndex(fetch, "FETCH_ARR"), envIndex(fetch, "MAPPED"), envIndex(fetch, "TOKEN")
-	if !(iArr < iMapped && iMapped < iSecret) {
+	if iArr >= iMapped || iMapped >= iSecret {
 		t.Fatalf("fetch order must be env < envMap < secrets; got FETCH_ARR=%d MAPPED=%d TOKEN=%d", iArr, iMapped, iSecret)
 	}
 }
