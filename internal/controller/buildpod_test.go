@@ -581,6 +581,52 @@ func TestBuildJob_BuildEnvMapReachesBuildContainerSortedAfterEnv(t *testing.T) {
 	}
 }
 
+// envMap applies uniformly across phases: its entries must reach the SETUP
+// container too, after the phase's array env and the operator's prepended env
+// (pmEnv/HOME).
+func TestBuildJob_SetupEnvMapReachesSetupContainer(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.Phases.Setup.Command = []string{"sh", "-c", "true"}
+	app.Spec.Pipeline.Phases.Setup.Env = []bakerv1alpha1.EnvVar{{Name: "SETUP_ARR", Value: "1"}}
+	app.Spec.Pipeline.Phases.Setup.EnvMap = map[string]string{"BETA": "b", "ALPHA": "a"}
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	setup := containerByName(job.Spec.Template.Spec.InitContainers, "setup")
+	if setup == nil {
+		t.Fatal("no setup container")
+	}
+	assertEnvVar(t, setup, "ALPHA", "a")
+	assertEnvVar(t, setup, "BETA", "b")
+	iArr, iAlpha, iBeta := envIndex(setup, "SETUP_ARR"), envIndex(setup, "ALPHA"), envIndex(setup, "BETA")
+	if !(iArr < iAlpha && iAlpha < iBeta) {
+		t.Fatalf("setup envMap must follow array env sorted by key; got SETUP_ARR=%d ALPHA=%d BETA=%d", iArr, iAlpha, iBeta)
+	}
+}
+
+// In the fetch container envMap entries land after the array env and BEFORE the
+// secret env, so a secret name colliding with an envMap key resolves to the
+// secret (kubelet last-entry-wins) — the safe direction.
+func TestBuildJob_FetchEnvMapReachesFetchBeforeSecrets(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.Phases.Fetch.Env = []bakerv1alpha1.EnvVar{{Name: "FETCH_ARR", Value: "1"}}
+	app.Spec.Pipeline.Phases.Fetch.EnvMap = map[string]string{"MAPPED": "m"}
+	app.Spec.Pipeline.Phases.Fetch.Secrets = []bakerv1alpha1.EnvVarWithSecret{{
+		Name:      "TOKEN",
+		ValueFrom: bakerv1alpha1.EnvVarWithSecretSource{SecretKeyRef: bakerv1alpha1.SecretKeySelector{Name: "s", Key: "k"}},
+	}}
+	r := reconcilerForPod()
+	job := r.BuildJob(app, "tok", gitCredentialDecision{})
+	fetch := containerByName(job.Spec.Template.Spec.InitContainers, "fetch")
+	if fetch == nil {
+		t.Fatal("no fetch container")
+	}
+	assertEnvVar(t, fetch, "MAPPED", "m")
+	iArr, iMapped, iSecret := envIndex(fetch, "FETCH_ARR"), envIndex(fetch, "MAPPED"), envIndex(fetch, "TOKEN")
+	if !(iArr < iMapped && iMapped < iSecret) {
+		t.Fatalf("fetch order must be env < envMap < secrets; got FETCH_ARR=%d MAPPED=%d TOKEN=%d", iArr, iMapped, iSecret)
+	}
+}
+
 // envIndex returns the position of the named env var in the container's Env
 // slice, or -1 when absent.
 func envIndex(c *corev1.Container, name string) int {
@@ -911,6 +957,44 @@ func TestBuildSpecFrom_SetupSkipFlipsHash(t *testing.T) {
 	app.Spec.Pipeline.Phases.Setup.Skip = true
 	if got := buildSpecFrom(app).Hash(); got == baseline {
 		t.Fatalf("setup.skip flip did not change the build-spec hash (%q)", got)
+	}
+}
+
+// A build.envMap entry is a real build-env change (it can alter the artifact),
+// so it MUST flow through buildSpecFrom/mergeEnv into the staleness hash. This
+// exercises mergeEnv's envMap fold — the domain layer can't, since it only sees
+// the already-merged Env map.
+func TestBuildSpecFrom_EnvMapFlipsHash(t *testing.T) {
+	app := baseApp()
+	app.Spec.Pipeline.NodeVersion = 18
+	app.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+
+	baseline := buildSpecFrom(app).Hash()
+	app.Spec.Pipeline.Phases.Build.EnvMap = map[string]string{"NEXT_PUBLIC_ENV": "uat"}
+	if got := buildSpecFrom(app).Hash(); got == baseline {
+		t.Fatalf("adding a build.envMap entry did not change the build-spec hash (%q)", got)
+	}
+}
+
+// env and envMap merge into one per-phase Env map before hashing, so moving a
+// literal KEY=v from the array env to envMap yields the same effective build
+// environment — same artifact, same hash — and must NOT trigger a rebuild.
+func TestBuildSpecFrom_LiteralMoveBetweenEnvAndEnvMapSameHash(t *testing.T) {
+	viaArray := baseApp()
+	viaArray.Spec.Pipeline.NodeVersion = 18
+	viaArray.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+	viaArray.Spec.Pipeline.Phases.Build.Env = []bakerv1alpha1.EnvVar{{Name: "TOKEN", Value: "abc"}}
+
+	viaMap := baseApp()
+	viaMap.Spec.Pipeline.NodeVersion = 18
+	viaMap.Spec.Pipeline.Phases.Build.Command = []string{"yarn", "build"}
+	viaMap.Spec.Pipeline.Phases.Build.EnvMap = map[string]string{"TOKEN": "abc"}
+
+	if viaArray.Spec.Pipeline.Phases.Build.EnvMap != nil || viaMap.Spec.Pipeline.Phases.Build.Env != nil {
+		t.Fatal("fixture broken: the two apps must express TOKEN through different channels")
+	}
+	if a, b := buildSpecFrom(viaArray).Hash(), buildSpecFrom(viaMap).Hash(); a != b {
+		t.Fatalf("moving a literal between env and envMap changed the hash: array=%q map=%q", a, b)
 	}
 }
 

@@ -112,30 +112,10 @@ func TestBuildSpecHash_ChangesWhenBuildEnvChanges(t *testing.T) {
 	}
 }
 
-func TestBuildSpecHash_ChangesWhenBuildEnvMapChanges(t *testing.T) {
-	// envMap folds into the same per-phase Env map as the array env, so a change
-	// to an envMap entry alters the merged env and must change the hash.
-	a := sampleBuildSpec()
-	b := sampleBuildSpec()
-	b.Build.Env = map[string]string{"NEXT_PUBLIC_API": "https://api", "NEXT_PUBLIC_ENV": "uat", "FEATURE_FLAG": "on"}
-	if a.Hash() == b.Hash() {
-		t.Fatalf("changing a build.envMap entry must change the hash")
-	}
-}
-
-func TestBuildSpecHash_UnchangedWhenLiteralMovesBetweenEnvAndEnvMap(t *testing.T) {
-	// env and envMap merge into one per-phase Env map before hashing, so moving a
-	// literal KEY=v from the array env to envMap (or vice versa) yields the same
-	// merged env — same effective build environment, same artifact, same hash.
-	// Both branches below represent the SAME app, so both must hash identically.
-	viaArray := sampleBuildSpec()
-	viaArray.Build.Env = map[string]string{"NEXT_PUBLIC_API": "https://api", "NEXT_PUBLIC_ENV": "uat", "TOKEN": "abc"}
-	viaMap := sampleBuildSpec()
-	viaMap.Build.Env = map[string]string{"NEXT_PUBLIC_API": "https://api", "NEXT_PUBLIC_ENV": "uat", "TOKEN": "abc"}
-	if viaArray.Hash() != viaMap.Hash() {
-		t.Fatalf("moving a literal between env and envMap must not change the hash")
-	}
-}
+// NOTE: envMap-specific hash behavior (that it folds into the merged Env and
+// that moving a literal between env and envMap leaves the hash unchanged) is
+// exercised at the controller level in buildpod_test.go, where the two channels
+// actually exist — the domain PhaseSpec only sees the already-merged Env map.
 
 func TestBuildSpecHash_ChangesWhenOutputDirChanges(t *testing.T) {
 	a := sampleBuildSpec()
