@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1](https://github.com/toggle-corp/toggle-web-baker/compare/0.1.0..0.1.1) - 2026-07-04
+### Changes:
+
+#### 🚀  Features
+
+- *(app)* Add literal-only envMap phase env field - ([6e54055](https://github.com/toggle-corp/toggle-web-baker/commit/6e54055b1abf07235d14277492b2d4560bf971fc))
+
+#### 🧪 Testing
+
+- *(app)* Cover envMap fold + setup/fetch injection at controller level - ([634258d](https://github.com/toggle-corp/toggle-web-baker/commit/634258de6da340b29630f1cf90c81f119e7f7428))
+
+
 ## [0.1.0] - 2026-07-03
 ### Changes:
 
