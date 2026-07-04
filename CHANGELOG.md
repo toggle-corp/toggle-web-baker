@@ -11,6 +11,10 @@
 
 - *(app)* Cover envMap fold + setup/fetch injection at controller level - ([634258d](https://github.com/toggle-corp/toggle-web-baker/commit/634258de6da340b29630f1cf90c81f119e7f7428))
 
+#### ⚙️ Miscellaneous Tasks
+
+- *(app)* Satisfy lint for envMap change - ([6e511dc](https://github.com/toggle-corp/toggle-web-baker/commit/6e511dc39f5b3c185db52f43a856ca7bfc896fd2))
+
 
 ## [0.1.0] - 2026-07-03
 ### Changes:
