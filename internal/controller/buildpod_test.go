@@ -182,6 +182,36 @@ func TestBuildJob_FetchCanRunInstalledDeps(t *testing.T) {
 	}
 }
 
+// The build phase mounts the dataCache RW (not just fetch): lets the build
+// persist its own artefacts across runs (e.g. an incremental-build cache the
+// build writes each run). fetch also mounts it RW.
+func TestBuildJob_BuildMountsDataCacheRW(t *testing.T) {
+	r := reconcilerForPod()
+	job := r.BuildJob(baseApp(), "t", gitCredentialDecision{})
+	for _, name := range []string{"fetch", "build"} {
+		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
+		if c == nil {
+			t.Fatalf("%s container must exist", name)
+		}
+		m := mountByName(c.VolumeMounts, volData)
+		if m == nil {
+			t.Fatalf("%s must mount the dataCache PVC", name)
+		}
+		if m.ReadOnly {
+			t.Fatalf("%s must mount the dataCache RW (got ReadOnly), so the build can write its cache", name)
+		}
+	}
+	// The copier (MAIN container) must also mount the dataCache so it can follow an
+	// outputDir that lives behind a symlink into it (e.g. build -> /data). RO is fine.
+	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
+	if copier == nil {
+		t.Fatalf("copier container must exist")
+	}
+	if mountByName(copier.VolumeMounts, volData) == nil {
+		t.Fatalf("copier must mount the dataCache (to read a symlinked outputDir)")
+	}
+}
+
 // Requirement 4: hardened securityContext + single-pod invariants.
 func TestBuildJob_HardenedSecurity(t *testing.T) {
 	app := baseApp()

@@ -17,7 +17,7 @@ import (
 // Volume + mount paths shared across the build pod.
 const (
 	workMountPath   = "/work"  // checkout + node_modules + build output (writable)
-	cacheMountPath  = "/cache" // package-manager cache (and pnpm store / node_modules on pnpm)
+	cacheMountPath  = "/cache" // package-manager cache (pnpm content-addressable store)
 	dataMountPath   = "/data"  // dataCache PVC (fetched data)
 	outputMountPath = "/output"
 
@@ -356,13 +356,18 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 	}
 
 	// build: public build.env + NODE_OPTIONS etc. Mounts cache RW (both PMs) and
-	// data RO. NEVER mounts the output PVC.
+	// dataCache RW. NEVER mounts the output PVC. dataCache is RW here (not just in
+	// fetch) so the build can persist its own artefacts across runs — e.g. an
+	// incremental-build cache dir (astro-incremental) the build writes each run.
+	// This does NOT widen the credential boundary: that invariant is about the
+	// fetch script never WRITING secrets into dataCache (readability by build's
+	// untrusted deps), which RW-vs-RO in build does not change.
 	buildEnv := append([]corev1.EnvVar{}, pmEnv...)
 	buildEnv = append(buildEnv, toEnvVars(app.Spec.Pipeline.Phases.Build.Env)...)
 	buildEnv = append(buildEnv, envMapVars(app.Spec.Pipeline.Phases.Build.EnvMap)...)
 	buildMounts := append(append([]corev1.VolumeMount{}, base...),
 		cacheMount,
-		corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true},
+		corev1.VolumeMount{Name: volData, MountPath: dataMountPath},
 		shimMount)
 	build := corev1.Container{
 		Name:            "build",
@@ -376,7 +381,11 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 	}
 
 	// copier (MAIN): the only container mounting the output PVC. Publishes the
-	// built bundle and emits build-derived status as a termination message.
+	// built bundle and emits build-derived status as a termination message. Also
+	// mounts the dataCache RO: an app may place its outputDir behind a symlink into
+	// the dataCache (e.g. `build -> /data` to persist an incremental build's output
+	// across runs), so the copier must be able to follow that symlink to read
+	// OUTPUT_DIR. RO — the copier only reads the source and writes the output PVC.
 	outputDir := app.Spec.Pipeline.Phases.Build.OutputDir
 	if outputDir == "" {
 		outputDir = "dist"
@@ -392,7 +401,8 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 			{Name: "KEEP_RELEASES", Value: fmt.Sprintf("%d", app.Spec.KeepReleases)},
 		},
 		VolumeMounts: append(append([]corev1.VolumeMount{}, base...),
-			corev1.VolumeMount{Name: volOutput, MountPath: outputMountPath}),
+			corev1.VolumeMount{Name: volOutput, MountPath: outputMountPath},
+			corev1.VolumeMount{Name: volData, MountPath: dataMountPath, ReadOnly: true}),
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 		SecurityContext:          hardenedSecurityContext(),
 	}
