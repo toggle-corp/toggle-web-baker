@@ -188,11 +188,10 @@ func (r *AppReconciler) resolvePhase(app *bakerv1alpha1.App, phase bakerv1alpha1
 	return domain.ResolvePhase(phase.Image, phase.RunAsUser, app.Spec.Pipeline.NodeVersion, r.Config.NodeImages, r.Config.Images.Clone)
 }
 
-// buildVolumesAndMounts returns the pod volumes plus the cache/work mounts,
-// BRANCHING on packageManager. yarn: node_modules live on a per-run emptyDir
-// (work), cache PVC holds only the yarn cache. pnpm: the pnpm store AND
-// node_modules both live on the cache PVC (mounted RW), so the build phase
-// mounts cache RW in both cases.
+// buildVolumesAndMounts returns the pod volumes plus the cache/work mounts.
+// node_modules ALWAYS lives on the per-run /work emptyDir (both managers); the
+// cache PVC holds only the reusable cache/store (yarn: download cache; pnpm: the
+// content-addressable store). Both mount cache RW so install can populate it.
 func buildVolumesAndMounts(app *bakerv1alpha1.App) (volumes []corev1.Volume, cacheMount corev1.VolumeMount) {
 	volumes = []corev1.Volume{
 		// Per-run scratch: checkout + (yarn) node_modules + build output.
@@ -220,14 +219,20 @@ func commonMounts() []corev1.VolumeMount {
 	}
 }
 
-// pkgManagerEnv returns the env that points the package manager at the cache
-// volume, branching on the package manager.
+// pkgManagerEnv returns the env that points the package manager's CACHE at the
+// cache PVC, branching on the package manager. node_modules ALWAYS lands on the
+// per-run /work emptyDir (the WorkingDir default) for BOTH managers — the cache
+// PVC holds only the reusable, cross-run cache/store.
 //
-// pnpm: the content-addressable store AND node_modules must live on the SAME
-// filesystem (the cache PVC) so pnpm's hard-links work and persist across runs.
-// pnpm honors npm_config_* keys, so npm_config_store_dir / npm_config_modules_dir
-// place both on the cache PVC. (The previous NODE_MODULES_DIR key is bogus — no
-// tool reads it.)
+// pnpm: only the content-addressable STORE goes on the cache PVC
+// (npm_config_store_dir); node_modules is left at its cwd default (/work).
+// Relocating node_modules onto the cache PVC via npm_config_modules_dir was
+// BROKEN: `pnpm exec`/`pnpm run` resolve a command's bin from <cwd>/node_modules/.bin
+// (cwd-relative), NOT from modules-dir, so any phase running an installed tool
+// (e.g. `pnpm exec graphql-codegen` in a fetch codegen step) failed
+// "command not found". The store still gives cross-run install speedup; keeping
+// node_modules cwd-local is what makes bin resolution work. (The even older
+// NODE_MODULES_DIR key was bogus — no tool reads it.)
 //
 // yarn: node_modules live on the per-run emptyDir (work volume, set by
 // WorkingDir); the cache PVC holds only the yarn download cache.
@@ -236,8 +241,6 @@ func pkgManagerEnv(app *bakerv1alpha1.App) []corev1.EnvVar {
 	case bakerv1alpha1.PackageManagerPnpm:
 		return []corev1.EnvVar{
 			{Name: "npm_config_store_dir", Value: cacheMountPath + "/pnpm-store"},
-			// node_modules on the cache PVC (same FS as the store ⇒ hard-links work).
-			{Name: "npm_config_modules_dir", Value: cacheMountPath + "/node_modules"},
 		}
 	default: // yarn
 		return []corev1.EnvVar{
@@ -331,7 +334,11 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 		SecurityContext: resolvedSecurityContext(setupR),
 	}
 
-	// fetch: the ONLY container that receives secrets. Writes to /data.
+	// fetch: the ONLY container that receives secrets. Writes to /data. It runs
+	// installed tools (codegen, data scripts) via node_modules/.bin on the shared
+	// /work emptyDir — populated by setup, visible here because /work is one
+	// emptyDir shared across the pod's init containers. No cache mount needed: the
+	// PM cache/store is only consumed at install time, not at exec time.
 	fetchEnv := append([]corev1.EnvVar{}, toEnvVars(app.Spec.Pipeline.Phases.Fetch.Env)...)
 	fetchEnv = append(fetchEnv, envMapVars(app.Spec.Pipeline.Phases.Fetch.EnvMap)...)
 	fetchEnv = append(fetchEnv, toSecretEnvVars(app.Spec.Pipeline.Phases.Fetch.Secrets)...)

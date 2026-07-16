@@ -115,8 +115,14 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 	pnpm.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
 	pjob := r.BuildJob(pnpm, "t", gitCredentialDecision{})
 	pbuild := containerByName(pjob.Spec.Template.Spec.InitContainers, "build")
-	if !hasEnv(pbuild.Env, "npm_config_store_dir") || !hasEnv(pbuild.Env, "npm_config_modules_dir") {
-		t.Fatalf("pnpm build must set npm_config_store_dir and npm_config_modules_dir (store+node_modules on cache PVC)")
+	if !hasEnv(pbuild.Env, "npm_config_store_dir") {
+		t.Fatalf("pnpm build must set npm_config_store_dir (content-addressable store on the cache PVC)")
+	}
+	// node_modules must stay cwd-local (/work), NOT be relocated onto the cache PVC:
+	// pnpm exec/run resolve bins from <cwd>/node_modules/.bin, so npm_config_modules_dir
+	// would break `pnpm exec` in any phase (regression: graphql-codegen "not found").
+	if hasEnv(pbuild.Env, "npm_config_modules_dir") {
+		t.Fatalf("pnpm build must NOT set npm_config_modules_dir (breaks cwd-relative pnpm exec/run bin resolution)")
 	}
 	// pnpm must NOT use the bogus NODE_MODULES_DIR key, and yarn must not set pnpm env.
 	if hasEnv(pbuild.Env, "NODE_MODULES_DIR") {
@@ -142,6 +148,37 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 			!strings.HasPrefix(e.Value, cacheMountPath+"/") {
 			t.Fatalf("pnpm %s must live under the cache mount %s, got %s", e.Name, cacheMountPath, e.Value)
 		}
+	}
+}
+
+// Regression: any phase (fetch especially) must be able to run tools installed
+// by setup. node_modules lives on the shared /work emptyDir for BOTH managers,
+// so setup's install is visible to fetch/build without relocating node_modules
+// onto the cache PVC. Relocating it (npm_config_modules_dir) broke pnpm's
+// cwd-relative exec/run bin lookup — a fetch `pnpm exec graphql-codegen` failed
+// "command not found". Guards: no phase sets modules_dir, and fetch mounts /work
+// (deps) + /data, but needs no cache mount at exec time.
+func TestBuildJob_FetchCanRunInstalledDeps(t *testing.T) {
+	r := reconcilerForPod()
+
+	pnpm := baseApp()
+	pnpm.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
+	pjob := r.BuildJob(pnpm, "t", gitCredentialDecision{})
+	for _, name := range []string{"setup", "fetch", "build"} {
+		c := containerByName(pjob.Spec.Template.Spec.InitContainers, name)
+		if c == nil {
+			continue // setup is conditional; only assert on phases that exist
+		}
+		if hasEnv(c.Env, "npm_config_modules_dir") {
+			t.Fatalf("pnpm %s must NOT relocate node_modules (breaks cwd-relative pnpm exec/run)", name)
+		}
+	}
+	pfetch := containerByName(pjob.Spec.Template.Spec.InitContainers, "fetch")
+	if mountByName(pfetch.VolumeMounts, volWork) == nil {
+		t.Fatalf("fetch must mount /work (holds node_modules/.bin from setup)")
+	}
+	if mountByName(pfetch.VolumeMounts, volData) == nil {
+		t.Fatalf("fetch must mount the data PVC")
 	}
 }
 
