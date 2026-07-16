@@ -100,6 +100,7 @@ jobs:
           - { name: clock, context: images/clock, file: images/clock/Dockerfile }
           - { name: shim, context: images/shim, file: images/shim/Dockerfile }
           - { name: node18, context: images/node18, file: images/node18/Dockerfile, content_tag: true }
+          - { name: node22, context: images/node22, file: images/node22/Dockerfile, content_tag: true }
           - { name: node24, context: images/node24, file: images/node24/Dockerfile, content_tag: true }
     steps:
       - uses: actions/checkout@v4

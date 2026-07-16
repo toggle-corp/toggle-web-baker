@@ -52,6 +52,10 @@ operator:
       repository: ghcr.io/toggle-corp/toggle-web-baker-node18
       tag: "18-436d743e3c1c"
       runAsUser: 1000
+    "22":
+      repository: ghcr.io/toggle-corp/toggle-web-baker-node22
+      tag: "22-85c87694aa15"
+      runAsUser: 1000
     "24":
       repository: ghcr.io/toggle-corp/toggle-web-baker-node24
       tag: "24-cddf3de62036"

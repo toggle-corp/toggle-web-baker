@@ -55,7 +55,7 @@ case "$out" in *"clock"*) ok "missing-in-matrix: mentions clock" ;; *) no "missi
 
 # ---- 4. missing-in-release-body: drop node24 from the for-loop list --------
 rel_no_node24="$TMP/release-no-node24.yml"
-sed 's/for img in operator console clone copier du cleanup clock shim node18 node24;/for img in operator console clone copier du cleanup clock shim node18;/' \
+sed 's/for img in operator console clone copier du cleanup clock shim node18 node22 node24;/for img in operator console clone copier du cleanup clock shim node18 node22;/' \
 	"$REPO/.github/workflows/release.yml" >"$rel_no_node24"
 rc=0
 out="$(RELEASE_YML="$rel_no_node24" bash "$CHECK" 2>&1)" || rc=$?
