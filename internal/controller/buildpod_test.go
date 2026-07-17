@@ -115,8 +115,14 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 	pnpm.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
 	pjob := r.BuildJob(pnpm, "t", gitCredentialDecision{})
 	pbuild := containerByName(pjob.Spec.Template.Spec.InitContainers, "build")
-	if !hasEnv(pbuild.Env, "npm_config_store_dir") || !hasEnv(pbuild.Env, "npm_config_modules_dir") {
-		t.Fatalf("pnpm build must set npm_config_store_dir and npm_config_modules_dir (store+node_modules on cache PVC)")
+	if !hasEnv(pbuild.Env, "npm_config_store_dir") {
+		t.Fatalf("pnpm build must set npm_config_store_dir (content-addressable store on the cache PVC)")
+	}
+	// node_modules must stay cwd-local (/work), NOT be relocated onto the cache PVC:
+	// pnpm exec/run resolve bins from <cwd>/node_modules/.bin, so npm_config_modules_dir
+	// would break `pnpm exec` in any phase (regression: graphql-codegen "not found").
+	if hasEnv(pbuild.Env, "npm_config_modules_dir") {
+		t.Fatalf("pnpm build must NOT set npm_config_modules_dir (breaks cwd-relative pnpm exec/run bin resolution)")
 	}
 	// pnpm must NOT use the bogus NODE_MODULES_DIR key, and yarn must not set pnpm env.
 	if hasEnv(pbuild.Env, "NODE_MODULES_DIR") {
@@ -142,6 +148,67 @@ func TestBuildJob_YarnVsPnpmVolumeLayout(t *testing.T) {
 			!strings.HasPrefix(e.Value, cacheMountPath+"/") {
 			t.Fatalf("pnpm %s must live under the cache mount %s, got %s", e.Name, cacheMountPath, e.Value)
 		}
+	}
+}
+
+// Regression: any phase (fetch especially) must be able to run tools installed
+// by setup. node_modules lives on the shared /work emptyDir for BOTH managers,
+// so setup's install is visible to fetch/build without relocating node_modules
+// onto the cache PVC. Relocating it (npm_config_modules_dir) broke pnpm's
+// cwd-relative exec/run bin lookup — a fetch `pnpm exec graphql-codegen` failed
+// "command not found". Guards: no phase sets modules_dir, and fetch mounts /work
+// (deps) + /data, but needs no cache mount at exec time.
+func TestBuildJob_FetchCanRunInstalledDeps(t *testing.T) {
+	r := reconcilerForPod()
+
+	pnpm := baseApp()
+	pnpm.Spec.Pipeline.PackageManager = bakerv1alpha1.PackageManagerPnpm
+	pjob := r.BuildJob(pnpm, "t", gitCredentialDecision{})
+	for _, name := range []string{"setup", "fetch", "build"} {
+		c := containerByName(pjob.Spec.Template.Spec.InitContainers, name)
+		if c == nil {
+			continue // setup is conditional; only assert on phases that exist
+		}
+		if hasEnv(c.Env, "npm_config_modules_dir") {
+			t.Fatalf("pnpm %s must NOT relocate node_modules (breaks cwd-relative pnpm exec/run)", name)
+		}
+	}
+	pfetch := containerByName(pjob.Spec.Template.Spec.InitContainers, "fetch")
+	if mountByName(pfetch.VolumeMounts, volWork) == nil {
+		t.Fatalf("fetch must mount /work (holds node_modules/.bin from setup)")
+	}
+	if mountByName(pfetch.VolumeMounts, volData) == nil {
+		t.Fatalf("fetch must mount the data PVC")
+	}
+}
+
+// The build phase mounts the dataCache RW (not just fetch): lets the build
+// persist its own artefacts across runs (e.g. an incremental-build cache the
+// build writes each run). fetch also mounts it RW.
+func TestBuildJob_BuildMountsDataCacheRW(t *testing.T) {
+	r := reconcilerForPod()
+	job := r.BuildJob(baseApp(), "t", gitCredentialDecision{})
+	for _, name := range []string{"fetch", "build"} {
+		c := containerByName(job.Spec.Template.Spec.InitContainers, name)
+		if c == nil {
+			t.Fatalf("%s container must exist", name)
+		}
+		m := mountByName(c.VolumeMounts, volData)
+		if m == nil {
+			t.Fatalf("%s must mount the dataCache PVC", name)
+		}
+		if m.ReadOnly {
+			t.Fatalf("%s must mount the dataCache RW (got ReadOnly), so the build can write its cache", name)
+		}
+	}
+	// The copier (MAIN container) must also mount the dataCache so it can follow an
+	// outputDir that lives behind a symlink into it (e.g. build -> /data). RO is fine.
+	copier := containerByName(job.Spec.Template.Spec.Containers, "copier")
+	if copier == nil {
+		t.Fatalf("copier container must exist")
+	}
+	if mountByName(copier.VolumeMounts, volData) == nil {
+		t.Fatalf("copier must mount the dataCache (to read a symlinked outputDir)")
 	}
 }
 

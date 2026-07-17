@@ -73,7 +73,7 @@ data:
       clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.1.1"
       shim: "ghcr.io/toggle-corp/toggle-web-baker-shim:0.1.1"
       nginx: "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
-    nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:18-436d743e3c1c","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:24-cddf3de62036","runAsUser":1000}}
+    nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:18-436d743e3c1c","runAsUser":1000},"22":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node22:22-85c87694aa15","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:24-cddf3de62036","runAsUser":1000}}
     defaultSetupCommands: {"pnpm":["pnpm","install","--frozen-lockfile"],"yarn":["yarn","install","--frozen-lockfile"]}
     phaseResources:
       cpu:
@@ -1588,7 +1588,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: e7fe5477af01b461ba41a411918a9bdb01fa31a96f9b7c0dcb78a1d7a5172a3d
+        checksum/config: 19906f02c67c80fa8143b84f0b52347b0f518e6a3c6af799981890e3d9313be8
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name
