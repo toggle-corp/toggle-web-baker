@@ -6,10 +6,10 @@ metadata:
   name: release-name-toggle-web-baker-operator
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
 ---
 # Source: toggle-web-baker-helm/templates/operator-git-credential-secret.yaml
@@ -19,10 +19,10 @@ metadata:
   name: release-name-toggle-web-baker-git-credential
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: operator
 type: kubernetes.io/basic-auth
@@ -38,10 +38,10 @@ metadata:
   name: release-name-toggle-web-baker-operator-config
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: operator
 data:
@@ -66,12 +66,12 @@ data:
       hosts:
         - "github.com"
     images:
-      clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.1.1"
-      copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.1.1"
-      du: "ghcr.io/toggle-corp/toggle-web-baker-du:0.1.1"
-      cleanup: "ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.1.1"
-      clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.1.1"
-      shim: "ghcr.io/toggle-corp/toggle-web-baker-shim:0.1.1"
+      clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.2.0"
+      copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.2.0"
+      du: "ghcr.io/toggle-corp/toggle-web-baker-du:0.2.0"
+      cleanup: "ghcr.io/toggle-corp/toggle-web-baker-cleanup:0.2.0"
+      clock: "ghcr.io/toggle-corp/toggle-web-baker-clock:0.2.0"
+      shim: "ghcr.io/toggle-corp/toggle-web-baker-shim:0.2.0"
       nginx: "docker.io/nginxinc/nginx-unprivileged:1.27-alpine"
     nodeImages: {"18":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node18:18-436d743e3c1c","runAsUser":1000},"22":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node22:22-85c87694aa15","runAsUser":1000},"24":{"image":"ghcr.io/toggle-corp/toggle-web-baker-node24:24-cddf3de62036","runAsUser":1000}}
     defaultSetupCommands: {"pnpm":["pnpm","install","--frozen-lockfile"],"yarn":["yarn","install","--frozen-lockfile"]}
@@ -1332,10 +1332,10 @@ kind: ClusterRole
 metadata:
   name: release-name-toggle-web-baker-operator
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
 rules:
 - apiGroups:
@@ -1496,10 +1496,10 @@ kind: ClusterRoleBinding
 metadata:
   name: release-name-toggle-web-baker-operator
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -1519,10 +1519,10 @@ metadata:
   name: release-name-toggle-web-baker-operator-leader-election
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
 rules:
 - apiGroups:
@@ -1550,10 +1550,10 @@ metadata:
   name: release-name-toggle-web-baker-operator-leader-election
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -1571,10 +1571,10 @@ metadata:
   name: release-name-toggle-web-baker-operator
   namespace: default
   labels:
-    helm.sh/chart: toggle-web-baker-helm-0.1.1
+    helm.sh/chart: toggle-web-baker-helm-0.2.0
     app.kubernetes.io/name: toggle-web-baker
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: operator
 spec:
@@ -1588,7 +1588,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 19906f02c67c80fa8143b84f0b52347b0f518e6a3c6af799981890e3d9313be8
+        checksum/config: 3e4125f71150b65401bfc9c192004af1218891efb38953ca50481176b3040433
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name
@@ -1601,7 +1601,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: ghcr.io/toggle-corp/toggle-web-baker-operator:0.1.1
+          image: ghcr.io/toggle-corp/toggle-web-baker-operator:0.2.0
           imagePullPolicy: IfNotPresent
           args:
             - --config=/etc/baker/config.yaml

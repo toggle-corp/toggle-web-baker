@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/toggle-corp/toggle-web-baker/compare/0.1.1..0.2.0) - 2026-07-17
+### Changes:
+
+#### 🚀  Features
+
+- *(images)* Add Node 22 managed toolchain - ([9fee1f1](https://github.com/toggle-corp/toggle-web-baker/commit/9fee1f1e7581e74484bc6c852fb526732a87380f))
+- *(operator)* Mount dataCache RW in build + copier to support incremental builds - ([7354bcd](https://github.com/toggle-corp/toggle-web-baker/commit/7354bcd0bb107d859a91b43d3c5a70407d9e25c6))
+
+#### 🐛 Bug Fixes
+
+- *(operator)* Resolve pnpm node_modules cwd-locally - ([64d1ec8](https://github.com/toggle-corp/toggle-web-baker/commit/64d1ec8ee080858fe2fb1e307bbe14f1f4243e4f))
+
+### 🍻 Pull Requests (1)
+- (#1) [Add node22 support](https://github.com/toggle-corp/toggle-web-baker/pull/1)
+
+### :tada: New Contributors (1)
+
+- [@tnagorra](https://github.com/tnagorra) made their first contribution in [#1](https://github.com/toggle-corp/toggle-web-baker/pull/1)
+
 ## [0.1.1](https://github.com/toggle-corp/toggle-web-baker/compare/0.1.0..0.1.1) - 2026-07-04
 ### Changes:
 
