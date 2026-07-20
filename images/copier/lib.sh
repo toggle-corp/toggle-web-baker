@@ -152,9 +152,18 @@ atomic_flip() {
 }
 
 # retention_sweep <releases_dir> <keep> <current_target_basename>
-# Delete release dirs keeping the one `current` points at PLUS the newest $keep
-# others. Run BEFORE measuring/copying so the free-space gate sees reclaimed
-# space (race-free: the new release does not exist yet).
+# Prune release dirs so that AFTER the copier assembles and flips in the new
+# release, the on-PVC total matches the documented KEEP_RELEASES budget: the
+# current and previous releases are ALWAYS protected and COUNT toward the
+# budget, so keep=0 leaves just those (see App.spec.keepReleases). This mirrors
+# the cleanup Job's MODE=releases logic (images/cleanup/entrypoint.sh); the two
+# must agree or the manual prune and the build-time sweep disagree on the total.
+#
+# Run BEFORE measuring/copying so the free-space gate sees reclaimed space
+# (race-free: the new release does not exist yet). Because that new release is
+# about to be created and become `current` -- demoting today's `current` to
+# `previous` -- we seed the kept count at 1 to reserve its budget slot, and we
+# count the outgoing `current` against the budget too.
 #
 # "Newest" is by directory name, which is a sortable timestamp (see TS_FORMAT in
 # the entrypoint), so a lexical sort is a chronological sort.
@@ -172,10 +181,15 @@ retention_sweep() {
 		[ -n "$name" ] && all+=("$name")
 	done < <(find "$rel_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r)
 
-	local kept=0 name
+	# Seed at 1: the incoming release (assembled after this sweep) becomes the
+	# protected `current` and occupies one budget slot up front.
+	local kept=1 name
 	for name in "${all[@]}"; do
-		# Always keep whatever `current` resolves to.
+		# The outgoing `current` (soon `previous`) is protected AND counts toward
+		# the budget -- do NOT `continue` before the count, or it would be kept
+		# for free and inflate the retained total past keepReleases.
 		if [ -n "$keep_current" ] && [ "$name" = "$keep_current" ]; then
+			kept=$((kept + 1))
 			continue
 		fi
 		if [ "$kept" -lt "$keep" ]; then

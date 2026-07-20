@@ -138,25 +138,44 @@ assert_rc 0 "atomic_flip: re-flip succeeds"
 assert_eq "$(readlink "$OUT/current")" "releases/r2" "atomic_flip: re-flip repoints current"
 
 # ---- retention sweep --------------------------------------------------------
+# The sweep runs BEFORE the new release is assembled and reserves a budget slot
+# for it (kept seeded at 1), and the outgoing `current` counts toward the
+# budget. So the survivors it leaves are the OLD dirs that, once the new release
+# lands, make the on-PVC total equal max(KEEP_RELEASES, 2) -- matching the
+# keepReleases contract and the cleanup Job.
 SW="$TMP/sweep/releases"
 mkdir -p "$SW"
-for ts in 20260101T000000Z 20260102T000000Z 20260103T000000Z 20260104T000000Z; do
+for ts in 20260101T000000Z 20260102T000000Z 20260103T000000Z 20260104T000000Z 20260105T000000Z; do
 	mkdir -p "$SW/$ts"
 done
-# current points at the oldest; keep current + newest 1.
-ln -sfn "releases/20260101T000000Z" "$TMP/sweep/current"
+# current points at the newest (realistic: each build flips current to the new
+# dir). keep=3 => leave 2 old dirs (current + 1), so after the incoming release
+# the total is 3.
+ln -sfn "releases/20260105T000000Z" "$TMP/sweep/current"
 rc=0
-retention_sweep "$SW" 1 "20260101T000000Z" || rc=$?
+retention_sweep "$SW" 3 "20260105T000000Z" || rc=$?
 assert_rc 0 "retention: sweep runs"
-# Expect kept: 20260101 (current) + 20260104 (newest). Removed: 02, 03.
+# Kept: 20260105 (current, counts) + 20260104 (fills budget) + reserved slot for
+# the incoming release = 3. Removed: 01, 02, 03.
 remaining="$(find "$SW" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tr '\n' ' ')"
-if [ "$remaining" = "20260101T000000Z 20260104T000000Z " ]; then
-	ok "retention: keeps current + newest KEEP_RELEASES, prunes rest"
+if [ "$remaining" = "20260104T000000Z 20260105T000000Z " ]; then
+	ok "retention: keeps current + fills budget, reserves incoming slot, prunes rest"
 else
 	no "retention: wrong survivors: [$remaining]"
 fi
 
-# keep=0, no current -> everything pruned.
+# keep=0 with a current -> only the outgoing current survives (it + the incoming
+# release are the 2 protected releases the keep=0 default retains).
+SW3="$TMP/sweep3/releases"
+mkdir -p "$SW3"/20260201T000000Z "$SW3"/20260202T000000Z "$SW3"/20260203T000000Z
+rc=0
+retention_sweep "$SW3" 0 "20260203T000000Z" || rc=$?
+assert_rc 0 "retention: keep=0 with current runs"
+remaining3="$(find "$SW3" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tr '\n' ' ')"
+assert_eq "$remaining3" "20260203T000000Z " "retention: keep=0 keeps only outgoing current"
+
+# keep=0, no current -> everything pruned (nothing to protect yet; the incoming
+# release will be the sole survivor after assemble).
 SW2="$TMP/sweep2/releases"
 mkdir -p "$SW2/a" "$SW2/b"
 rc=0
