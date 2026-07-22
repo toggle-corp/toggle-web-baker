@@ -75,12 +75,19 @@ retry() {
 			return 0
 		fi
 		printf '%s\n' "$err_out" >&2
-		# Permanent-error classes: never retry.
+		# Permanent-error classes: never retry. These are matched on git's
+		# SPECIFIC wording for auth/authz/missing-ref failures. We deliberately do
+		# NOT match bare "not found" or "403 Forbidden": GitHub returns 403 for
+		# SECONDARY RATE LIMITS (very likely during a scheduled-build burst) and
+		# proxies/CDNs surface transient "404 Not Found" — both are retryable, and
+		# classifying them permanent would fail-fast on exactly the transient class
+		# this retry exists to survive. A genuine auth 403 still fails via the
+		# specific "Authentication failed"/"could not read Username" strings below.
 		case "$err_out" in
 		*[Aa]uthentication\ failed* | *[Cc]ould\ not\ read\ [Uu]sername* | \
-			*[Rr]epository\ not\ found* | *[Nn]ot\ [Ff]ound* | \
+			*[Rr]epository\ not\ found* | \
 			*[Cc]ouldn\'t\ find\ remote\ ref* | *[Rr]emote\ branch*not\ found* | \
-			*[Aa]ccess\ denied* | *403\ [Ff]orbidden* | *[Pp]ermission\ denied*)
+			*[Aa]ccess\ denied* | *[Pp]ermission\ denied*)
 			printf 'clone: %s failed (permanent, no retry)\n' "$desc" >&2
 			return 1
 			;;
@@ -93,7 +100,9 @@ retry() {
 		# 0 disables the sleep entirely (tests).
 		if [ "$base" != 0 ]; then
 			delay=$((base << (attempt - 1)))
-			jitter=$((RANDOM % 1000))
+			# Zero-pad the jitter to a fixed 3-digit fraction so the magnitude is a
+			# true 0-999ms (RANDOM%1000 unpadded would read "5" as ".5"=500ms).
+			jitter=$(printf '%03d' $((RANDOM % 1000)))
 			printf 'clone: %s attempt %d/%d failed, retrying in ~%ss\n' "$desc" "$attempt" "$retries" "$delay" >&2
 			sleep "$delay.$jitter" 2>/dev/null || sleep "$delay"
 		fi

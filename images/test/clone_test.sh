@@ -59,6 +59,10 @@ trap 'rm -rf "$TMP"' EXIT
 #   STUB_CLONE_FAIL_TIMES=N  -- fail the first N clone invocations (writing a
 #       transient/network stderr class), then succeed. A shared counter file
 #       ($STUB_CLONE_COUNT) survives across the retry loop's re-exec of `git`.
+#   STUB_CLONE_TRANSIENT_MSG=<s> -- override the stderr the transient failures
+#       emit (default: a "Could not resolve host" DNS blip). Used to assert an
+#       ambiguous-but-retryable message (e.g. a 403 rate limit) is NOT
+#       misclassified as permanent.
 #   STUB_CLONE_FAIL_MSG=<s>  -- every clone invocation fails with <s> on stderr
 #       (used to assert permanent-error fail-fast classification). Takes
 #       precedence over STUB_CLONE_FAIL_TIMES.
@@ -95,7 +99,7 @@ clone)
 		n=$((n + 1))
 		printf '%s' "$n" >"$STUB_CLONE_COUNT"
 		if [ "$n" -le "$STUB_CLONE_FAIL_TIMES" ]; then
-			printf 'fatal: unable to access: Could not resolve host: github.com\n' >&2
+			printf '%s\n' "${STUB_CLONE_TRANSIENT_MSG:-fatal: unable to access: Could not resolve host: github.com}" >&2
 			exit 128
 		fi
 	fi
@@ -295,6 +299,21 @@ assert_rc 1 "permanent not-found error: exits 1"
 clone_calls="$(grep -c '^clone ' "$GIT_LOG")"
 assert_eq "$clone_calls" "1" "permanent not-found error: clone attempted exactly once (no retry)"
 unset STUB_CLONE_FAIL_MSG CLONE_RETRIES CLONE_RETRY_BASE_DELAY
+
+# ---- 14. transient 403 rate-limit is RETRIED, not failed-fast ---------------
+# GitHub returns "403 Forbidden" for SECONDARY RATE LIMITS — very likely during
+# a scheduled-build burst. The classifier must NOT treat a bare 403 as permanent
+# (a real auth failure surfaces the specific "Authentication failed" string).
+# One transient 403, then success => clone attempted twice, exits 0.
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src14"
+export STUB_CLONE_FAIL_TIMES=1 STUB_CLONE_COUNT="$TMP/cnt14"
+export STUB_CLONE_TRANSIENT_MSG="fatal: unable to access 'https://github.com/x/': The requested URL returned error: 403 Forbidden"
+export CLONE_RETRIES=3 CLONE_RETRY_BASE_DELAY=0
+run_clone
+assert_rc 0 "transient 403 rate-limit: retried to success, exits 0"
+clone_calls="$(grep -c '^clone ' "$GIT_LOG")"
+assert_eq "$clone_calls" "2" "transient 403 rate-limit: clone retried (1 fail + 1 success)"
+unset STUB_CLONE_FAIL_TIMES STUB_CLONE_COUNT STUB_CLONE_TRANSIENT_MSG CLONE_RETRIES CLONE_RETRY_BASE_DELAY
 
 # ---- git-askpass.sh: host-scoped credential answers (GIT_CREDENTIAL_HOST) ----
 # The operator's host allowlist gates only spec.repo; a repo's .gitmodules can

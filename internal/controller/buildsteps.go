@@ -192,7 +192,11 @@ func updateConsecutiveScheduledFailures(current int, trigger bakerv1alpha1.Build
 	case bakerv1alpha1.BuildResultSucceeded:
 		return 0
 	case bakerv1alpha1.BuildResultFailed:
-		if trigger == bakerv1alpha1.BuildTriggerScheduled {
+		// An empty trigger (legacy/edge) counts as Scheduled, mirroring
+		// RecordTerminalBuild's metric coercion — otherwise an unlabeled failure
+		// would be excluded from the instant AppBuildFailed alert (trigger treated
+		// as Scheduled) yet never advance the streak, firing NEITHER alert.
+		if trigger == bakerv1alpha1.BuildTriggerScheduled || trigger == "" {
 			return current + 1
 		}
 	}
