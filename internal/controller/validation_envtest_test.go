@@ -195,6 +195,34 @@ func TestValidation_AcceptsSecretsWithFetchCommand(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
+func TestValidation_RejectsReservedIngressAnnotation(t *testing.T) {
+	// The basic-auth router.middlewares key is operator-managed; a user setting
+	// it in spec.ingress.annotations could strip/redirect basic-auth, so CEL
+	// rejects it at admission.
+	app := validApp("reject-reserved-ingress-annotation")
+	app.Spec.Ingress.Annotations = map[string]string{
+		"traefik.ingress.kubernetes.io/router.middlewares": "evil@kubernetescrd",
+	}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for the reserved router.middlewares annotation")
+	} else if !strings.Contains(err.Error(), "router.middlewares") {
+		t.Fatalf("expected error mentioning router.middlewares, got: %v", err)
+	}
+}
+
+func TestValidation_AcceptsFreeFormIngressAnnotations(t *testing.T) {
+	app := validApp("accept-ingress-annotations")
+	app.Spec.Ingress.Annotations = map[string]string{
+		"cert-manager.io/cluster-issuer": "letsencrypt",
+	}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected free-form ingress annotations to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
 func TestValidation_RejectsOutputDirWithParentSegment(t *testing.T) {
 	// "a/../b" has a ".." segment: the CEL rule rejects it (RE2 pattern alone
 	// can't catch an interior "..").

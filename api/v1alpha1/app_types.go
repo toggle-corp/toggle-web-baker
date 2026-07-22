@@ -373,6 +373,18 @@ type IngressConfig struct {
 	Host string `json:"host"`
 	// +optional
 	TLS *TLSConfig `json:"tls,omitempty"`
+
+	// Annotations are user-supplied ingress annotations (cert-manager, custom
+	// Traefik routers, rate-limit, etc.) merged onto the generated Ingress. They
+	// are applied FIRST; the operator overlays its own managed keys LAST so the
+	// operator always wins on a conflict (see children.go ingress()). The
+	// basic-auth router.middlewares key is RESERVED — the CEL rule below rejects
+	// it in the map so a user can't strip or redirect the operator's basic-auth
+	// middleware (which would expose the served bundle). Free-form otherwise; an
+	// allowlist is deferred as future hardening if tenancy concerns grow.
+	// +kubebuilder:validation:XValidation:rule="!('traefik.ingress.kubernetes.io/router.middlewares' in self)",message="ingress.annotations may not set the reserved key traefik.ingress.kubernetes.io/router.middlewares (managed by the operator for basic-auth)"
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // AuthSecretRef points at a Secret key holding a bcrypt/htpasswd line.

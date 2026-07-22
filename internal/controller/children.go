@@ -335,11 +335,22 @@ func (r *AppReconciler) ingress(app *bakerv1alpha1.App) *networkingv1.Ingress {
 			SecretName: app.Spec.Ingress.TLS.SecretName,
 		}}
 	}
+	// Merge user-supplied annotations FIRST, then overlay operator-managed keys
+	// LAST so the operator always wins on a conflict. The router.middlewares key
+	// is CEL-rejected in spec.ingress.annotations, but overlaying it last is
+	// defense in depth (a user value can never strip/redirect basic-auth).
+	if len(app.Spec.Ingress.Annotations) > 0 {
+		ing.Annotations = make(map[string]string, len(app.Spec.Ingress.Annotations)+1)
+		for k, v := range app.Spec.Ingress.Annotations {
+			ing.Annotations[k] = v
+		}
+	}
 	// Attach the basic-auth Middleware via the Traefik kubernetescrd annotation.
 	if app.Spec.Auth != nil {
-		ing.Annotations = map[string]string{
-			"traefik.ingress.kubernetes.io/router.middlewares": fmt.Sprintf("%s-%s@kubernetescrd", app.Namespace, middlewareName(app)),
+		if ing.Annotations == nil {
+			ing.Annotations = map[string]string{}
 		}
+		ing.Annotations["traefik.ingress.kubernetes.io/router.middlewares"] = fmt.Sprintf("%s-%s@kubernetescrd", app.Namespace, middlewareName(app))
 	}
 	return ing
 }
