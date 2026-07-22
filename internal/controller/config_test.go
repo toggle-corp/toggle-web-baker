@@ -289,6 +289,50 @@ func TestLoadConfig_ValidPopulatesOperatorConfig(t *testing.T) {
 	}
 }
 
+// Clone-retry knobs fall back to the compiled defaults (3 attempts, 2s base
+// backoff) when omitted, and are honored when set.
+func TestLoadConfig_CloneRetryDefaultsWhenOmitted(t *testing.T) {
+	body := `
+clusterCIDRs: [10.0.0.0/8]
+phaseResources:
+  cpu: { request: "0.1", limit: "4" }
+  memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }
+activeDeadlineSeconds: 1800
+`
+	cfg, _, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CloneRetries != 3 {
+		t.Fatalf("cloneRetries = %d, want 3", cfg.CloneRetries)
+	}
+	if cfg.CloneRetryBaseDelay != 2 {
+		t.Fatalf("cloneRetryBaseDelay = %d, want 2", cfg.CloneRetryBaseDelay)
+	}
+}
+
+func TestLoadConfig_CloneRetryOverride(t *testing.T) {
+	body := `
+clusterCIDRs: [10.0.0.0/8]
+phaseResources:
+  cpu: { request: "0.1", limit: "4" }
+  memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }
+activeDeadlineSeconds: 1800
+cloneRetries: 5
+cloneRetryBaseDelay: 4
+`
+	cfg, _, err := LoadConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CloneRetries != 5 {
+		t.Fatalf("cloneRetries = %d, want 5", cfg.CloneRetries)
+	}
+	if cfg.CloneRetryBaseDelay != 4 {
+		t.Fatalf("cloneRetryBaseDelay = %d, want 4", cfg.CloneRetryBaseDelay)
+	}
+}
+
 // Omitted trigger defaults fall back to the documented values: every 12 hours
 // for scheduled builds, 10m for the commit-watch poll.
 func TestLoadConfig_TriggerDefaultsWhenOmitted(t *testing.T) {

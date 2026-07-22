@@ -36,6 +36,71 @@ fail() {
 	exit 1
 }
 
+# retry <op-desc> <cmd...> -- run a single network git op, retrying only
+# TRANSIENT failures (DNS/network/timeout — the "Could not resolve host" blip
+# on pod start that used to fail the whole build). Each op is individually
+# idempotent, so we wrap each one separately rather than the whole sequence,
+# which avoids re-running work that already succeeded / half-populating /work.
+#
+# Attempts + backoff are env-overridable so ops can tune without an image
+# rebuild (defaults plumbed through the operator config → clone container env):
+#   CLONE_RETRIES          total attempts, default 3.
+#   CLONE_RETRY_BASE_DELAY seconds for the first backoff, default 2 (then
+#                          exponential 2→4→8 + jitter; 0 disables the sleep,
+#                          used by the shell tests to stay instant).
+#
+# Fail-fast on PERMANENT errors: we grep the captured stderr for auth-failed /
+# ref-not-found / repo-not-found classes and stop retrying immediately, because
+# a real permission error will never succeed on retry and burning ~15s of
+# backoff just eats into the Job's activeDeadlineSeconds. On any other
+# (assumed-transient) failure we back off and retry until attempts are
+# exhausted. retry() RETURNS non-zero on permanent/exhausted failure rather than
+# exiting, so callers decide whether the op is fatal (clone/submodule → `|| fail`)
+# or best-effort (the ref fetch, whose miss the checkout fallback tolerates).
+retry() {
+	desc="$1"
+	shift
+	retries="${CLONE_RETRIES:-3}"
+	base="${CLONE_RETRY_BASE_DELAY:-2}"
+	attempt=1
+	while :; do
+		# Capture stderr so we can classify it; still surface it to our stderr.
+		# Temporarily relax errexit so a non-zero op doesn't abort the script here.
+		err_out=""
+		set +e
+		err_out="$("$@" 2>&1 1>&2)"
+		op_rc=$?
+		set -e
+		if [ "$op_rc" -eq 0 ]; then
+			return 0
+		fi
+		printf '%s\n' "$err_out" >&2
+		# Permanent-error classes: never retry.
+		case "$err_out" in
+		*[Aa]uthentication\ failed* | *[Cc]ould\ not\ read\ [Uu]sername* | \
+			*[Rr]epository\ not\ found* | *[Nn]ot\ [Ff]ound* | \
+			*[Cc]ouldn\'t\ find\ remote\ ref* | *[Rr]emote\ branch*not\ found* | \
+			*[Aa]ccess\ denied* | *403\ [Ff]orbidden* | *[Pp]ermission\ denied*)
+			printf 'clone: %s failed (permanent, no retry)\n' "$desc" >&2
+			return 1
+			;;
+		esac
+		if [ "$attempt" -ge "$retries" ]; then
+			printf 'clone: %s failed after %d attempt(s)\n' "$desc" "$attempt" >&2
+			return 1
+		fi
+		# Exponential backoff (base * 2^(attempt-1)) + up to 1s jitter. A base of
+		# 0 disables the sleep entirely (tests).
+		if [ "$base" != 0 ]; then
+			delay=$((base << (attempt - 1)))
+			jitter=$((RANDOM % 1000))
+			printf 'clone: %s attempt %d/%d failed, retrying in ~%ss\n' "$desc" "$attempt" "$retries" "$delay" >&2
+			sleep "$delay.$jitter" 2>/dev/null || sleep "$delay"
+		fi
+		attempt=$((attempt + 1))
+	done
+}
+
 [ -n "${REPO:-}" ] || fail "REPO is required"
 [ -n "${REF:-}" ] || fail "REF is required"
 
@@ -101,26 +166,35 @@ fi
 
 # Clone, then checkout the requested ref. We clone the default branch first
 # (works for both shallow and full) then fetch+checkout $REF so tags, branches,
-# and raw commit shas are all handled uniformly.
+# and raw commit shas are all handled uniformly. Each NETWORK op is wrapped in
+# retry() so a transient DNS/network blip on pod start is retried rather than
+# failing the whole (BackoffLimit=0) build; permanent errors still fail fast.
 # shellcheck disable=SC2086  # clone_args is an intentional word-split arg list.
-git clone $clone_args -- "$REPO" "$SRC_DIR" || fail "git clone of $REPO failed"
+retry "git clone of $REPO" git clone $clone_args -- "$REPO" "$SRC_DIR" ||
+	fail "git clone of $REPO failed"
 
 cd "$SRC_DIR" || fail "cannot enter $SRC_DIR"
 
 # Fetch the specific ref (handles the case where $REF is not the default branch).
+# A missing ref here is non-fatal (the checkout below falls back to FETCH_HEAD /
+# the cloned default branch), so this fetch is best-effort — retry() returning
+# non-zero (permanent or exhausted) is swallowed by `|| true`, but a transient
+# network blip is still retried first.
 if [ -n "${DEPTH:-}" ]; then
-	git fetch --depth "$DEPTH" origin "$REF" 2>/dev/null || true
+	retry "git fetch $REF" git fetch --depth "$DEPTH" origin "$REF" || true
 else
-	git fetch origin "$REF" 2>/dev/null || true
+	retry "git fetch $REF" git fetch origin "$REF" || true
 fi
 
 git checkout --force "$REF" 2>/dev/null ||
 	git checkout --force FETCH_HEAD 2>/dev/null ||
 	fail "cannot checkout ref '$REF'"
 
-# Top-level submodules only (--init, NOT --recursive): see the SUBMODULES note above.
+# Top-level submodules only (--init, NOT --recursive): see the SUBMODULES note
+# above. Wrapped in retry() for the same transient-network reason as clone.
 if [ "$submodules" = 1 ]; then
-	git submodule update --init ${DEPTH:+--depth "$DEPTH"} ||
+	# shellcheck disable=SC2086  # optional --depth arg is an intentional split.
+	retry "submodule update" git submodule update --init ${DEPTH:+--depth "$DEPTH"} ||
 		fail "submodule update failed"
 fi
 

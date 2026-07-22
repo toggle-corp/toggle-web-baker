@@ -42,6 +42,8 @@ data:
     measureInterval: "1h"
     defaultSchedule: "0 */12 * * *"
     defaultWatchInterval: "10m"
+    cloneRetries: 3
+    cloneRetryBaseDelay: 2
     images:
       clone: "ghcr.io/toggle-corp/toggle-web-baker-clone:0.2.0"
       copier: "ghcr.io/toggle-corp/toggle-web-baker-copier:0.2.0"
@@ -1565,7 +1567,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: f71aa6a5b1df29ccc824089dadb6a6fff0939a9584c6db5b0231daac135cc52d
+        checksum/config: 6e26875034b3f3e6fede20acbe39edb16761b3a5d0202ac9b3930e8fbe80bd32
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

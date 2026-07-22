@@ -54,6 +54,14 @@ trap 'rm -rf "$TMP"' EXIT
 # `git clone ... -- <repo> <dest>` it mkdir's the dest (the LAST arg) so the
 # entrypoint's subsequent `cd "$SRC_DIR"` works; `git rev-parse HEAD` echoes a
 # fake sha; everything else (config/fetch/checkout/submodule) exits 0.
+#
+# Fault injection (for the retry tests) via env, all scoped to `git clone`:
+#   STUB_CLONE_FAIL_TIMES=N  -- fail the first N clone invocations (writing a
+#       transient/network stderr class), then succeed. A shared counter file
+#       ($STUB_CLONE_COUNT) survives across the retry loop's re-exec of `git`.
+#   STUB_CLONE_FAIL_MSG=<s>  -- every clone invocation fails with <s> on stderr
+#       (used to assert permanent-error fail-fast classification). Takes
+#       precedence over STUB_CLONE_FAIL_TIMES.
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
 cat >"$STUB_BIN/git" <<'STUB'
@@ -74,6 +82,22 @@ clone)
 				i=$((i + 1))
 			done
 		} >>"$ENV_LOG"
+	fi
+	# Permanent-error injection: always fail with the given stderr message.
+	if [ -n "${STUB_CLONE_FAIL_MSG:-}" ]; then
+		printf '%s\n' "$STUB_CLONE_FAIL_MSG" >&2
+		exit 128
+	fi
+	# Transient-error injection: fail the first N invocations, then succeed.
+	if [ -n "${STUB_CLONE_FAIL_TIMES:-}" ] && [ -n "${STUB_CLONE_COUNT:-}" ]; then
+		n=0
+		[ -f "$STUB_CLONE_COUNT" ] && n="$(cat "$STUB_CLONE_COUNT")"
+		n=$((n + 1))
+		printf '%s' "$n" >"$STUB_CLONE_COUNT"
+		if [ "$n" -le "$STUB_CLONE_FAIL_TIMES" ]; then
+			printf 'fatal: unable to access: Could not resolve host: github.com\n' >&2
+			exit 128
+		fi
 	fi
 	# Destination is the last positional argument.
 	dest="${!#}"
@@ -218,6 +242,59 @@ assert_contains "$env_seen" "url.https://github.com/.insteadOf=git@github.com:" 
 assert_contains "$env_seen" "url.https://github.com/.insteadOf=ssh://git@github.com/" \
 	"credential mounted: ssh:// URL still rewritten to https"
 unset GIT_CREDENTIAL_DIR
+
+# ---- 10. transient clone failure is retried, then succeeds ------------------
+# A DNS/network blip on pod start (the original "Could not resolve host" bug)
+# must not fail the whole build: the per-op retry wraps `git clone`, so two
+# transient failures followed by a success still exit 0 and clone to SRC_DIR.
+# CLONE_RETRY_BASE_DELAY=0 keeps the test instant (no real backoff sleep).
+unset SUBMODULES 2>/dev/null || true
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src10"
+export STUB_CLONE_FAIL_TIMES=2 STUB_CLONE_COUNT="$TMP/clone_count_10"
+export CLONE_RETRY_BASE_DELAY=0
+: >"$STUB_CLONE_COUNT"
+run_clone
+assert_rc 0 "transient clone: retried to success, exits 0"
+clone_calls="$(grep -c '^clone ' "$GIT_LOG")"
+assert_eq "$clone_calls" "3" "transient clone: git clone invoked 3x (2 fail + 1 success)"
+unset STUB_CLONE_FAIL_TIMES STUB_CLONE_COUNT CLONE_RETRY_BASE_DELAY
+
+# ---- 11. transient failure exhausts retries -> fails -------------------------
+# With CLONE_RETRIES=3 and every attempt failing transiently, the entrypoint
+# must exhaust exactly 3 attempts then fail (no infinite loop, no silent pass).
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src11"
+export STUB_CLONE_FAIL_TIMES=99 STUB_CLONE_COUNT="$TMP/clone_count_11"
+export CLONE_RETRIES=3 CLONE_RETRY_BASE_DELAY=0
+: >"$STUB_CLONE_COUNT"
+run_clone
+assert_rc 1 "exhausted clone: exits 1"
+assert_contains "$err$(cat "$TERM_LOG")" "git clone" "exhausted clone: reports a clone failure"
+clone_calls="$(grep -c '^clone ' "$GIT_LOG")"
+assert_eq "$clone_calls" "3" "exhausted clone: attempted exactly CLONE_RETRIES=3 times"
+unset STUB_CLONE_FAIL_TIMES STUB_CLONE_COUNT CLONE_RETRIES CLONE_RETRY_BASE_DELAY
+
+# ---- 12. permanent error (auth) fails fast, NO retry ------------------------
+# A real permission/not-found error must exit immediately — retrying a 15s
+# backoff on a definitely-permanent failure just wastes the build deadline. The
+# clone must be attempted exactly ONCE despite CLONE_RETRIES=3.
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src12"
+export STUB_CLONE_FAIL_MSG="fatal: Authentication failed for 'https://example/x'"
+export CLONE_RETRIES=3 CLONE_RETRY_BASE_DELAY=0
+run_clone
+assert_rc 1 "permanent auth error: exits 1"
+clone_calls="$(grep -c '^clone ' "$GIT_LOG")"
+assert_eq "$clone_calls" "1" "permanent auth error: clone attempted exactly once (no retry)"
+unset STUB_CLONE_FAIL_MSG CLONE_RETRIES CLONE_RETRY_BASE_DELAY
+
+# ---- 13. permanent error (repository not found) fails fast, NO retry --------
+export REPO="https://example/x" REF=main SRC_DIR="$TMP/src13"
+export STUB_CLONE_FAIL_MSG="remote: Repository not found."
+export CLONE_RETRIES=3 CLONE_RETRY_BASE_DELAY=0
+run_clone
+assert_rc 1 "permanent not-found error: exits 1"
+clone_calls="$(grep -c '^clone ' "$GIT_LOG")"
+assert_eq "$clone_calls" "1" "permanent not-found error: clone attempted exactly once (no retry)"
+unset STUB_CLONE_FAIL_MSG CLONE_RETRIES CLONE_RETRY_BASE_DELAY
 
 # ---- git-askpass.sh: host-scoped credential answers (GIT_CREDENTIAL_HOST) ----
 # The operator's host allowlist gates only spec.repo; a repo's .gitmodules can

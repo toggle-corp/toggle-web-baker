@@ -326,6 +326,21 @@ func envValue(c *corev1.Container, name string) (string, bool) {
 	return "", false
 }
 
+// The clone container carries the operator's clone-retry knobs as env so the
+// entrypoint's retry() picks them up without an image rebuild.
+func TestBuildJob_CloneRetryEnvFromConfig(t *testing.T) {
+	r := reconcilerForPod()
+	r.Config.CloneRetries = 5
+	r.Config.CloneRetryBaseDelay = 3
+	clone := containerByName(r.BuildJob(baseApp(), "tok", gitCredentialDecision{}).Spec.Template.Spec.InitContainers, "clone")
+	if v, ok := envValue(clone, "CLONE_RETRIES"); !ok || v != "5" {
+		t.Fatalf("CLONE_RETRIES = %q (present=%v), want 5", v, ok)
+	}
+	if v, ok := envValue(clone, "CLONE_RETRY_BASE_DELAY"); !ok || v != "3" {
+		t.Fatalf("CLONE_RETRY_BASE_DELAY = %q (present=%v), want 3", v, ok)
+	}
+}
+
 // nodeVersion resolves every image-less phase to the operator's managed image,
 // pins its UID, and injects the writable HOME — the app author writes none of it.
 func TestBuildJob_NodeVersionResolvesManagedImageUIDAndHome(t *testing.T) {

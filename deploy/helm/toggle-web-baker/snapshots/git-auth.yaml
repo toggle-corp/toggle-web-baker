@@ -61,6 +61,8 @@ data:
     measureInterval: "1h"
     defaultSchedule: "0 */12 * * *"
     defaultWatchInterval: "10m"
+    cloneRetries: 3
+    cloneRetryBaseDelay: 2
     gitAuth:
       secretName: "release-name-toggle-web-baker-git-credential"
       hosts:
@@ -1588,7 +1590,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 3e4125f71150b65401bfc9c192004af1218891efb38953ca50481176b3040433
+        checksum/config: fa34dd40015161ba5166b088eff9fa992af4aaddf118bf0885ebade4b02ca987
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

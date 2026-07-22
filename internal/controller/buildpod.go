@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"sort"
+	"strconv"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -295,6 +296,11 @@ func (r *AppReconciler) BuildJob(app *bakerv1alpha1.App, token string, gitCred g
 		{Name: "REPO", Value: app.Spec.Repo},
 		{Name: "REF", Value: app.Spec.Ref},
 		{Name: "SRC_DIR", Value: workMountPath},
+		// Retry knobs for the entrypoint's per-op retry() — plumbed from operator
+		// config so ops can retune transient-failure resilience (the DNS blip on
+		// pod start) without rebuilding the clone image.
+		{Name: "CLONE_RETRIES", Value: strconv.Itoa(r.Config.CloneRetries)},
+		{Name: "CLONE_RETRY_BASE_DELAY", Value: strconv.Itoa(r.Config.CloneRetryBaseDelay)},
 	}
 	if app.Spec.Pipeline.Submodules {
 		cloneEnv = append(cloneEnv, corev1.EnvVar{Name: "SUBMODULES", Value: "1"})

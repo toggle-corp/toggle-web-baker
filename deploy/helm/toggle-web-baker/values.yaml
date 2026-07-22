@@ -86,6 +86,15 @@ operator:
   defaultSchedule: "0 */12 * * *"
   defaultWatchInterval: "10m"
 
+  # Clone-retry resilience for the clone initContainer's network git ops
+  # (clone/fetch/submodule). A transient DNS/CNI blip on pod start is retried
+  # rather than failing the whole (BackoffLimit=0) build; permanent errors
+  # (auth/not-found) still fail fast. cloneRetries is total attempts per op;
+  # cloneRetryBaseDelay is the first backoff in seconds (then exponential +
+  # jitter; 0 disables the sleep).
+  cloneRetries: 3
+  cloneRetryBaseDelay: 2
+
   # Operator-global git credential for clone (build) + watchCommits (git
   # ls-remote polling). Anonymous GitHub throttles per source IP; an
   # authenticated token lifts clone/watch into the 5k/hr bucket. A per-App

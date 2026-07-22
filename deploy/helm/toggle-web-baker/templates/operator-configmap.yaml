@@ -26,6 +26,8 @@ data:
     measureInterval: {{ .Values.operator.measureInterval | quote }}
     defaultSchedule: {{ .Values.operator.defaultSchedule | quote }}
     defaultWatchInterval: {{ .Values.operator.defaultWatchInterval | quote }}
+    cloneRetries: {{ .Values.operator.cloneRetries }}
+    cloneRetryBaseDelay: {{ .Values.operator.cloneRetryBaseDelay }}
     {{- /* Only rendered when the git-credential feature is on (existingSecret OR
          password set); omitted entirely otherwise — the operator treats an
          absent gitAuth block as disabled. Secret VALUES never appear here, only

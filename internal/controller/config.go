@@ -99,6 +99,16 @@ type OperatorConfig struct {
 	// GitAuth is the operator-global git credential (clone + watchCommits). It is
 	// off unless BOTH SecretName and Hosts are set — see GitAuth.Enabled().
 	GitAuth GitAuth
+
+	// CloneRetries is the number of attempts the clone initContainer makes for
+	// each network git op (clone/fetch/submodule) before giving up on a
+	// transient failure. It is stamped onto the clone container as CLONE_RETRIES
+	// so ops can tune it without an image rebuild. Defaults to 3.
+	CloneRetries int
+	// CloneRetryBaseDelay is the first backoff (seconds) between clone retries;
+	// subsequent backoffs grow exponentially (base·2^n) plus jitter. Stamped as
+	// CLONE_RETRY_BASE_DELAY. Defaults to 2.
+	CloneRetryBaseDelay int
 }
 
 // GitAuth is the operator-global git credential feature (design Q4/Q5). When
@@ -191,6 +201,12 @@ type FileConfig struct {
 	// New knobs (were never flags): per-phase resource defaults + job deadline.
 	PhaseResources        filePhaseResources `json:"phaseResources,omitempty"`
 	ActiveDeadlineSeconds int64              `json:"activeDeadlineSeconds,omitempty"`
+
+	// Clone-retry defaults stamped onto the clone initContainer (CLONE_RETRIES /
+	// CLONE_RETRY_BASE_DELAY). Pointers so an omitted key defaults to the
+	// compiled value rather than the int zero (0 retries would fail every clone).
+	CloneRetries        *int `json:"cloneRetries,omitempty"`
+	CloneRetryBaseDelay *int `json:"cloneRetryBaseDelay,omitempty"`
 
 	// GitAuth is the optional operator-global git credential block. Absent =
 	// feature off (anonymous git). See GitAuth / LoadConfig fail-closed checks.
@@ -289,6 +305,18 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("activeDeadlineSeconds must be > 0, got %d", fc.ActiveDeadlineSeconds)
 	}
 
+	// Clone-retry knobs: an omitted key falls back to the compiled default; an
+	// explicitly-set value must be sane (retries >= 1 — 0 would fail every clone;
+	// base delay >= 0 — 0 disables the sleep, negative is nonsense).
+	cloneRetries := defaultInt(fc.CloneRetries, 3)
+	if cloneRetries < 1 {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("cloneRetries must be >= 1, got %d", cloneRetries)
+	}
+	cloneRetryBaseDelay := defaultInt(fc.CloneRetryBaseDelay, 2)
+	if cloneRetryBaseDelay < 0 {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("cloneRetryBaseDelay must be >= 0, got %d", cloneRetryBaseDelay)
+	}
+
 	// gitAuth is fail-closed like clusterCIDRs: a half-configured block (one field
 	// set, the other empty) is a hard error rather than a silently-degraded
 	// feature — a secretName with no host allowlist would leave the operator
@@ -331,6 +359,8 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 			SecretName: fc.GitAuth.SecretName,
 			Hosts:      fc.GitAuth.Hosts,
 		},
+		CloneRetries:        cloneRetries,
+		CloneRetryBaseDelay: cloneRetryBaseDelay,
 	}
 	cfg.Defaults()
 	// Validate LAST so Defaults() has filled TraefikGroup etc. This enforces the
@@ -363,6 +393,14 @@ func defaultStr(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// defaultInt returns *v, or def when v is nil (an omitted config key).
+func defaultInt(v *int, def int) int {
+	if v == nil {
+		return def
+	}
+	return *v
 }
 
 // ParseNodeImages decodes a node-image map from a JSON string and validates it.
@@ -500,6 +538,12 @@ func (c *OperatorConfig) Defaults() {
 	if c.DefaultWatchInterval == "" {
 		c.DefaultWatchInterval = "10m"
 	}
+	if c.CloneRetries == 0 {
+		c.CloneRetries = 3
+	}
+	// CloneRetryBaseDelay legitimately can be 0 (disable backoff); leave a zero
+	// value as-is here — LoadConfig has already applied the 2s default for an
+	// omitted key, so a 0 reaching Defaults() was set on purpose.
 	if c.Images.Clone == "" {
 		c.Images.Clone = "ghcr.io/toggle-corp/toggle-web-baker-clone@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	}
