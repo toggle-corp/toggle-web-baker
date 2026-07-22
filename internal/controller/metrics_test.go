@@ -49,7 +49,7 @@ func TestMetrics_TerminalBuildCountedOnce(t *testing.T) {
 	if err := r.observeBuild(context.Background(), app); err != nil {
 		t.Fatalf("observeBuild retry: %v", err)
 	}
-	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Succeeded")); got != 1 {
+	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Succeeded", "Scheduled")); got != 1 {
 		t.Fatalf("builds_total{Succeeded} = %v after write-conflict retry, want 1", got)
 	}
 
@@ -59,7 +59,7 @@ func TestMetrics_TerminalBuildCountedOnce(t *testing.T) {
 	if err := r.observeBuild(context.Background(), app); err != nil {
 		t.Fatalf("observeBuild second build: %v", err)
 	}
-	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Succeeded")); got != 2 {
+	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Succeeded", "Scheduled")); got != 2 {
 		t.Fatalf("builds_total{Succeeded} = %v after second build, want 2", got)
 	}
 }
@@ -96,7 +96,7 @@ func TestMetrics_OOMBuildCounted(t *testing.T) {
 	if got := testutil.ToFloat64(metricBuildOOMTotal.WithLabelValues("apps", "demo", "build")); got != 1 {
 		t.Fatalf("build_oom_total{step=build} = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Failed")); got != 1 {
+	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Failed", "Scheduled")); got != 1 {
 		t.Fatalf("builds_total{Failed} = %v, want 1", got)
 	}
 }
@@ -141,11 +141,11 @@ func TestMetrics_DegradedReasonChurnDeletesOldSeries(t *testing.T) {
 
 	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, bakerv1alpha1.ReasonBuildFailed, "boom")
 	app.Status.Phase = bakerv1alpha1.PhaseDegraded
-	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 
 	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionFalse, bakerv1alpha1.ReasonReady, "build succeeded")
 	app.Status.Phase = bakerv1alpha1.PhaseReady
-	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 
 	expected := `
 # HELP baker_app_degraded 1 when the app's Degraded condition is True (reason = condition reason); 0 with reason="" when healthy.
@@ -167,7 +167,7 @@ func TestMetrics_StorageSeries(t *testing.T) {
 	app.Status.Storage.Sizes = map[string]int64{"cache": 100, "outputTotal": 900}
 	app.Status.Phase = bakerv1alpha1.PhaseReady
 	r, _ := newReconciler(t, app, wffc())
-	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 
 	if got := testutil.ToFloat64(metricStorageUsed.WithLabelValues("apps", "demo", "cache")); got != 100 {
 		t.Fatalf("used_bytes{cache} = %v, want 100", got)
@@ -188,7 +188,7 @@ baker_app_storage_alert_bytes{name="demo",namespace="apps",volume="cache"} 500
 	// deletes its used series too.
 	app.Spec.Storage.Cache.AlertBytes = 0
 	delete(app.Status.Storage.Sizes, "outputTotal")
-	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 	if got := testutil.CollectAndCount(metricStorageAlert); got != 0 {
 		t.Fatalf("alert_bytes series count = %d after unset, want 0", got)
 	}
@@ -230,7 +230,7 @@ func TestMetrics_LifecycleForgetsDeletedApp(t *testing.T) {
 
 	// Backstop: series that reappear for a gone app are dropped by the
 	// not-found reconcile.
-	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 	reconcile(t, r, app)
 	if got := totalAppSeries(t); got != 0 {
 		t.Fatalf("series count = %d after not-found reconcile, want 0", got)
@@ -245,16 +245,22 @@ func TestMetrics_CountersPreseededOnFirstRecord(t *testing.T) {
 	resetMetrics()
 	app := baseApp()
 	var rec Recorder
-	rec.RecordApp(app, 1800, alertThresholdsFrom(app))
+	rec.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 
 	expected := `
-# HELP baker_app_builds_total Terminal builds by result (Succeeded|Failed).
+# HELP baker_app_builds_total Terminal builds by result (Succeeded|Failed) and trigger (Scheduled|Manual|Commit|SpecChange).
 # TYPE baker_app_builds_total counter
-baker_app_builds_total{name="demo",namespace="apps",result="Failed"} 0
-baker_app_builds_total{name="demo",namespace="apps",result="Succeeded"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Failed",trigger="Commit"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Failed",trigger="Manual"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Failed",trigger="Scheduled"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Failed",trigger="SpecChange"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Succeeded",trigger="Commit"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Succeeded",trigger="Manual"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Succeeded",trigger="Scheduled"} 0
+baker_app_builds_total{name="demo",namespace="apps",result="Succeeded",trigger="SpecChange"} 0
 `
 	if err := testutil.CollectAndCompare(metricBuildsTotal, strings.NewReader(expected)); err != nil {
-		t.Fatalf("builds_total must be pre-seeded at 0 for both results: %v", err)
+		t.Fatalf("builds_total must be pre-seeded at 0 for every result×trigger: %v", err)
 	}
 	for _, step := range []string{"clone", "setup", "fetch", "build", "copier"} {
 		if got := testutil.ToFloat64(metricBuildOOMTotal.WithLabelValues("apps", "demo", step)); got != 0 {
@@ -269,9 +275,55 @@ baker_app_builds_total{name="demo",namespace="apps",result="Succeeded"} 0
 	if got := testutil.CollectAndCount(metricBuildsTotal) + testutil.CollectAndCount(metricBuildOOMTotal); got != 0 {
 		t.Fatalf("counter series count = %d after ForgetApp, want 0", got)
 	}
-	rec.RecordApp(app, 1800, alertThresholdsFrom(app))
-	if got := testutil.CollectAndCount(metricBuildsTotal); got != 2 {
-		t.Fatalf("builds_total series count = %d after re-record, want re-seeded 2", got)
+	rec.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
+	if got := testutil.CollectAndCount(metricBuildsTotal); got != 8 {
+		t.Fatalf("builds_total series count = %d after re-record, want re-seeded 8 (2 results × 4 triggers)", got)
+	}
+}
+
+// RecordApp exports the scheduled-failure threshold pair (streak + threshold)
+// from status + the passed effective threshold, so the compare-two-gauges alert
+// has both series.
+func TestMetrics_ScheduledFailureThresholdGauges(t *testing.T) {
+	resetMetrics()
+	app := baseApp()
+	app.Status.ConsecutiveScheduledFailures = 4
+	var rec Recorder
+	rec.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
+
+	if got := testutil.ToFloat64(metricConsecutiveScheduledFailures.WithLabelValues("apps", "demo")); got != 4 {
+		t.Fatalf("consecutive_scheduled_failures = %v, want 4", got)
+	}
+	if got := testutil.ToFloat64(metricScheduledFailureThreshold.WithLabelValues("apps", "demo")); got != 3 {
+		t.Fatalf("scheduled_failure_threshold = %v, want 3", got)
+	}
+}
+
+// RecordTerminalBuild splits builds_total by the build's trigger, so the alert
+// rules can treat a Scheduled failure (threshold-gated) differently from a
+// Manual one (instant).
+func TestMetrics_BuildsTotalSplitByTrigger(t *testing.T) {
+	resetMetrics()
+	app := baseApp()
+	var rec Recorder
+	rec.state(app) // seed
+
+	// A failed MANUAL build.
+	app.Status.Build = bakerv1alpha1.BuildStatus{
+		JobName: "j-manual", Result: bakerv1alpha1.BuildResultFailed, Trigger: bakerv1alpha1.BuildTriggerManual,
+	}
+	rec.RecordTerminalBuild(app)
+	// A failed SCHEDULED build.
+	app.Status.Build = bakerv1alpha1.BuildStatus{
+		JobName: "j-sched", Result: bakerv1alpha1.BuildResultFailed, Trigger: bakerv1alpha1.BuildTriggerScheduled,
+	}
+	rec.RecordTerminalBuild(app)
+
+	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Failed", "Manual")); got != 1 {
+		t.Fatalf("builds_total{Failed,Manual} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(metricBuildsTotal.WithLabelValues("apps", "demo", "Failed", "Scheduled")); got != 1 {
+		t.Fatalf("builds_total{Failed,Scheduled} = %v, want 1", got)
 	}
 }
 
@@ -282,7 +334,7 @@ func TestMetrics_EmptyPhaseRecordsAwaitingFirstBuild(t *testing.T) {
 	resetMetrics()
 	app := baseApp() // status.phase unset
 	var rec Recorder
-	rec.RecordApp(app, 1800, alertThresholdsFrom(app))
+	rec.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 
 	wantPhases := map[string]float64{"AwaitingFirstBuild": 1, "Building": 0, "Ready": 0, "Degraded": 0}
 	for phase, want := range wantPhases {
@@ -342,25 +394,25 @@ func TestMetrics_DeadlineFrozenWhileBuildRunning(t *testing.T) {
 	var rec Recorder
 	th := alertThresholdsFrom(app)
 
-	rec.RecordApp(app, 1800, th)
+	rec.RecordApp(app, 1800, th, 3)
 	if got := testutil.ToFloat64(metricBuildDeadline.WithLabelValues("apps", "demo")); got != 1800 {
 		t.Fatalf("deadline = %v at build start, want 1800", got)
 	}
 	// Mid-build timeout edit: the gauge must NOT move.
-	rec.RecordApp(app, 300, th)
+	rec.RecordApp(app, 300, th, 3)
 	if got := testutil.ToFloat64(metricBuildDeadline.WithLabelValues("apps", "demo")); got != 1800 {
 		t.Fatalf("deadline = %v after mid-build edit, want frozen 1800", got)
 	}
 	// Build ends: the gauge follows the live value.
 	app.Status.Build.Phase = bakerv1alpha1.BuildPhaseComplete
-	rec.RecordApp(app, 300, th)
+	rec.RecordApp(app, 300, th, 3)
 	if got := testutil.ToFloat64(metricBuildDeadline.WithLabelValues("apps", "demo")); got != 300 {
 		t.Fatalf("deadline = %v after build end, want live 300", got)
 	}
 	// Next build freezes the new value.
 	app.Status.Build.Phase = bakerv1alpha1.BuildPhasePending
-	rec.RecordApp(app, 300, th)
-	rec.RecordApp(app, 999, th)
+	rec.RecordApp(app, 300, th, 3)
+	rec.RecordApp(app, 999, th, 3)
 	if got := testutil.ToFloat64(metricBuildDeadline.WithLabelValues("apps", "demo")); got != 300 {
 		t.Fatalf("deadline = %v during second build, want frozen 300", got)
 	}
@@ -372,7 +424,7 @@ func TestMetrics_ForgetUnknownAppKeepsOtherSeries(t *testing.T) {
 	resetMetrics()
 	app := baseApp()
 	var rec Recorder
-	rec.RecordApp(app, 1800, alertThresholdsFrom(app))
+	rec.RecordApp(app, 1800, alertThresholdsFrom(app), 3)
 	before := 0
 	for _, v := range allAppMetricVecs {
 		before += testutil.CollectAndCount(v)

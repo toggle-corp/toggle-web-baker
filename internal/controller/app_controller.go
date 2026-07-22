@@ -132,7 +132,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// or infra step can error out, so a persistently erroring reconcile still
 	// leaves the app visible to alerting instead of blind (no series at all).
 	// The step-11 / fail() records below overwrite this with the fresh status.
-	r.Metrics.RecordApp(app, r.buildDeadlineSeconds(app), alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, r.buildDeadlineSeconds(app), alertThresholdsFrom(app), r.effectiveScheduledThreshold(app))
 
 	app.Status.ObservedGeneration = app.Generation
 
@@ -279,7 +279,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// 11. Derive phase from conditions and persist status.
 	r.refreshPhase(app)
-	r.Metrics.RecordApp(app, r.buildDeadlineSeconds(app), alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, r.buildDeadlineSeconds(app), alertThresholdsFrom(app), r.effectiveScheduledThreshold(app))
 	if err := r.Status().Update(ctx, app); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -477,7 +477,7 @@ func (r *AppReconciler) fail(ctx context.Context, app *bakerv1alpha1.App, reason
 	r.setCondition(app, bakerv1alpha1.ConditionReady, metav1.ConditionFalse, reason, msg)
 	r.setCondition(app, bakerv1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	app.Status.Phase = bakerv1alpha1.PhaseDegraded
-	r.Metrics.RecordApp(app, r.buildDeadlineSeconds(app), alertThresholdsFrom(app))
+	r.Metrics.RecordApp(app, r.buildDeadlineSeconds(app), alertThresholdsFrom(app), r.effectiveScheduledThreshold(app))
 	if isPlatformFault(reason, "") {
 		r.Sentry.CaptureTerminalFailure(observability.TerminalFailure{
 			App:       app.Name,
@@ -741,7 +741,24 @@ func (r *AppReconciler) observeBuild(ctx context.Context, app *bakerv1alpha1.App
 	keepRecent, keepFailed := r.effectiveHistoryLimits(app)
 	app.Status.BuildHistory = appendBuildHistory(app.Status.BuildHistory, *app.Status.Build.DeepCopy(), keepRecent)
 	app.Status.FailedBuildHistory = appendFailedBuildHistory(app.Status.FailedBuildHistory, *app.Status.Build.DeepCopy(), keepFailed)
+
+	// Update the consecutive-scheduled-failure streak from THIS terminal result.
+	// This block runs exactly once per terminal transition (the top-of-function
+	// guard early-returns an already-terminal build), so the counter can't be
+	// double-incremented on a re-observe. Drives the threshold alert.
+	app.Status.ConsecutiveScheduledFailures = updateConsecutiveScheduledFailures(
+		app.Status.ConsecutiveScheduledFailures, app.Status.Build.Trigger, app.Status.Build.Result)
 	return nil
+}
+
+// effectiveScheduledThreshold resolves the consecutive-scheduled-failure alert
+// threshold: spec.scheduledBuilds.alertThreshold when set (non-zero), else the
+// operator-config default.
+func (r *AppReconciler) effectiveScheduledThreshold(app *bakerv1alpha1.App) int {
+	if sb := app.Spec.ScheduledBuilds; sb != nil && sb.AlertThreshold > 0 {
+		return sb.AlertThreshold
+	}
+	return r.Config.ScheduledAlertThreshold
 }
 
 // effectiveHistoryLimits resolves the per-app history caps: spec.history.<field>

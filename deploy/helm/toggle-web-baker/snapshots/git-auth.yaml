@@ -65,6 +65,7 @@ data:
     cloneRetryBaseDelay: 2
     historyKeepRecent: 5
     historyKeepFailed: 10
+    scheduledAlertThreshold: 3
     gitAuth:
       secretName: "release-name-toggle-web-baker-git-credential"
       hosts:
@@ -720,6 +721,16 @@ spec:
                   defaulted flat field, so `scheduledBuilds: {schedule: ...}` without an
                   explicit enabled is rejected at admission instead of silently doing nothing.
                 properties:
+                  alertThreshold:
+                    description: |-
+                      AlertThreshold is how many CONSECUTIVE scheduled-build failures must occur
+                      before the AppScheduledBuildsFailingThreshold alert fires. Scoped to
+                      scheduled builds only (manual/commit/spec-change failures still alert
+                      immediately via AppBuildFailed) — hourly data-refresh builds tolerate a
+                      few transient failures in a row before a human needs paging. 0 means the
+                      operator default (config scheduledAlertThreshold, chart-owned).
+                    minimum: 1
+                    type: integer
                   enabled:
                     description: |-
                       Enabled must be stated explicitly (no default): false keeps the config
@@ -1281,6 +1292,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              consecutiveScheduledFailures:
+                description: |-
+                  ConsecutiveScheduledFailures counts scheduled builds that have failed in a
+                  row: incremented on each failed Scheduled build, reset to 0 on ANY
+                  success. It drives the baker_app_consecutive_scheduled_failures gauge and
+                  the AppScheduledBuildsFailingThreshold alert (consec >= alertThreshold).
+                type: integer
               failedBuildHistory:
                 description: |-
                   FailedBuildHistory is a newest-first list of the last N FAILED builds,
@@ -1801,7 +1819,7 @@ spec:
     metadata:
       annotations:
         # Roll the operator pod whenever the config ConfigMap content changes.
-        checksum/config: 76374bad1a2836a212ccf14cae6934168348501228cfdfaceea3b213a23f4fe4
+        checksum/config: ff21aa226e39f82459c511ad4e5d5e0d80dcb2e539b4b0edea22381969a6756f
       labels:
         app.kubernetes.io/name: toggle-web-baker
         app.kubernetes.io/instance: release-name

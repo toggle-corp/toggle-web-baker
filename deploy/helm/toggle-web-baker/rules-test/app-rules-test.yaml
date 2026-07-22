@@ -142,16 +142,24 @@ tests:
   # the 0→1 step inside its range window. A pre-seeded series (born at 0) fires
   # on the first failure; a series born directly at 1 (no pre-seed) shows no
   # increase — the first failure of that app would be silent.
+  #
+  # ALSO proves the trigger split: a Scheduled failure is EXCLUDED from the
+  # instant alert (it is threshold-gated below), so a Manual failure fires while
+  # an identical Scheduled failure stays silent here.
   - interval: 1m
     input_series:
-      - series: 'baker_app_builds_total{namespace="default", name="seeded", result="Failed"}'
+      - series: 'baker_app_builds_total{namespace="default", name="seeded", result="Failed", trigger="Manual"}'
         values: '0x5 1x14'
-      - series: 'baker_app_builds_total{namespace="default", name="unseeded", result="Failed"}'
+      - series: 'baker_app_builds_total{namespace="default", name="unseeded", result="Failed", trigger="Manual"}'
         values: '_x5 1x14'
+      # A Scheduled failure must NOT fire AppBuildFailed (excluded by trigger).
+      - series: 'baker_app_builds_total{namespace="default", name="sched", result="Failed", trigger="Scheduled"}'
+        values: '0x5 1x14'
     alert_rule_test:
-      # 7m: seeded stepped 0→1 at 6m — fires. unseeded was born at 1 with no
-      # 0 sample in the window — increase()==0, does NOT fire (this is exactly
-      # why the operator pre-seeds counters at 0).
+      # 7m: seeded (Manual) stepped 0→1 at 6m — fires. unseeded was born at 1
+      # with no 0 sample in the window — increase()==0, does NOT fire (this is
+      # exactly why the operator pre-seeds counters at 0). sched is Scheduled —
+      # excluded from this alert entirely.
       - eval_time: 7m
         alertname: AppBuildFailed
         exp_alerts:
@@ -160,12 +168,48 @@ tests:
               namespace: default
               name: seeded
               result: Failed
+              trigger: Manual
             exp_annotations:
               summary: "App default/seeded build failed"
-              description: "A build for App default/seeded finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step."
+              description: "A non-scheduled build (Manual) for App default/seeded finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step."
       # 18m: the step left the 10m window — quiet again.
       - eval_time: 18m
         alertname: AppBuildFailed
+        exp_alerts: []
+
+  # --- AppScheduledBuildsFailingThreshold ----------------------------
+  # The compare-two-gauges alert fires once the consecutive-scheduled-failure
+  # streak reaches the app's threshold, and clears when a success resets the
+  # streak to 0. An app whose threshold is 0 (feature effectively off) must
+  # never fire even at streak 0 (the `> 0` guard).
+  - interval: 1m
+    input_series:
+      # over-threshold: streak climbs 1,2,3 (threshold 3) then a success at 4m
+      # resets it to 0.
+      - series: 'baker_app_consecutive_scheduled_failures{namespace="default", name="flaky"}'
+        values: '1 2 3 0x10'
+      - series: 'baker_app_scheduled_failure_threshold{namespace="default", name="flaky"}'
+        values: '3x13'
+      # below-threshold: streak 1 vs threshold 3 — never fires.
+      - series: 'baker_app_consecutive_scheduled_failures{namespace="default", name="ok"}'
+        values: '1x13'
+      - series: 'baker_app_scheduled_failure_threshold{namespace="default", name="ok"}'
+        values: '3x13'
+    alert_rule_test:
+      # 2m: streak 3 >= threshold 3 — fires for flaky only.
+      - eval_time: 2m
+        alertname: AppScheduledBuildsFailingThreshold
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: default
+              name: flaky
+            exp_annotations:
+              summary: "App default/flaky scheduled builds failing repeatedly"
+              description: "App default/flaky has had 3 consecutive scheduled builds fail, at or above its configured alertThreshold. Check the build logs and status.failedBuildHistory for the failing step; a single success resets the streak."
+      # 5m: a success at 4m reset the streak to 0 — cleared.
+      - eval_time: 5m
+        alertname: AppScheduledBuildsFailingThreshold
         exp_alerts: []
 
   # --- AppBuildOOMKilled ----------------------------------------------

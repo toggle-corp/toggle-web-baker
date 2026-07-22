@@ -625,6 +625,16 @@ spec:
                   defaulted flat field, so `scheduledBuilds: {schedule: ...}` without an
                   explicit enabled is rejected at admission instead of silently doing nothing.
                 properties:
+                  alertThreshold:
+                    description: |-
+                      AlertThreshold is how many CONSECUTIVE scheduled-build failures must occur
+                      before the AppScheduledBuildsFailingThreshold alert fires. Scoped to
+                      scheduled builds only (manual/commit/spec-change failures still alert
+                      immediately via AppBuildFailed) — hourly data-refresh builds tolerate a
+                      few transient failures in a row before a human needs paging. 0 means the
+                      operator default (config scheduledAlertThreshold, chart-owned).
+                    minimum: 1
+                    type: integer
                   enabled:
                     description: |-
                       Enabled must be stated explicitly (no default): false keeps the config
@@ -1186,6 +1196,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              consecutiveScheduledFailures:
+                description: |-
+                  ConsecutiveScheduledFailures counts scheduled builds that have failed in a
+                  row: incremented on each failed Scheduled build, reset to 0 on ANY
+                  success. It drives the baker_app_consecutive_scheduled_failures gauge and
+                  the AppScheduledBuildsFailingThreshold alert (consec >= alertThreshold).
+                type: integer
               failedBuildHistory:
                 description: |-
                   FailedBuildHistory is a newest-first list of the last N FAILED builds,

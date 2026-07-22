@@ -102,6 +102,12 @@ operator:
   historyKeepRecent: 5
   historyKeepFailed: 10
 
+  # Default consecutive-scheduled-failure alert threshold: how many scheduled
+  # builds must fail in a row before AppScheduledBuildsFailingThreshold fires
+  # (per-app spec.scheduledBuilds.alertThreshold overrides this). Manual/commit
+  # failures still alert instantly via AppBuildFailed.
+  scheduledAlertThreshold: 3
+
   # Operator-global git credential for clone (build) + watchCommits (git
   # ls-remote polling). Anonymous GitHub throttles per source IP; an
   # authenticated token lifts clone/watch into the 5k/hr bucket. A per-App

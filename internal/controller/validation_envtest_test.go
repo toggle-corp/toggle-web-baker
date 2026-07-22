@@ -223,6 +223,27 @@ func TestValidation_AcceptsFreeFormIngressAnnotations(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
+func TestValidation_RejectsZeroAlertThreshold(t *testing.T) {
+	// alertThreshold is Minimum=1; an explicit 0 is dropped by omitempty (means
+	// "use default"), but a negative value is rejected.
+	app := validApp("reject-negative-alert-threshold")
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true, AlertThreshold: -1}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for a negative scheduledBuilds.alertThreshold")
+	}
+}
+
+func TestValidation_AcceptsAlertThreshold(t *testing.T) {
+	app := validApp("accept-alert-threshold")
+	app.Spec.ScheduledBuilds = &bakerv1alpha1.ScheduledBuildsSpec{Enabled: true, AlertThreshold: 5}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected a positive alertThreshold to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
 func TestValidation_RejectsHistoryKeepRecentOverCap(t *testing.T) {
 	app := validApp("reject-history-keeprecent-cap")
 	app.Spec.History = &bakerv1alpha1.HistorySpec{KeepRecent: 51}

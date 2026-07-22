@@ -30,13 +30,27 @@ spec:
           annotations:
             summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} is Degraded` | quote }}
             description: {{ `App {{ $labels.namespace }}/{{ $labels.name }} has been Degraded. Inspect the CR's status conditions for the reason and the latest build history entry for details.` | quote }}
+        {{- /* Scheduled builds are EXCLUDED here (trigger!="Scheduled"): a
+             periodic data-refresh build tolerates a few transient failures in a
+             row before paging, handled by AppScheduledBuildsFailingThreshold
+             below. Manual/Commit/SpecChange failures still alert instantly. */}}
         - alert: AppBuildFailed
-          expr: increase(baker_app_builds_total{result="Failed"}[10m]) > 0
+          expr: increase(baker_app_builds_total{result="Failed", trigger!="Scheduled"}[10m]) > 0
           labels:
             {{- toYaml $warning | nindent 12 }}
           annotations:
             summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} build failed` | quote }}
-            description: {{ `A build for App {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step.` | quote }}
+            description: {{ `A non-scheduled build ({{ $labels.trigger }}) for App {{ $labels.namespace }}/{{ $labels.name }} finished as Failed within the last 10 minutes. Check the build logs and status.buildHistory for the failing step.` | quote }}
+        {{- /* Consecutive scheduled-build failures crossed the app's threshold
+             (a two-gauge compare, like AppStorageThreshold). The operator resets
+             the streak to 0 on any success, so this clears itself. */}}
+        - alert: AppScheduledBuildsFailingThreshold
+          expr: baker_app_consecutive_scheduled_failures >= baker_app_scheduled_failure_threshold and baker_app_scheduled_failure_threshold > 0
+          labels:
+            {{- toYaml $warning | nindent 12 }}
+          annotations:
+            summary: {{ `App {{ $labels.namespace }}/{{ $labels.name }} scheduled builds failing repeatedly` | quote }}
+            description: {{ `App {{ $labels.namespace }}/{{ $labels.name }} has had {{ $value }} consecutive scheduled builds fail, at or above its configured alertThreshold. Check the build logs and status.failedBuildHistory for the failing step; a single success resets the streak.` | quote }}
         - alert: AppBuildOOMKilled
           expr: increase(baker_app_build_oom_total[10m]) > 0
           labels:

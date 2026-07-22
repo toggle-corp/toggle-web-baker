@@ -308,6 +308,34 @@ func TestAppendFailedBuildHistory(t *testing.T) {
 	})
 }
 
+// updateConsecutiveScheduledFailures increments only on a FAILED Scheduled
+// build and resets to 0 on ANY success; non-scheduled failures are untouched.
+func TestUpdateConsecutiveScheduledFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		current int
+		trigger bakerv1alpha1.BuildTrigger
+		result  bakerv1alpha1.BuildResult
+		want    int
+	}{
+		{"scheduled failure increments", 2, bakerv1alpha1.BuildTriggerScheduled, bakerv1alpha1.BuildResultFailed, 3},
+		{"scheduled success resets", 3, bakerv1alpha1.BuildTriggerScheduled, bakerv1alpha1.BuildResultSucceeded, 0},
+		{"manual failure leaves counter untouched", 3, bakerv1alpha1.BuildTriggerManual, bakerv1alpha1.BuildResultFailed, 3},
+		{"commit failure leaves counter untouched", 3, bakerv1alpha1.BuildTriggerCommit, bakerv1alpha1.BuildResultFailed, 3},
+		{"manual success STILL resets (any success)", 4, bakerv1alpha1.BuildTriggerManual, bakerv1alpha1.BuildResultSucceeded, 0},
+		{"commit success STILL resets", 4, bakerv1alpha1.BuildTriggerCommit, bakerv1alpha1.BuildResultSucceeded, 0},
+		{"aborted scheduled build does not increment", 2, bakerv1alpha1.BuildTriggerScheduled, bakerv1alpha1.BuildResultAborted, 2},
+		{"first scheduled failure from 0", 0, bakerv1alpha1.BuildTriggerScheduled, bakerv1alpha1.BuildResultFailed, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := updateConsecutiveScheduledFailures(tc.current, tc.trigger, tc.result); got != tc.want {
+				t.Fatalf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // effectiveHistoryLimits: spec.history overrides the operator-config default
 // per-field; an absent spec.history (or a zero sub-field) falls back.
 func TestEffectiveHistoryLimits(t *testing.T) {

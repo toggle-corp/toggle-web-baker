@@ -117,6 +117,11 @@ type OperatorConfig struct {
 	// HistoryKeepFailed is the default cap on status.failedBuildHistory (the
 	// failed-only list) when an app omits spec.history.keepFailed. Defaults to 10.
 	HistoryKeepFailed int
+
+	// ScheduledAlertThreshold is the default consecutive-scheduled-failure
+	// threshold when an app omits spec.scheduledBuilds.alertThreshold. Defaults
+	// to 3 (tolerate a couple of transient hourly-build failures before paging).
+	ScheduledAlertThreshold int
 }
 
 // GitAuth is the operator-global git credential feature (design Q4/Q5). When
@@ -220,6 +225,10 @@ type FileConfig struct {
 	// so an omitted key defaults to the compiled value rather than the int zero.
 	HistoryKeepRecent *int `json:"historyKeepRecent,omitempty"`
 	HistoryKeepFailed *int `json:"historyKeepFailed,omitempty"`
+
+	// Default consecutive-scheduled-failure alert threshold (per-app
+	// spec.scheduledBuilds.alertThreshold overrides this).
+	ScheduledAlertThreshold *int `json:"scheduledAlertThreshold,omitempty"`
 
 	// GitAuth is the optional operator-global git credential block. Absent =
 	// feature off (anonymous git). See GitAuth / LoadConfig fail-closed checks.
@@ -341,6 +350,10 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 	if historyKeepFailed < 1 || historyKeepFailed > 50 {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("historyKeepFailed must be in 1..50, got %d", historyKeepFailed)
 	}
+	scheduledAlertThreshold := defaultInt(fc.ScheduledAlertThreshold, 3)
+	if scheduledAlertThreshold < 1 {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("scheduledAlertThreshold must be >= 1, got %d", scheduledAlertThreshold)
+	}
 
 	// gitAuth is fail-closed like clusterCIDRs: a half-configured block (one field
 	// set, the other empty) is a hard error rather than a silently-degraded
@@ -386,8 +399,9 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		},
 		CloneRetries:        cloneRetries,
 		CloneRetryBaseDelay: cloneRetryBaseDelay,
-		HistoryKeepRecent:   historyKeepRecent,
-		HistoryKeepFailed:   historyKeepFailed,
+		HistoryKeepRecent:       historyKeepRecent,
+		HistoryKeepFailed:       historyKeepFailed,
+		ScheduledAlertThreshold: scheduledAlertThreshold,
 	}
 	cfg.Defaults()
 	// Validate LAST so Defaults() has filled TraefikGroup etc. This enforces the
@@ -573,6 +587,9 @@ func (c *OperatorConfig) Defaults() {
 	}
 	if c.HistoryKeepFailed == 0 {
 		c.HistoryKeepFailed = 10
+	}
+	if c.ScheduledAlertThreshold == 0 {
+		c.ScheduledAlertThreshold = 3
 	}
 	// CloneRetryBaseDelay legitimately can be 0 (disable backoff); leave a zero
 	// value as-is here — LoadConfig has already applied the 2s default for an

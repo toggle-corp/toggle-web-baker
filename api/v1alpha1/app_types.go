@@ -491,6 +491,16 @@ type ScheduledBuildsSpec struct {
 	// default (config defaultSchedule, chart-owned; the CRD cannot know it).
 	// +optional
 	Schedule string `json:"schedule,omitempty"`
+
+	// AlertThreshold is how many CONSECUTIVE scheduled-build failures must occur
+	// before the AppScheduledBuildsFailingThreshold alert fires. Scoped to
+	// scheduled builds only (manual/commit/spec-change failures still alert
+	// immediately via AppBuildFailed) — hourly data-refresh builds tolerate a
+	// few transient failures in a row before a human needs paging. 0 means the
+	// operator default (config scheduledAlertThreshold, chart-owned).
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	AlertThreshold int `json:"alertThreshold,omitempty"`
 }
 
 // WatchCommitsSpec opts an app into commit-triggered rebuilds.
@@ -892,6 +902,13 @@ type AppStatus struct {
 
 	// +optional
 	Build BuildStatus `json:"build,omitempty"`
+
+	// ConsecutiveScheduledFailures counts scheduled builds that have failed in a
+	// row: incremented on each failed Scheduled build, reset to 0 on ANY
+	// success. It drives the baker_app_consecutive_scheduled_failures gauge and
+	// the AppScheduledBuildsFailingThreshold alert (consec >= alertThreshold).
+	// +optional
+	ConsecutiveScheduledFailures int `json:"consecutiveScheduledFailures,omitempty"`
 
 	// BuildHistory is a newest-first ring buffer of recent terminal builds
 	// (Jobs that ran, any result). The operator caps it to the effective

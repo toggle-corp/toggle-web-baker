@@ -23,8 +23,8 @@ var (
 	}, []string{"namespace", "name", "phase"})
 	metricBuildsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "baker_app_builds_total",
-		Help: "Terminal builds by result (Succeeded|Failed).",
-	}, []string{"namespace", "name", "result"})
+		Help: "Terminal builds by result (Succeeded|Failed) and trigger (Scheduled|Manual|Commit|SpecChange).",
+	}, []string{"namespace", "name", "result", "trigger"})
 	metricBuildOOMTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "baker_app_build_oom_total",
 		Help: "Builds whose step container was OOMKilled.",
@@ -45,6 +45,14 @@ var (
 		Name: "baker_app_storage_alert_bytes",
 		Help: "spec.storage alertBytes threshold; exported only for volumes with a threshold > 0.",
 	}, []string{"namespace", "name", "volume"})
+	metricConsecutiveScheduledFailures = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "baker_app_consecutive_scheduled_failures",
+		Help: "Consecutive failed scheduled builds (status.consecutiveScheduledFailures); reset to 0 on any success.",
+	}, []string{"namespace", "name"})
+	metricScheduledFailureThreshold = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "baker_app_scheduled_failure_threshold",
+		Help: "Effective consecutive-scheduled-failure alert threshold (spec.scheduledBuilds.alertThreshold or the operator default).",
+	}, []string{"namespace", "name"})
 )
 
 // appMetricVec is the common surface of the Gauge/Counter vecs above
@@ -64,6 +72,8 @@ var allAppMetricVecs = []appMetricVec{
 	metricBuildDeadline,
 	metricStorageUsed,
 	metricStorageAlert,
+	metricConsecutiveScheduledFailures,
+	metricScheduledFailureThreshold,
 }
 
 func init() {
@@ -114,8 +124,19 @@ func (m *Recorder) state(app *bakerv1alpha1.App) *appMetricsState {
 // they exist from the app's first record on. ForgetApp deletes them with the
 // rest of the series; the next RecordApp re-seeds.
 func seedCounters(namespace, name string) {
+	// Seed every result×trigger series the app can increment, so the
+	// increase()-based alerts see a 0→1 step on the first real build (a series
+	// born at 1 never fires). The trigger label lets AppBuildFailed exclude
+	// Scheduled (which has its own threshold alert) from the instant alert.
 	for _, result := range []bakerv1alpha1.BuildResult{bakerv1alpha1.BuildResultSucceeded, bakerv1alpha1.BuildResultFailed} {
-		metricBuildsTotal.WithLabelValues(namespace, name, string(result)).Add(0)
+		for _, trigger := range []bakerv1alpha1.BuildTrigger{
+			bakerv1alpha1.BuildTriggerScheduled,
+			bakerv1alpha1.BuildTriggerManual,
+			bakerv1alpha1.BuildTriggerCommit,
+			bakerv1alpha1.BuildTriggerSpecChange,
+		} {
+			metricBuildsTotal.WithLabelValues(namespace, name, string(result), string(trigger)).Add(0)
+		}
 	}
 	// Real containers only — the synthetic release step is operator bookkeeping
 	// and can never be OOMKilled.
@@ -138,10 +159,18 @@ const volumeOutputTotal = "outputTotal"
 // + spec-derived inputs. alertThresholds is the per-volume alertBytes map from
 // alertThresholdsFrom. Idempotent — called on the early-reconcile entry and on
 // every status-finalizing reconcile exit.
-func (m *Recorder) RecordApp(app *bakerv1alpha1.App, deadlineSeconds int64, alertThresholds map[string]int64) {
+func (m *Recorder) RecordApp(app *bakerv1alpha1.App, deadlineSeconds int64, alertThresholds map[string]int64, scheduledThreshold int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.state(app)
+
+	// Scheduled-failure threshold pair: the current consecutive-failure streak
+	// and the effective threshold it is compared against by the
+	// AppScheduledBuildsFailingThreshold alert (a two-gauge compare, like the
+	// storage alert). Always exported so the alert's series exist from the app's
+	// first record on.
+	metricConsecutiveScheduledFailures.WithLabelValues(app.Namespace, app.Name).Set(float64(app.Status.ConsecutiveScheduledFailures))
+	metricScheduledFailureThreshold.WithLabelValues(app.Namespace, app.Name).Set(float64(scheduledThreshold))
 
 	// An empty status phase means refreshPhase has never run for this app —
 	// by definition it is still awaiting its first build. Mapping it (rather
@@ -252,7 +281,14 @@ func (m *Recorder) RecordTerminalBuild(app *bakerv1alpha1.App) {
 	if app.Status.Build.JobName == "" || app.Status.Build.JobName == s.lastCountedJob {
 		return
 	}
-	metricBuildsTotal.WithLabelValues(app.Namespace, app.Name, string(result)).Inc()
+	trigger := app.Status.Build.Trigger
+	if trigger == "" {
+		// A build with no recorded trigger (legacy/edge) counts as Scheduled — the
+		// safest default given the label is load-bearing only for the threshold vs
+		// instant split, and an unlabeled series would break both alerts.
+		trigger = bakerv1alpha1.BuildTriggerScheduled
+	}
+	metricBuildsTotal.WithLabelValues(app.Namespace, app.Name, string(result), string(trigger)).Inc()
 	if term := app.Status.Build.Termination; term != nil && term.Reason == bakerv1alpha1.TerminationReasonOOMKilled {
 		metricBuildOOMTotal.WithLabelValues(app.Namespace, app.Name, term.Container).Inc()
 	}

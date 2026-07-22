@@ -374,6 +374,31 @@ historyKeepFailed: 20
 	}
 }
 
+// The scheduled-failure alert threshold default is 3 when omitted, honored when set.
+func TestLoadConfig_ScheduledAlertThreshold(t *testing.T) {
+	base := `
+clusterCIDRs: [10.0.0.0/8]
+phaseResources:
+  cpu: { request: "0.1", limit: "4" }
+  memory: { setup: 512Mi, fetch: 512Mi, build: 2Gi }
+activeDeadlineSeconds: 1800
+`
+	cfg, _, err := LoadConfig(writeConfig(t, base))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ScheduledAlertThreshold != 3 {
+		t.Fatalf("scheduledAlertThreshold = %d, want 3 (default)", cfg.ScheduledAlertThreshold)
+	}
+	cfg, _, err = LoadConfig(writeConfig(t, base+"scheduledAlertThreshold: 6\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ScheduledAlertThreshold != 6 {
+		t.Fatalf("scheduledAlertThreshold = %d, want 6", cfg.ScheduledAlertThreshold)
+	}
+}
+
 // Omitted trigger defaults fall back to the documented values: every 12 hours
 // for scheduled builds, 10m for the commit-watch poll.
 func TestLoadConfig_TriggerDefaultsWhenOmitted(t *testing.T) {

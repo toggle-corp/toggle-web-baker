@@ -180,6 +180,25 @@ func appendBuildHistory(history []bakerv1alpha1.BuildStatus, rec bakerv1alpha1.B
 	return out
 }
 
+// updateConsecutiveScheduledFailures returns the new consecutive-scheduled-
+// failure count after a terminal build. It increments only on a FAILED
+// *Scheduled* build (the alert threshold is scoped to scheduled builds so a
+// manual/commit/spec-change failure still alerts immediately elsewhere), and
+// resets to 0 on ANY success (a green build clears the streak regardless of
+// what triggered it). An Aborted build is neither a failure nor a success and
+// leaves the counter untouched.
+func updateConsecutiveScheduledFailures(current int, trigger bakerv1alpha1.BuildTrigger, result bakerv1alpha1.BuildResult) int {
+	switch result {
+	case bakerv1alpha1.BuildResultSucceeded:
+		return 0
+	case bakerv1alpha1.BuildResultFailed:
+		if trigger == bakerv1alpha1.BuildTriggerScheduled {
+			return current + 1
+		}
+	}
+	return current
+}
+
 // appendFailedBuildHistory records rec into the newest-first FAILED-build ring
 // (status.failedBuildHistory) — independent of the recent ring, so a burst of
 // scheduled successes can't evict a failure the operator/console needs for
