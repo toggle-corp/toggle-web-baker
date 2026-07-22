@@ -734,9 +734,30 @@ func (r *AppReconciler) observeBuild(ctx context.Context, app *bakerv1alpha1.App
 	r.Metrics.RecordTerminalBuild(app)
 
 	// Append a COPY of the finalized record to the newest-first history ring
-	// (deduped by JobName as a safety net against a re-observe).
-	app.Status.BuildHistory = appendBuildHistory(app.Status.BuildHistory, *app.Status.Build.DeepCopy(), 5)
+	// (deduped by JobName as a safety net against a re-observe). The recent ring
+	// keeps full fidelity; the failed-only list retains failures across success
+	// bursts and trims each entry to its failed step. Caps come from the
+	// effective per-app history config (spec.history overriding operator default).
+	keepRecent, keepFailed := r.effectiveHistoryLimits(app)
+	app.Status.BuildHistory = appendBuildHistory(app.Status.BuildHistory, *app.Status.Build.DeepCopy(), keepRecent)
+	app.Status.FailedBuildHistory = appendFailedBuildHistory(app.Status.FailedBuildHistory, *app.Status.Build.DeepCopy(), keepFailed)
 	return nil
+}
+
+// effectiveHistoryLimits resolves the per-app history caps: spec.history.<field>
+// when set (non-zero), else the operator-config default.
+func (r *AppReconciler) effectiveHistoryLimits(app *bakerv1alpha1.App) (keepRecent, keepFailed int) {
+	keepRecent = r.Config.HistoryKeepRecent
+	keepFailed = r.Config.HistoryKeepFailed
+	if h := app.Spec.History; h != nil {
+		if h.KeepRecent > 0 {
+			keepRecent = h.KeepRecent
+		}
+		if h.KeepFailed > 0 {
+			keepFailed = h.KeepFailed
+		}
+	}
+	return keepRecent, keepFailed
 }
 
 // applyCopierTermination reads the copier container's termination message (a

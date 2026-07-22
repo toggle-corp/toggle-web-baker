@@ -109,6 +109,14 @@ type OperatorConfig struct {
 	// subsequent backoffs grow exponentially (base·2^n) plus jitter. Stamped as
 	// CLONE_RETRY_BASE_DELAY. Defaults to 2.
 	CloneRetryBaseDelay int
+
+	// HistoryKeepRecent is the default cap on status.buildHistory (the recent
+	// terminal-build ring, any result) when an app omits spec.history.keepRecent.
+	// Defaults to 5 (the value the ring was previously hardcoded to).
+	HistoryKeepRecent int
+	// HistoryKeepFailed is the default cap on status.failedBuildHistory (the
+	// failed-only list) when an app omits spec.history.keepFailed. Defaults to 10.
+	HistoryKeepFailed int
 }
 
 // GitAuth is the operator-global git credential feature (design Q4/Q5). When
@@ -207,6 +215,11 @@ type FileConfig struct {
 	// compiled value rather than the int zero (0 retries would fail every clone).
 	CloneRetries        *int `json:"cloneRetries,omitempty"`
 	CloneRetryBaseDelay *int `json:"cloneRetryBaseDelay,omitempty"`
+
+	// History-retention defaults (per-app spec.history overrides these). Pointers
+	// so an omitted key defaults to the compiled value rather than the int zero.
+	HistoryKeepRecent *int `json:"historyKeepRecent,omitempty"`
+	HistoryKeepFailed *int `json:"historyKeepFailed,omitempty"`
 
 	// GitAuth is the optional operator-global git credential block. Absent =
 	// feature off (anonymous git). See GitAuth / LoadConfig fail-closed checks.
@@ -317,6 +330,18 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("cloneRetryBaseDelay must be >= 0, got %d", cloneRetryBaseDelay)
 	}
 
+	// History-retention defaults: omitted keys fall back to 5 / 10; an
+	// explicitly-set value must be in the same 1..50 range the per-app CEL caps
+	// enforce (a bad chart value would otherwise cap silently at a nonsense size).
+	historyKeepRecent := defaultInt(fc.HistoryKeepRecent, 5)
+	if historyKeepRecent < 1 || historyKeepRecent > 50 {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("historyKeepRecent must be in 1..50, got %d", historyKeepRecent)
+	}
+	historyKeepFailed := defaultInt(fc.HistoryKeepFailed, 10)
+	if historyKeepFailed < 1 || historyKeepFailed > 50 {
+		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("historyKeepFailed must be in 1..50, got %d", historyKeepFailed)
+	}
+
 	// gitAuth is fail-closed like clusterCIDRs: a half-configured block (one field
 	// set, the other empty) is a hard error rather than a silently-degraded
 	// feature — a secretName with no host allowlist would leave the operator
@@ -361,6 +386,8 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 		},
 		CloneRetries:        cloneRetries,
 		CloneRetryBaseDelay: cloneRetryBaseDelay,
+		HistoryKeepRecent:   historyKeepRecent,
+		HistoryKeepFailed:   historyKeepFailed,
 	}
 	cfg.Defaults()
 	// Validate LAST so Defaults() has filled TraefikGroup etc. This enforces the
@@ -540,6 +567,12 @@ func (c *OperatorConfig) Defaults() {
 	}
 	if c.CloneRetries == 0 {
 		c.CloneRetries = 3
+	}
+	if c.HistoryKeepRecent == 0 {
+		c.HistoryKeepRecent = 5
+	}
+	if c.HistoryKeepFailed == 0 {
+		c.HistoryKeepFailed = 10
 	}
 	// CloneRetryBaseDelay legitimately can be 0 (disable backoff); leave a zero
 	// value as-is here — LoadConfig has already applied the 2s default for an

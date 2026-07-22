@@ -95,6 +95,13 @@ operator:
   cloneRetries: 3
   cloneRetryBaseDelay: 2
 
+  # Default terminal-build history retention (per-app spec.history overrides
+  # these; both capped at 50). historyKeepRecent bounds status.buildHistory (the
+  # recent ring, any result); historyKeepFailed bounds status.failedBuildHistory
+  # (failed-only, retained across success bursts for debugging).
+  historyKeepRecent: 5
+  historyKeepFailed: 10
+
   # Operator-global git credential for clone (build) + watchCommits (git
   # ls-remote polling). Anonymous GitHub throttles per source IP; an
   # authenticated token lifts clone/watch into the 5k/hr bucket. A per-App

@@ -226,6 +226,119 @@ func TestAppendBuildHistory(t *testing.T) {
 	})
 }
 
+// failedRec builds a Failed BuildStatus with a multi-step timeline whose named
+// step failed, plus a termination + memory limit, for the trim tests.
+func failedRec(job, failedStepName string) bakerv1alpha1.BuildStatus {
+	return bakerv1alpha1.BuildStatus{
+		JobName:    job,
+		Result:     bakerv1alpha1.BuildResultFailed,
+		FailedStep: failedStepName,
+		Steps: []bakerv1alpha1.BuildStep{
+			{Name: bakerv1alpha1.StepClone, Status: bakerv1alpha1.StepStatusSucceeded},
+			{Name: bakerv1alpha1.StepSetup, Status: bakerv1alpha1.StepStatusSucceeded},
+			{Name: failedStepName, Status: bakerv1alpha1.StepStatusFailed, Message: "boom", MemoryLimit: "2Gi"},
+		},
+		Termination: &bakerv1alpha1.BuildTermination{Reason: "OOMKilled", Container: failedStepName},
+	}
+}
+
+// appendFailedBuildHistory retains only FAILED builds, newest-first, deduped by
+// JobName, capped to max, and each entry trimmed to only the failed step.
+func TestAppendFailedBuildHistory(t *testing.T) {
+	t.Run("ignores non-failed builds", func(t *testing.T) {
+		got := appendFailedBuildHistory(nil, bs("ok", bakerv1alpha1.BuildResultSucceeded), 10)
+		if len(got) != 0 {
+			t.Fatalf("succeeded build must not be retained, got %v", jobNames(got))
+		}
+		got = appendFailedBuildHistory(nil, bs("ab", bakerv1alpha1.BuildResultAborted), 10)
+		if len(got) != 0 {
+			t.Fatalf("aborted build must not be retained, got %v", jobNames(got))
+		}
+	})
+
+	t.Run("retains failures across a success burst", func(t *testing.T) {
+		h := appendFailedBuildHistory(nil, failedRec("f1", "build"), 10)
+		// A burst of successes must NOT evict the failure (successes are ignored).
+		for _, n := range []string{"s1", "s2", "s3", "s4", "s5"} {
+			h = appendFailedBuildHistory(h, bs(n, bakerv1alpha1.BuildResultSucceeded), 10)
+		}
+		if !slices.Equal(jobNames(h), []string{"f1"}) {
+			t.Fatalf("failure lost across success burst, got %v", jobNames(h))
+		}
+	})
+
+	t.Run("prepends newest-first and dedups by JobName", func(t *testing.T) {
+		h := appendFailedBuildHistory(nil, failedRec("f1", "build"), 10)
+		h = appendFailedBuildHistory(h, failedRec("f2", "fetch"), 10)
+		if !slices.Equal(jobNames(h), []string{"f2", "f1"}) {
+			t.Fatalf("got %v, want [f2 f1]", jobNames(h))
+		}
+		// Re-observe f1: replace in place, no dup / reorder.
+		h = appendFailedBuildHistory(h, failedRec("f1", "build"), 10)
+		if !slices.Equal(jobNames(h), []string{"f2", "f1"}) {
+			t.Fatalf("dedup failed, got %v", jobNames(h))
+		}
+	})
+
+	t.Run("caps to max newest-first", func(t *testing.T) {
+		var h []bakerv1alpha1.BuildStatus
+		for _, n := range []string{"f1", "f2", "f3"} {
+			h = appendFailedBuildHistory(h, failedRec(n, "build"), 2)
+		}
+		if !slices.Equal(jobNames(h), []string{"f3", "f2"}) {
+			t.Fatalf("got %v, want [f3 f2] (cap 2)", jobNames(h))
+		}
+	})
+
+	t.Run("trims entry to only the failed step", func(t *testing.T) {
+		h := appendFailedBuildHistory(nil, failedRec("f1", "build"), 10)
+		if len(h) != 1 {
+			t.Fatalf("expected 1 entry, got %d", len(h))
+		}
+		e := h[0]
+		if len(e.Steps) != 1 || e.Steps[0].Name != "build" || e.Steps[0].Status != bakerv1alpha1.StepStatusFailed {
+			t.Fatalf("entry not trimmed to the failed step: %+v", e.Steps)
+		}
+		if e.Steps[0].MemoryLimit != "2Gi" {
+			t.Fatalf("failed step memory limit dropped: %+v", e.Steps[0])
+		}
+		if e.Termination == nil || e.Termination.Reason != "OOMKilled" {
+			t.Fatalf("termination dropped: %+v", e.Termination)
+		}
+	})
+}
+
+// effectiveHistoryLimits: spec.history overrides the operator-config default
+// per-field; an absent spec.history (or a zero sub-field) falls back.
+func TestEffectiveHistoryLimits(t *testing.T) {
+	r := reconcilerForPod() // Defaults(): keepRecent 5, keepFailed 10
+
+	t.Run("defaults when spec.history absent", func(t *testing.T) {
+		kr, kf := r.effectiveHistoryLimits(baseApp())
+		if kr != 5 || kf != 10 {
+			t.Fatalf("got %d/%d, want 5/10 (operator defaults)", kr, kf)
+		}
+	})
+
+	t.Run("per-app override beats default", func(t *testing.T) {
+		app := baseApp()
+		app.Spec.History = &bakerv1alpha1.HistorySpec{KeepRecent: 3, KeepFailed: 20}
+		kr, kf := r.effectiveHistoryLimits(app)
+		if kr != 3 || kf != 20 {
+			t.Fatalf("got %d/%d, want 3/20 (per-app override)", kr, kf)
+		}
+	})
+
+	t.Run("zero sub-field falls back to default", func(t *testing.T) {
+		app := baseApp()
+		app.Spec.History = &bakerv1alpha1.HistorySpec{KeepRecent: 7} // KeepFailed omitted
+		kr, kf := r.effectiveHistoryLimits(app)
+		if kr != 7 || kf != 10 {
+			t.Fatalf("got %d/%d, want 7/10 (keepFailed falls back)", kr, kf)
+		}
+	})
+}
+
 // failedStep returns the first Failed or Aborted step, else "".
 func TestFailedStep(t *testing.T) {
 	step := func(n string, s bakerv1alpha1.StepStatus) bakerv1alpha1.BuildStep {

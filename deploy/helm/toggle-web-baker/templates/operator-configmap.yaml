@@ -28,6 +28,8 @@ data:
     defaultWatchInterval: {{ .Values.operator.defaultWatchInterval | quote }}
     cloneRetries: {{ .Values.operator.cloneRetries }}
     cloneRetryBaseDelay: {{ .Values.operator.cloneRetryBaseDelay }}
+    historyKeepRecent: {{ .Values.operator.historyKeepRecent }}
+    historyKeepFailed: {{ .Values.operator.historyKeepFailed }}
     {{- /* Only rendered when the git-credential feature is on (existingSecret OR
          password set); omitted entirely otherwise — the operator treats an
          absent gitAuth block as disabled. Secret VALUES never appear here, only

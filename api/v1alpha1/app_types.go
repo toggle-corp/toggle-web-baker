@@ -510,6 +510,29 @@ type WatchCommitsSpec struct {
 	Interval string `json:"interval,omitempty"`
 }
 
+// HistorySpec tunes how many terminal builds the operator retains in status,
+// per-app (overriding the operator-config defaults). Both counts are capped at
+// 50 (CEL) to bound the App object / etcd size. Nested struct so it reads
+// `history: {keepRecent: ..., keepFailed: ...}`, matching scheduledBuilds /
+// watchCommits. Absent (or a zero sub-field) means the operator default.
+type HistorySpec struct {
+	// KeepRecent is how many recent terminal builds (any result) the newest-first
+	// status.buildHistory ring retains. 0 means the operator default (config
+	// historyKeepRecent, chart-owned; the CRD cannot know it — mirrors schedule).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=50
+	// +optional
+	KeepRecent int `json:"keepRecent,omitempty"`
+	// KeepFailed is how many FAILED builds status.failedBuildHistory retains,
+	// independent of the recent ring so a burst of successes can't evict a
+	// failure needed for debugging. 0 means the operator default
+	// (config historyKeepFailed).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=50
+	// +optional
+	KeepFailed int `json:"keepFailed,omitempty"`
+}
+
 // AppSpec is the desired state: operational tunables for one app.
 type AppSpec struct {
 	// Repo is the clone URL, handed verbatim to `git clone`. The pattern is a
@@ -577,6 +600,12 @@ type AppSpec struct {
 
 	// +optional
 	Storage StorageConfig `json:"storage,omitempty"`
+
+	// History tunes how many terminal builds the operator retains in status
+	// (recent ring + failed-only list). Absent means the operator-config
+	// defaults apply to both lists.
+	// +optional
+	History *HistorySpec `json:"history,omitempty"`
 }
 
 // BuildResult is the terminal outcome of a build pod.
@@ -865,11 +894,25 @@ type AppStatus struct {
 	Build BuildStatus `json:"build,omitempty"`
 
 	// BuildHistory is a newest-first ring buffer of recent terminal builds
-	// (Jobs that ran). The operator caps it; CEL bounds it defensively.
+	// (Jobs that ran, any result). The operator caps it to the effective
+	// keepRecent (spec.history.keepRecent or the operator-config default); CEL
+	// bounds it defensively at the keepRecent CEL cap (50).
 	// +optional
 	// +listType=atomic
-	// +kubebuilder:validation:MaxItems=5
+	// +kubebuilder:validation:MaxItems=50
 	BuildHistory []BuildStatus `json:"buildHistory,omitempty"`
+
+	// FailedBuildHistory is a newest-first list of the last N FAILED builds,
+	// deduped by JobName, INDEPENDENT of BuildHistory so a burst of scheduled
+	// successes can't evict a failure needed for debugging. Each entry is
+	// trimmed to only its failed step (+ termination / memory) — enough to build
+	// a Loki query without bloating the object. Capped to the effective
+	// keepFailed (spec.history.keepFailed or the operator-config default); CEL
+	// bounds it at 50.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=50
+	FailedBuildHistory []BuildStatus `json:"failedBuildHistory,omitempty"`
 
 	// +optional
 	LastProcessedRebuild string `json:"lastProcessedRebuild,omitempty"`

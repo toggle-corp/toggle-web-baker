@@ -223,6 +223,34 @@ func TestValidation_AcceptsFreeFormIngressAnnotations(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
 }
 
+func TestValidation_RejectsHistoryKeepRecentOverCap(t *testing.T) {
+	app := validApp("reject-history-keeprecent-cap")
+	app.Spec.History = &bakerv1alpha1.HistorySpec{KeepRecent: 51}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for history.keepRecent > 50")
+	}
+}
+
+func TestValidation_RejectsHistoryKeepFailedOverCap(t *testing.T) {
+	app := validApp("reject-history-keepfailed-cap")
+	app.Spec.History = &bakerv1alpha1.HistorySpec{KeepFailed: 100}
+
+	if err := testClient.Create(testCtx, app); err == nil {
+		t.Fatalf("expected rejection for history.keepFailed > 50")
+	}
+}
+
+func TestValidation_AcceptsHistoryWithinCap(t *testing.T) {
+	app := validApp("accept-history-within-cap")
+	app.Spec.History = &bakerv1alpha1.HistorySpec{KeepRecent: 5, KeepFailed: 50}
+
+	if err := testClient.Create(testCtx, app); err != nil {
+		t.Fatalf("expected history within 1..50 to be accepted, got: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(testCtx, app) })
+}
+
 func TestValidation_RejectsOutputDirWithParentSegment(t *testing.T) {
 	// "a/../b" has a ".." segment: the CEL rule rejects it (RE2 pattern alone
 	// can't catch an interior "..").

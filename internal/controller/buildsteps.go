@@ -180,6 +180,44 @@ func appendBuildHistory(history []bakerv1alpha1.BuildStatus, rec bakerv1alpha1.B
 	return out
 }
 
+// appendFailedBuildHistory records rec into the newest-first FAILED-build ring
+// (status.failedBuildHistory) — independent of the recent ring, so a burst of
+// scheduled successes can't evict a failure the operator/console needs for
+// debugging. Only Result==Failed is retained (a Succeeded/Aborted build is
+// ignored). Dedup + cap semantics mirror appendBuildHistory. Each retained
+// entry is TRIMMED to only its failed step (+ the build-level termination and
+// the failed step's memory limit) — enough to build a Loki query without
+// bloating the App object with the full per-step timeline (the recent ring
+// keeps full fidelity for the console).
+func appendFailedBuildHistory(history []bakerv1alpha1.BuildStatus, rec bakerv1alpha1.BuildStatus, max int) []bakerv1alpha1.BuildStatus {
+	if rec.Result != bakerv1alpha1.BuildResultFailed {
+		return history
+	}
+	return appendBuildHistory(history, trimToFailedStep(rec), max)
+}
+
+// trimToFailedStep returns a copy of rec whose Steps slice contains ONLY the
+// failed step (identified by FailedStep, else the first Failed/Aborted step).
+// The build-level Termination is preserved. When no failed step can be located
+// the timeline is dropped entirely (the metadata fields still identify the
+// build for a Loki query).
+func trimToFailedStep(rec bakerv1alpha1.BuildStatus) bakerv1alpha1.BuildStatus {
+	out := *rec.DeepCopy()
+	want := out.FailedStep
+	if want == "" {
+		want = failedStep(out.Steps)
+	}
+	var kept []bakerv1alpha1.BuildStep
+	for _, s := range out.Steps {
+		if s.Name == want {
+			kept = append(kept, s)
+			break
+		}
+	}
+	out.Steps = kept
+	return out
+}
+
 // failedStep returns the name of the first step that ended Failed or Aborted,
 // or "" when the build has no failing step (the value surfaced as
 // BuildStatus.FailedStep).
