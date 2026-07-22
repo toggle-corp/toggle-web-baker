@@ -244,14 +244,17 @@ e2e-local:
     kubectl port-forward "${OPERATOR_DEPLOY}" "${METRICS_PORT}:8080" >/dev/null 2>&1 &
     PF_PID=$!
 
-    want_builds="baker_app_builds_total{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",result=\"Succeeded\"} 1"
+    # baker_app_builds_total carries a `trigger` label, so match the Succeeded
+    # build with ANY trigger value (the bootstrap build classifies as Scheduled)
+    # rather than pinning the exact line.
+    want_builds_re="^baker_app_builds_total\{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",result=\"Succeeded\",trigger=\"[A-Za-z]+\"\} 1$"
     want_phase="baker_app_phase{name=\"${APP_NAME}\",namespace=\"${APP_NS}\",phase=\"Ready\"} 1"
     metrics=""
     metrics_ok=""
     # Retry: covers port-forward startup and the operator's post-Job reconcile lag.
     for _ in $(seq 1 30); do
         metrics="$(curl -fsS "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null || true)"
-        if grep -qxF "${want_builds}" <<<"${metrics}" && grep -qxF "${want_phase}" <<<"${metrics}"; then
+        if grep -qE "${want_builds_re}" <<<"${metrics}" && grep -qxF "${want_phase}" <<<"${metrics}"; then
             metrics_ok=1; break
         fi
         sleep 2
@@ -262,7 +265,7 @@ e2e-local:
         echo "----- /metrics (baker_app_* series) -----"
         grep '^baker_app_' <<<"${metrics}" || true
         echo "FAIL: expected metrics lines not found:"
-        echo "  ${want_builds}"
+        echo "  ${want_builds_re}  (regex)"
         echo "  ${want_phase}"
         exit 1
     fi
