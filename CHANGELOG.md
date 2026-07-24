@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.0](https://github.com/toggle-corp/toggle-web-baker/compare/0.2.0..0.3.0) - 2026-07-24
+### Changes:
+
+#### 🚀  Features
+
+- *(alerts)* Threshold-gate consecutive scheduled-build failures - ([19bb21b](https://github.com/toggle-corp/toggle-web-baker/commit/19bb21b18063e37d66165fb25d571f533fbb5fcf))
+- *(clone)* Retry transient network git ops with fail-fast on permanent errors - ([09e1b71](https://github.com/toggle-corp/toggle-web-baker/commit/09e1b7135e8ea071a0f4cd9a558d37dea31aec80))
+- *(history)* Retain failed builds separately + configurable retention - ([040c65d](https://github.com/toggle-corp/toggle-web-baker/commit/040c65d2885f5ca584c823fc6f6145d9ff02f923))
+- *(ingress)* Support custom ingress annotations with reserved-key guard - ([713d56e](https://github.com/toggle-corp/toggle-web-baker/commit/713d56ec28ceeb36be45dd5a2525883758d6d2b0))
+
+#### 🐛 Bug Fixes
+
+- *(copier)* Count protected + incoming release in retention sweep - ([8fe90d3](https://github.com/toggle-corp/toggle-web-baker/commit/8fe90d3edb58ec63db34e98479e1d645798ad02a))
+- *(review)* Narrow clone permanent-error classes, fix jitter + streak edge - ([53a0539](https://github.com/toggle-corp/toggle-web-baker/commit/53a0539404070d1dedb4f956908334589ad048e5))
+
+#### 📚 Documentation
+
+- Add Alertmanager suppression guide for build/trigger job noise - ([e177c2f](https://github.com/toggle-corp/toggle-web-baker/commit/e177c2f9c61f3af7463d9b8428f81611768f4a44))
+
+#### 🧪 Testing
+
+- *(e2e-local)* Match builds_total Succeeded line with any trigger label - ([aa8ce1f](https://github.com/toggle-corp/toggle-web-baker/commit/aa8ce1fae567161f90fcc081da7f801c6a1f414f))
+
+
 ## [0.2.0](https://github.com/toggle-corp/toggle-web-baker/compare/0.1.1..0.2.0) - 2026-07-17
 ### Changes:
 
