@@ -16,6 +16,20 @@ import (
 	"github.com/toggle-corp/toggle-web-baker/internal/domain"
 )
 
+// Compiled-in operator-default fallbacks for App spec fields that resolve at
+// reconcile time when omitted (a chart may override via operator config; these
+// are the last resort). Exported and centralized so BOTH Defaults() below and
+// the CRD-doc drift-guard (config_doc_test.go) read the SAME constant — the
+// documented "default N" in api/v1alpha1 godoc is asserted against these, so it
+// can never silently diverge. Only fields with a compiled NUMERIC default live
+// here; chart-owned-only defaults (schedule/interval/timeout/memoryLimit) have
+// no number to show.
+const (
+	DefaultHistoryKeepRecent       = 5
+	DefaultHistoryKeepFailed       = 10
+	DefaultScheduledAlertThreshold = 3
+)
+
 // PlatformImages are the platform-locked image refs the operator stamps onto
 // the pods it creates. They are NOT user-supplied and not subject to the
 // registry allowlist (the allowlist only covers setup/fetch/build images).
@@ -342,15 +356,15 @@ func LoadConfig(path string) (OperatorConfig, ManagerOptions, error) {
 	// History-retention defaults: omitted keys fall back to 5 / 10; an
 	// explicitly-set value must be in the same 1..50 range the per-app CEL caps
 	// enforce (a bad chart value would otherwise cap silently at a nonsense size).
-	historyKeepRecent := defaultInt(fc.HistoryKeepRecent, 5)
+	historyKeepRecent := defaultInt(fc.HistoryKeepRecent, DefaultHistoryKeepRecent)
 	if historyKeepRecent < 1 || historyKeepRecent > 50 {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("historyKeepRecent must be in 1..50, got %d", historyKeepRecent)
 	}
-	historyKeepFailed := defaultInt(fc.HistoryKeepFailed, 10)
+	historyKeepFailed := defaultInt(fc.HistoryKeepFailed, DefaultHistoryKeepFailed)
 	if historyKeepFailed < 1 || historyKeepFailed > 50 {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("historyKeepFailed must be in 1..50, got %d", historyKeepFailed)
 	}
-	scheduledAlertThreshold := defaultInt(fc.ScheduledAlertThreshold, 3)
+	scheduledAlertThreshold := defaultInt(fc.ScheduledAlertThreshold, DefaultScheduledAlertThreshold)
 	if scheduledAlertThreshold < 1 {
 		return OperatorConfig{}, ManagerOptions{}, fmt.Errorf("scheduledAlertThreshold must be >= 1, got %d", scheduledAlertThreshold)
 	}

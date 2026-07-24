@@ -497,7 +497,8 @@ type ScheduledBuildsSpec struct {
 	// scheduled builds only (manual/commit/spec-change failures still alert
 	// immediately via AppBuildFailed) — hourly data-refresh builds tolerate a
 	// few transient failures in a row before a human needs paging. 0 means the
-	// operator default (config scheduledAlertThreshold, chart-owned).
+	// operator default (config scheduledAlertThreshold, default 3; chart-owned so
+	// a chart may override it).
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	AlertThreshold int `json:"alertThreshold,omitempty"`
@@ -528,7 +529,7 @@ type WatchCommitsSpec struct {
 type HistorySpec struct {
 	// KeepRecent is how many recent terminal builds (any result) the newest-first
 	// status.buildHistory ring retains. 0 means the operator default (config
-	// historyKeepRecent, chart-owned; the CRD cannot know it — mirrors schedule).
+	// historyKeepRecent, default 5; chart-owned so a chart may override it).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=50
 	// +optional
@@ -536,7 +537,7 @@ type HistorySpec struct {
 	// KeepFailed is how many FAILED builds status.failedBuildHistory retains,
 	// independent of the recent ring so a burst of successes can't evict a
 	// failure needed for debugging. 0 means the operator default
-	// (config historyKeepFailed).
+	// (config historyKeepFailed, default 10; chart-owned so a chart may override it).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=50
 	// +optional

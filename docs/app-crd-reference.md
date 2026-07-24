@@ -29,9 +29,9 @@ AppSpec is the desired state: operational tunables for one app.
 - **`spec.history`** — `object`, optional
   History tunes how many terminal builds the operator retains in status (recent ring + failed-only list). Absent means the operator-config defaults apply to both lists.
   - **`spec.history.keepFailed`** — `integer`, optional, min `1`, max `50`
-    KeepFailed is how many FAILED builds status.failedBuildHistory retains, independent of the recent ring so a burst of successes can't evict a failure needed for debugging. 0 means the operator default (config historyKeepFailed).
+    KeepFailed is how many FAILED builds status.failedBuildHistory retains, independent of the recent ring so a burst of successes can't evict a failure needed for debugging. 0 means the operator default (config historyKeepFailed, default 10; chart-owned so a chart may override it).
   - **`spec.history.keepRecent`** — `integer`, optional, min `1`, max `50`
-    KeepRecent is how many recent terminal builds (any result) the newest-first status.buildHistory ring retains. 0 means the operator default (config historyKeepRecent, chart-owned; the CRD cannot know it — mirrors schedule).
+    KeepRecent is how many recent terminal builds (any result) the newest-first status.buildHistory ring retains. 0 means the operator default (config historyKeepRecent, default 5; chart-owned so a chart may override it).
 - **`spec.ingress`** — `object`, **required**
   IngressConfig describes the public ingress for the served bundle.
   - **`spec.ingress.annotations`** — `map<string,string>`, optional
@@ -146,7 +146,7 @@ AppSpec is the desired state: operational tunables for one app.
 - **`spec.scheduledBuilds`** — `object`, optional
   ScheduledBuilds enables time-based rebuilds (the clock CronJob). Absent means DISABLED — apps that need periodic data-refresh builds must opt in explicitly. Deliberately a struct with a required Enabled rather than a defaulted flat field, so `scheduledBuilds: {schedule: ...}` without an explicit enabled is rejected at admission instead of silently doing nothing.
   - **`spec.scheduledBuilds.alertThreshold`** — `integer`, optional, min `1`
-    AlertThreshold is how many CONSECUTIVE scheduled-build failures must occur before the AppScheduledBuildsFailingThreshold alert fires. Scoped to scheduled builds only (manual/commit/spec-change failures still alert immediately via AppBuildFailed) — hourly data-refresh builds tolerate a few transient failures in a row before a human needs paging. 0 means the operator default (config scheduledAlertThreshold, chart-owned).
+    AlertThreshold is how many CONSECUTIVE scheduled-build failures must occur before the AppScheduledBuildsFailingThreshold alert fires. Scoped to scheduled builds only (manual/commit/spec-change failures still alert immediately via AppBuildFailed) — hourly data-refresh builds tolerate a few transient failures in a row before a human needs paging. 0 means the operator default (config scheduledAlertThreshold, default 3; chart-owned so a chart may override it).
   - **`spec.scheduledBuilds.enabled`** — `boolean`, **required**
     Enabled must be stated explicitly (no default): false keeps the config around while pausing the clock CronJob.
   - **`spec.scheduledBuilds.schedule`** — `string`, optional
