@@ -69,3 +69,17 @@ repos:
         entry: deploy/helm/toggle-web-baker/update-snapshots.sh
         files: ^(deploy/helm/|config/crd/)
         pass_filenames: false
+
+      # CRD reference sync: a FIXER like helm-snapshots — regenerates
+      # docs/app-crd-reference.md from the CRD (the kubebuilder-godoc source of
+      # truth) and fails the hook if it changed, so the human-readable field
+      # reference cannot drift from the schema. pyyaml is pinned into the hook
+      # env. Triggers when the CRD, the generator, or the doc itself changes.
+      - id: crd-docs
+        name: crd reference sync (regenerates on drift)
+        language: python
+        additional_dependencies:
+          - pyyaml==6.0.3
+        entry: python3 hack/gen-crd-reference.py
+        files: ^(config/crd/|hack/gen-crd-reference\.py|docs/app-crd-reference\.md)
+        pass_filenames: false

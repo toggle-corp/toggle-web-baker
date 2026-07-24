@@ -122,6 +122,9 @@ because the latest build failed).
   restricted to an allowlist you configure.
 - The operator, console, and all helper images are versioned and released
   together; upgrading is a single `helm upgrade`.
+- For every `App` spec/status field — defaults, validation, and behaviour — see
+  the [App CRD reference](docs/app-crd-reference.md) (generated from the CRD, so
+  it matches `kubectl explain app` exactly).
 
 For repo layout, tests, and contribution workflow, see
 [AGENTS.md](AGENTS.md).

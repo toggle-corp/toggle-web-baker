@@ -23,6 +23,14 @@ lint:
 manifests:
     {{CONTROLLER_GEN}} rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd output:rbac:artifacts:config=config/rbac
     just sync-crd
+    just crd-docs
+
+# Regenerate the human-readable CRD field reference (docs/app-crd-reference.md)
+# from config/crd/. The CRD schema (kubebuilder godoc) is the source of truth, so
+# the doc can't drift; folded into `just manifests` and enforced by the crd-docs
+# pre-commit hook. Pass --check to fail on drift instead of rewriting.
+crd-docs *ARGS:
+    python3 hack/gen-crd-reference.py {{ARGS}}
 
 # Regenerate the chart CRD (templates/crd.yaml) from config/crd/, wrapping the
 # generated CRD with the chart-specific bits (install guard, resource-policy
